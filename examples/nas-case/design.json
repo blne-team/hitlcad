@@ -1,0 +1,1413 @@
+{
+  "hitlcad": 2,
+  "name": "nas-case",
+  "backend": "build123d",
+  "brief": {
+    "title": "Compact 3D-printed micro-ATX NAS case, 4 × 3.5\" HDD",
+    "summary": "Dual-chamber case for a micro-ATX board, 4 × 3.5\" drives, an ATX PSU and two reused 120 mm fans, split into pieces that each fit a 256 × 256 mm bed and print in PETG without supports. Front and rear shells (panel + floor + ceiling) are joined at the middle with M3 screws into heat-set inserts. A separate motherboard tray spans both shells and ties them together, and four flat side panels close it. The fans push air front-to-back through the drive cage.",
+    "key_dimensions": [
+      {
+        "name": "Motherboard (micro-ATX)",
+        "value": 244,
+        "note": "244 × 244 mm, on 6.35 mm brass M3 standoffs"
+      },
+      {
+        "name": "Clearance above PCB",
+        "value": 80,
+        "note": "low-profile CPU cooler (≤ ~70 mm) and low-profile cards"
+      },
+      {
+        "name": "Wall",
+        "value": 3,
+        "note": "PETG"
+      },
+      {
+        "name": "Fan size",
+        "value": 120,
+        "note": "2 × 120 × 25 mm, 105 mm hole spacing"
+      },
+      {
+        "name": "Cable room in front of the board",
+        "value": 35,
+        "note": "for forward-facing SATA ports"
+      },
+      {
+        "name": "Printer bed",
+        "value": 256,
+        "note": "every piece ≤ 254 mm as it prints"
+      }
+    ],
+    "features": [
+      "9 printed pieces from 8 parts: front_shell, rear_shell, divider (motherboard tray), hdd_rail_left, hdd_rail_right, side_front (placed left and right), side_left_rear, side_right_rear; each modelled the way it prints",
+      "All seams use M3 screws into ruthex M3 × 4 heat-set inserts (Ø4.0 × 5 mm holes); bosses have 40° undersides and horizontal holes are teardrops, so nothing needs support",
+      "Seam: socket-head screws from counterbores in the front shell's bosses into the rear shell's; side panels: countersunk screws, flush; divider and rails: button-head screws up through the floor and down through the ceiling",
+      "Front: 120 mm intake fan with printed grille, power-button hole. Rear: 120 mm exhaust fan, I/O aperture, 4 low-profile slots, ATX PSU opening + ledge",
+      "Top vents over the PSU, side vents over the CPU",
+      "The motherboard sits on eight 6.35 mm brass standoffs screwed into heat-set inserts in the divider"
+    ],
+    "assumptions": [
+      "Fans are 120 × 25 mm (regular PC fans; 105 mm between screw holes)",
+      "The PSU is a standard ATX unit (150 × 86 × 140 mm)",
+      "Low-profile CPU cooler and low-profile PCIe cards only",
+      "Standoff positions are approximate micro-ATX positions; check them against the real board before printing",
+      "The board's SATA ports face forward, so 35 mm of cable room is left in front of the board",
+      "Screw heads under the floor and on the ceiling stand 1.65 mm proud: the case stands on them or on stick-on feet"
+    ],
+    "open_questions": [
+      "Do your board's SATA ports face forward or up? If up, board_front_gap can drop to ~5 mm and the case gets 30 mm shorter",
+      "CPU cooler height?",
+      "PSU mounting screws: add the four ATX holes once the PSU is confirmed",
+      "Drive screws: the Ø3.5 holes in the rails are a tight fit for 6-32 UNC screws (Ø3.51); widen them if the screws do not pass"
+    ]
+  },
+  "parameters": [
+    {
+      "name": "wall",
+      "label": "Wall thickness",
+      "value": 3,
+      "min": 2,
+      "max": 5,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "board_clearance",
+      "label": "Clearance above motherboard PCB (cooler/cards)",
+      "value": 80,
+      "min": 50,
+      "max": 170,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "standoff_h",
+      "label": "Standoff height",
+      "value": 6.35,
+      "min": 5,
+      "max": 12,
+      "step": 0.05,
+      "unit": "mm"
+    },
+    {
+      "name": "board_margin",
+      "label": "Space above and below the board",
+      "value": 0.5,
+      "min": 0.5,
+      "max": 30,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "board_front_gap",
+      "label": "Cable gap in front of the board",
+      "value": 35,
+      "min": 3,
+      "max": 60,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "hdd_count",
+      "label": "Number of 3.5\" drives",
+      "value": 4,
+      "min": 1,
+      "max": 5,
+      "step": 1,
+      "unit": "count",
+      "type": "int"
+    },
+    {
+      "name": "hdd_gap",
+      "label": "Air gap between drives",
+      "value": 6,
+      "min": 2,
+      "max": 15,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "rail_w",
+      "label": "Drive rail width",
+      "value": 4,
+      "min": 2,
+      "max": 8,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "fan_size",
+      "label": "Fan size",
+      "value": "120",
+      "unit": "mm",
+      "type": "choice",
+      "choices": [
+        "80",
+        "92",
+        "120",
+        "140"
+      ]
+    },
+    {
+      "name": "fan_thickness",
+      "label": "Fan thickness",
+      "value": 25,
+      "min": 10,
+      "max": 38,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "psu_w",
+      "label": "PSU width",
+      "value": 150,
+      "min": 100,
+      "max": 160,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "psu_h",
+      "label": "PSU height",
+      "value": 86,
+      "min": 60,
+      "max": 90,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "psu_d",
+      "label": "PSU depth",
+      "value": 140,
+      "min": 100,
+      "max": 200,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "button_d",
+      "label": "Power button hole",
+      "value": 16,
+      "min": 6,
+      "max": 30,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "vent_slot_w",
+      "label": "Side vent slot width",
+      "value": 5,
+      "min": 2,
+      "max": 10,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "vent_size",
+      "label": "Side vent area size",
+      "value": 80,
+      "min": 20,
+      "max": 150,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "screw_d",
+      "label": "M3 screw clearance hole",
+      "value": 3.4,
+      "min": 3.1,
+      "max": 3.8,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "insert_d",
+      "label": "Heat-set insert hole diameter",
+      "value": 4.0,
+      "min": 3.5,
+      "max": 5.0,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "insert_depth",
+      "label": "Heat-set insert hole depth",
+      "value": 5,
+      "min": 3,
+      "max": 8,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "fit_gap",
+      "label": "Gap between mating printed parts",
+      "value": 0.2,
+      "min": 0.05,
+      "max": 0.6,
+      "step": 0.05,
+      "unit": "mm"
+    }
+  ],
+  "ground": "front_shell",
+  "manufacturing": {
+    "process": "fdm"
+  },
+  "parts": {
+    "front_shell": {
+      "role": "front panel, floor and ceiling up to the seam: intake fan, power button",
+      "file": "parts/shells.py",
+      "material": "PETG",
+      "connectors": {
+        "rear_seam": {
+          "kind": "frame"
+        },
+        "seam_screws": {
+          "kind": "hole",
+          "count": 4
+        },
+        "fan_holes": {
+          "kind": "hole",
+          "count": 4,
+          "symmetry": "axial"
+        },
+        "tray_seat": {
+          "kind": "frame"
+        },
+        "rail_left_seat": {
+          "kind": "frame"
+        },
+        "rail_right_seat": {
+          "kind": "frame"
+        },
+        "side_seats": {
+          "kind": "frame",
+          "count": 2
+        },
+        "rail_screws": {
+          "kind": "hole",
+          "count": 2
+        },
+        "left_side_inserts": {
+          "kind": "frame",
+          "count": 4
+        },
+        "right_side_inserts": {
+          "kind": "frame",
+          "count": 4
+        },
+        "tray_floor_screws": {
+          "kind": "hole",
+          "count": 2
+        },
+        "tray_ceiling_screws": {
+          "kind": "hole",
+          "count": 2
+        }
+      }
+    },
+    "rear_shell": {
+      "role": "rear panel, floor and ceiling from the seam: exhaust fan, PSU, I/O and slots",
+      "file": "parts/shells.py",
+      "material": "PETG",
+      "connectors": {
+        "seam": {
+          "kind": "face"
+        },
+        "seam_inserts": {
+          "kind": "frame",
+          "count": 4
+        },
+        "fan_holes": {
+          "kind": "hole",
+          "count": 4,
+          "symmetry": "axial"
+        },
+        "psu_ledge": {
+          "kind": "face"
+        },
+        "left_side_seat": {
+          "kind": "frame"
+        },
+        "right_side_seat": {
+          "kind": "frame"
+        },
+        "left_side_inserts": {
+          "kind": "frame",
+          "count": 4
+        },
+        "right_side_inserts": {
+          "kind": "frame",
+          "count": 4
+        },
+        "rail_screws": {
+          "kind": "hole",
+          "count": 2
+        },
+        "tray_floor_screws": {
+          "kind": "hole",
+          "count": 2
+        },
+        "tray_ceiling_screws": {
+          "kind": "hole",
+          "count": 2
+        }
+      }
+    },
+    "divider": {
+      "role": "motherboard tray between the chambers, tying both shells together",
+      "file": "parts/tray.py",
+      "material": "PETG",
+      "connectors": {
+        "bottom": {
+          "kind": "face"
+        },
+        "standoff_inserts": {
+          "kind": "frame",
+          "count": 8
+        },
+        "front_floor_inserts": {
+          "kind": "frame",
+          "count": 2
+        },
+        "front_ceiling_inserts": {
+          "kind": "frame",
+          "count": 2
+        },
+        "rear_floor_inserts": {
+          "kind": "frame",
+          "count": 2
+        },
+        "rear_ceiling_inserts": {
+          "kind": "frame",
+          "count": 2
+        }
+      }
+    },
+    "hdd_rail_left": {
+      "role": "left drive rail",
+      "file": "parts/rails.py",
+      "material": "PETG",
+      "connectors": {
+        "bottom": {
+          "kind": "face"
+        },
+        "bays": {
+          "kind": "frame",
+          "count": "hdd_count"
+        },
+        "front_insert": {
+          "kind": "frame"
+        },
+        "rear_insert": {
+          "kind": "frame"
+        }
+      }
+    },
+    "hdd_rail_right": {
+      "role": "right drive rail (mirror of the left)",
+      "file": "parts/rails.py",
+      "material": "PETG",
+      "connectors": {
+        "bottom": {
+          "kind": "face"
+        },
+        "bays": {
+          "kind": "frame",
+          "count": "hdd_count"
+        },
+        "front_insert": {
+          "kind": "frame"
+        },
+        "rear_insert": {
+          "kind": "frame"
+        }
+      }
+    },
+    "side_front": {
+      "role": "front side panel, left and right",
+      "file": "parts/panels.py",
+      "material": "PETG",
+      "connectors": {
+        "inner": {
+          "kind": "face"
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "side_left_rear": {
+      "role": "rear left side panel, vents over the CPU",
+      "file": "parts/panels.py",
+      "material": "PETG",
+      "connectors": {
+        "inner": {
+          "kind": "face"
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "side_right_rear": {
+      "role": "rear right side panel",
+      "file": "parts/panels.py",
+      "material": "PETG",
+      "connectors": {
+        "inner": {
+          "kind": "face"
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "motherboard": {
+      "role": "micro-ATX board",
+      "file": "parts/bought.py",
+      "catalog": {
+        "designation": "micro-ATX motherboard, 244 × 244 mm",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "standoffs": {
+          "kind": "face",
+          "count": 8
+        }
+      }
+    },
+    "hdd": {
+      "role": "3.5\" hard drive",
+      "file": "parts/bought.py",
+      "material": "aluminium_6061",
+      "catalog": {
+        "designation": "3.5\" hard drive, 101.6 × 147 × 26.1 mm",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "left": {
+          "kind": "face"
+        },
+        "right": {
+          "kind": "face"
+        }
+      }
+    },
+    "psu": {
+      "role": "power supply",
+      "file": "parts/bought.py",
+      "material": "steel",
+      "catalog": {
+        "designation": "ATX power supply, 150 × 86 × 140 mm",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "bottom": {
+          "kind": "face"
+        }
+      }
+    },
+    "fan": {
+      "role": "intake (front) and exhaust (rear) fans",
+      "file": "parts/bought.py",
+      "material": "ABS",
+      "catalog": {
+        "designation": "120 × 25 mm case fan",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "holes": {
+          "kind": "hole",
+          "count": 4,
+          "symmetry": "axial"
+        }
+      }
+    },
+    "standoff": {
+      "role": "holds the board off the divider",
+      "file": "parts/bought.py",
+      "material": "brass",
+      "catalog": {
+        "designation": "M3 brass hex standoff, male-female, 6.35 mm",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "seat": {
+          "kind": "face",
+          "symmetry": 6
+        },
+        "top": {
+          "kind": "face",
+          "symmetry": 6
+        }
+      }
+    },
+    "seam_screw": {
+      "role": "socket-head screw, front shell to rear shell",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 4762 M3 socket-head cap screw, length per interfaces.seam_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "seam_insert": {
+      "role": "thread in the rear shell's seam bosses",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_front_left_screw": {
+      "role": "countersunk screw, front left side panel",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 10642 M3 countersunk screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_front_left_insert": {
+      "role": "thread in the front shell's left side bosses",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_front_right_screw": {
+      "role": "countersunk screw, front right side panel",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 10642 M3 countersunk screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_front_right_insert": {
+      "role": "thread in the front shell's right side bosses",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_left_rear_screw": {
+      "role": "countersunk screw, rear left side panel",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 10642 M3 countersunk screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_left_rear_insert": {
+      "role": "thread in the rear shell's left side bosses",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_right_rear_screw": {
+      "role": "countersunk screw, rear right side panel",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 10642 M3 countersunk screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "side_right_rear_insert": {
+      "role": "thread in the rear shell's right side bosses",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_front_floor_screw": {
+      "role": "button-head screw, divider up through the front shell's floor",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_front_floor_insert": {
+      "role": "thread in the divider's bottom flange (front)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_front_ceiling_screw": {
+      "role": "button-head screw, divider down through the front shell's ceiling",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_front_ceiling_insert": {
+      "role": "thread in the divider's top flange (front)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_rear_floor_screw": {
+      "role": "button-head screw, divider up through the rear shell's floor",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_rear_floor_insert": {
+      "role": "thread in the divider's bottom flange (rear)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_rear_ceiling_screw": {
+      "role": "button-head screw, divider down through the rear shell's ceiling",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tray_rear_ceiling_insert": {
+      "role": "thread in the divider's top flange (rear)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "rail_front_screw": {
+      "role": "button-head screw, rails to the front shell",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "rail_front_insert": {
+      "role": "thread in the rails' feet (front)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "rail_rear_screw": {
+      "role": "button-head screw, rails to the rear shell",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 7380 M3 button-head screw, length per interfaces.panel_screw",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "rail_rear_insert": {
+      "role": "thread in the rails' feet (rear)",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "standoff_insert": {
+      "role": "thread for a standoff, in the divider",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ruthex M3 × 4 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "rigid",
+      "a": "front_shell.rear_seam",
+      "b": "rear_shell.seam"
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.tray_seat",
+      "b": "divider.bottom"
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.rail_left_seat",
+      "b": "hdd_rail_left.bottom"
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.rail_right_seat",
+      "b": "hdd_rail_right.bottom"
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.side_seats",
+      "b": "side_front.inner"
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.left_side_seat",
+      "b": "side_left_rear.inner"
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.right_side_seat",
+      "b": "side_right_rear.inner"
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.fan_holes",
+      "b": "fan[0].holes"
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.fan_holes",
+      "b": "fan[1].holes"
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.psu_ledge",
+      "b": "psu.bottom"
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_left.bays",
+      "b": "hdd.left"
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_right.bays",
+      "b": "hdd.right"
+    },
+    {
+      "type": "rigid",
+      "a": "divider.standoff_inserts",
+      "b": "standoff_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "standoff_insert.thread",
+      "b": "standoff.seat",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "standoff.top",
+      "b": "motherboard.standoffs"
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.seam_inserts",
+      "b": "seam_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.left_side_inserts",
+      "b": "side_front_left_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "front_shell.right_side_inserts",
+      "b": "side_front_right_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.left_side_inserts",
+      "b": "side_left_rear_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "rear_shell.right_side_inserts",
+      "b": "side_right_rear_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "divider.front_floor_inserts",
+      "b": "tray_front_floor_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "divider.front_ceiling_inserts",
+      "b": "tray_front_ceiling_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "divider.rear_floor_inserts",
+      "b": "tray_rear_floor_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "divider.rear_ceiling_inserts",
+      "b": "tray_rear_ceiling_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_left.front_insert",
+      "b": "rail_front_insert[0].placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_right.front_insert",
+      "b": "rail_front_insert[1].placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_left.rear_insert",
+      "b": "rail_rear_insert[0].placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "hdd_rail_right.rear_insert",
+      "b": "rail_rear_insert[1].placement",
+      "overlap": true
+    }
+  ],
+  "fasteners": [
+    {
+      "fastener": "seam_screw.seat",
+      "through": [
+        "front_shell.seam_screws"
+      ],
+      "into": "seam_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "side_front_left_screw.seat",
+      "through": [
+        "side_front[0].screws"
+      ],
+      "into": "side_front_left_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "side_front_right_screw.seat",
+      "through": [
+        "side_front[1].screws"
+      ],
+      "into": "side_front_right_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "side_left_rear_screw.seat",
+      "through": [
+        "side_left_rear.screws"
+      ],
+      "into": "side_left_rear_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "side_right_rear_screw.seat",
+      "through": [
+        "side_right_rear.screws"
+      ],
+      "into": "side_right_rear_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "tray_front_floor_screw.seat",
+      "through": [
+        "front_shell.tray_floor_screws"
+      ],
+      "into": "tray_front_floor_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "tray_front_ceiling_screw.seat",
+      "through": [
+        "front_shell.tray_ceiling_screws"
+      ],
+      "into": "tray_front_ceiling_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "tray_rear_floor_screw.seat",
+      "through": [
+        "rear_shell.tray_floor_screws"
+      ],
+      "into": "tray_rear_floor_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "tray_rear_ceiling_screw.seat",
+      "through": [
+        "rear_shell.tray_ceiling_screws"
+      ],
+      "into": "tray_rear_ceiling_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "rail_front_screw.seat",
+      "through": [
+        "front_shell.rail_screws"
+      ],
+      "into": "rail_front_insert.thread",
+      "engagement": 0.9
+    },
+    {
+      "fastener": "rail_rear_screw.seat",
+      "through": [
+        "rear_shell.rail_screws"
+      ],
+      "into": "rail_rear_insert.thread",
+      "engagement": 0.9
+    }
+  ],
+  "requirements": [
+    {
+      "text": "Four 3.5\" HDD holders: left rail plate has 2 side screw holes per drive (8 × Ø3.5)",
+      "check": {
+        "kind": "hole",
+        "target": "hdd_rail_left",
+        "diameter": 3.5,
+        "tol": 0.1,
+        "count": 8
+      }
+    },
+    {
+      "text": "Four 3.5\" HDD holders: right rail plate has 2 side screw holes per drive (8 × Ø3.5)",
+      "check": {
+        "kind": "hole",
+        "target": "hdd_rail_right",
+        "diameter": 3.5,
+        "tol": 0.1,
+        "count": 8
+      }
+    },
+    {
+      "text": "Drives sit in the rails without touching them (left)",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "hdd[0]",
+          "hdd_rail_left"
+        ],
+        "min": 0.3
+      }
+    },
+    {
+      "text": "Drives sit in the rails without touching them (right)",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "hdd[0]",
+          "hdd_rail_right"
+        ],
+        "min": 0.3
+      }
+    },
+    {
+      "text": "Front intake fan mount (4 × Ø4.3)",
+      "check": {
+        "kind": "hole",
+        "target": "front_shell",
+        "diameter": 4.3,
+        "tol": 0.1,
+        "count": 4
+      }
+    },
+    {
+      "text": "Rear exhaust fan mount (4 × Ø4.3)",
+      "check": {
+        "kind": "hole",
+        "target": "rear_shell",
+        "diameter": 4.3,
+        "tol": 0.1,
+        "count": 4
+      }
+    },
+    {
+      "text": "Fans clear the drives",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "fan[0]",
+          "hdd[0]"
+        ],
+        "min": 2
+      }
+    },
+    {
+      "text": "PSU clears the rear exhaust fan",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "psu",
+          "fan[1]"
+        ],
+        "min": 5
+      }
+    },
+    {
+      "text": "≥ 75 mm above the motherboard for cooler and cards",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "motherboard",
+          "side_left_rear"
+        ],
+        "min": 75
+      }
+    },
+    {
+      "text": "Front shell fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "front_shell",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Rear shell fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "rear_shell",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Motherboard tray fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "divider",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Left drive rail fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "hdd_rail_left",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Right drive rail fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "hdd_rail_right",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Front side panels fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "side_front",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Rear left side panel fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "side_left_rear",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "Rear right side panel fits the 256 mm bed as it prints",
+      "check": {
+        "kind": "fits_within",
+        "target": "side_right_rear",
+        "box": [
+          254,
+          254,
+          254
+        ]
+      }
+    },
+    {
+      "text": "As small as possible: whole case within 255 × 290 × 255 mm",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          255,
+          290,
+          255
+        ]
+      }
+    },
+    {
+      "text": "Front shell is one piece",
+      "check": {
+        "kind": "bodies",
+        "target": "front_shell",
+        "count": 1
+      }
+    },
+    {
+      "text": "Rear shell is one piece",
+      "check": {
+        "kind": "bodies",
+        "target": "rear_shell",
+        "count": 1
+      }
+    },
+    {
+      "text": "The fans push air front-to-back through the drive cage"
+    }
+  ],
+  "outputs": [
+    "bom",
+    "3mf"
+  ]
+}

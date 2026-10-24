@@ -1,0 +1,267 @@
+{
+  "hitlcad": 2,
+  "name": "happydog",
+  "backend": "blender",
+  "brief": {
+    "title": "Happy cartoon puppy figurine",
+    "summary": "A stylised puppy sitting up, with a big head tilted to one side, an open smiling mouth with its tongue out, floppy ears and a wagging tail. It is sculpted as one smooth blended (metaball) shape, then split into the three pieces it prints as: the body, the head (which carries the collar and tag) and the tail. The head is glued onto the body at the neck, on a locating peg, along the collar's lower edge so the collar hides the joint; the tail is trimmed to the rump's surface and glued on. Eyes, nose, mouth, tongue, ears, spots, cheek blush, toe lines and the collar with its tag are separate coloured shells placed on the surface, so they follow it when parameters change.",
+    "key_dimensions": [
+      {
+        "name": "Overall height",
+        "value": 175.0,
+        "unit": "mm",
+        "note": "top of head to bottom of paws; the whole model is scaled to this"
+      },
+      {
+        "name": "Width",
+        "value": 95.0,
+        "unit": "mm",
+        "note": "at 175 mm height (ears and haunches)"
+      },
+      {
+        "name": "Length",
+        "value": 161.0,
+        "unit": "mm",
+        "note": "at 175 mm height, nose to tail tip"
+      },
+      {
+        "name": "Neck peg",
+        "value": 7.9,
+        "unit": "mm",
+        "note": "at 175 mm height: Ø × length, in a socket 0.3 mm larger"
+      }
+    ],
+    "features": [
+      "Sitting pose: front legs straight, hind legs folded with feet forward",
+      "Big head (head_scale) tilted sideways (head_tilt_deg) for a cheerful look",
+      "Open smiling mouth with the tongue out (mouth_open, tongue_length)",
+      "Shiny eyes with highlights, or closed happy ^ ^ eyes (eye_style), raised eyebrows",
+      "Floppy dark ears (ear_flare_deg) and a wagging tail (tail_wag_deg)",
+      "Eye patch and back spot, pink cheek blush, toe lines on all four paws",
+      "Red collar with a gold tag",
+      "Prints as three parts: body (with the neck peg), head (with the collar, tag and socket) and tail, glued together"
+    ],
+    "assumptions": [
+      "Decorative figurine, 175 mm tall, faces −Y",
+      "Organic, sculpted shape: Blender metaballs give smooth blended forms that B-rep cannot",
+      "Coloured details are separate overlapping shells (one colour each) so each part can be printed multi-colour or in one colour; a slicer merges them",
+      "Printed upright with supports (chin, tongue, ears and tail overhang) or in resin; no manufacturing process is declared because hitlcad's FDM check assumes printing without supports",
+      "Parts are glued, with a 0.1 mm glue line at each joint",
+      "Bottom of the body is cut flat (about 1% of the height) so it stands steadily"
+    ],
+    "open_questions": [
+      "Breed or colouring you have in mind (e.g. golden retriever, dalmatian, beagle)?",
+      "Pose: sitting (current), standing, or lying down?",
+      "Will it be 3D printed, and in one colour or several?"
+    ]
+  },
+  "parameters": [
+    {
+      "name": "height",
+      "label": "Overall height",
+      "type": "float",
+      "value": 175.0,
+      "min": 30.0,
+      "max": 250.0,
+      "step": 1.0,
+      "unit": "mm"
+    },
+    {
+      "name": "head_scale",
+      "label": "Head size",
+      "type": "float",
+      "value": 1.0,
+      "min": 0.8,
+      "max": 1.3,
+      "step": 0.05,
+      "unit": "×"
+    },
+    {
+      "name": "head_tilt_deg",
+      "label": "Head tilt",
+      "type": "float",
+      "value": 12,
+      "min": -25.0,
+      "max": 25.0,
+      "step": 1.0,
+      "unit": "°"
+    },
+    {
+      "name": "ear_flare_deg",
+      "label": "Ear flare outwards",
+      "type": "float",
+      "value": 22,
+      "min": 0.0,
+      "max": 60.0,
+      "step": 1.0,
+      "unit": "°"
+    },
+    {
+      "name": "tail_wag_deg",
+      "label": "Tail wag (sideways)",
+      "type": "float",
+      "value": 25,
+      "min": -45.0,
+      "max": 45.0,
+      "step": 1.0,
+      "unit": "°"
+    },
+    {
+      "name": "mouth_open",
+      "label": "Mouth opening",
+      "type": "float",
+      "value": 1.0,
+      "min": 0.5,
+      "max": 1.5,
+      "step": 0.05,
+      "unit": "×"
+    },
+    {
+      "name": "tongue_length",
+      "label": "Tongue length",
+      "type": "float",
+      "value": 1.0,
+      "min": 0.5,
+      "max": 1.6,
+      "step": 0.05,
+      "unit": "×"
+    },
+    {
+      "name": "eye_size",
+      "label": "Eye size",
+      "type": "float",
+      "value": 1.0,
+      "min": 0.7,
+      "max": 1.4,
+      "step": 0.05,
+      "unit": "×"
+    },
+    {
+      "name": "eye_style",
+      "label": "Eyes: 0 = shiny open, 1 = happy closed ^ ^",
+      "type": "float",
+      "value": 0,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 1.0,
+      "unit": ""
+    },
+    {
+      "name": "spots",
+      "label": "Spots (0 = off, 1 = on)",
+      "type": "float",
+      "value": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 1.0,
+      "unit": ""
+    },
+    {
+      "name": "collar",
+      "label": "Collar and tag (0 = off, 1 = on)",
+      "type": "float",
+      "value": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 1.0,
+      "unit": ""
+    },
+    {
+      "name": "blush",
+      "label": "Cheek blush (0 = off, 1 = on)",
+      "type": "float",
+      "value": 1,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 1.0,
+      "unit": ""
+    },
+    {
+      "name": "detail",
+      "label": "Mesh resolution (smaller = finer, slower)",
+      "type": "float",
+      "value": 0.8,
+      "min": 0.5,
+      "max": 2.5,
+      "step": 0.1,
+      "unit": ""
+    }
+  ],
+  "ground": "body",
+  "parts": {
+    "body": {
+      "role": "the sitting body and legs, with spots, toe lines and the neck peg; stands on its flat bottom",
+      "file": "parts/figure.py",
+      "material": "PLA",
+      "connectors": {
+        "neck": {
+          "kind": "frame"
+        },
+        "tail": {
+          "kind": "frame"
+        }
+      }
+    },
+    "head": {
+      "role": "the head: face, ears, tongue, collar and tag; a socket takes the body's neck peg",
+      "file": "parts/figure.py",
+      "material": "PLA",
+      "connectors": {
+        "neck": {
+          "kind": "frame"
+        }
+      }
+    },
+    "tail": {
+      "role": "the wagging tail with its cream tip, trimmed to the rump",
+      "file": "parts/figure.py",
+      "material": "PLA",
+      "connectors": {
+        "root": {
+          "kind": "frame"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "rigid",
+      "a": "body.neck",
+      "b": "head.neck"
+    },
+    {
+      "type": "rigid",
+      "a": "body.tail",
+      "b": "tail.root"
+    }
+  ],
+  "requirements": [
+    {
+      "text": "175 mm tall (follows the height parameter)",
+      "check": {
+        "kind": "size",
+        "axis": "z",
+        "min": 174.5,
+        "max": 175.5
+      }
+    },
+    {
+      "text": "Fits in a 100 × 170 × 180 mm box",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          100,
+          170,
+          180
+        ]
+      }
+    },
+    {
+      "text": "Looks happy and cute: smile, tongue out, wagging tail, tilted head"
+    }
+  ],
+  "outputs": [
+    "bom",
+    "3mf"
+  ]
+}

@@ -1,0 +1,909 @@
+{
+  "hitlcad": 2,
+  "name": "handhold-fan",
+  "backend": "build123d",
+  "brief": {
+    "title": "Hand-held ducted blower for dusting a desktop PC",
+    "summary": "A small 3D-printed ducted fan (like an EDF) driven by a 750 W brushless motor. Air enters through a finger guard at the back, a printed impeller pushes it past straightening vanes that also hold the motor, and a converging nozzle turns it into a narrow jet. A pistol grip under the duct holds the ESC; a switch or throttle pot sits under the index finger and the power cable leaves through the grip's end cap.",
+    "key_dimensions": [
+      {
+        "name": "Motor (assumed)",
+        "value": 36,
+        "note": "Ø36 × 50 mm inrunner can, Ø5 mm shaft sticking out 15 mm, 4 × M3 on a Ø25 mm circle in the shaft face: change the motor_* parameters to your motor"
+      },
+      {
+        "name": "Impeller",
+        "value": 68,
+        "note": "Ø68 mm, 7 flat blades, Ø30 mm hub"
+      },
+      {
+        "name": "Duct bore",
+        "value": 69.5,
+        "note": "0.75 mm tip gap all round"
+      },
+      {
+        "name": "Nozzle outlet",
+        "value": 20,
+        "note": "Ø20 mm jet"
+      }
+    ],
+    "features": [
+      "duct: printed intake-end down; the bore steps out behind the impeller into a shoulder that the motor mount sits on",
+      "motor_mount: bulkhead, motor collar and 6 straightening vanes on a ring; prints flat with no supports; the motor bolts under it with 4 × M3 and stays open to the airflow behind for cooling. Fan thrust pushes it onto the shoulder; the nozzle spigot keeps it from sliding out",
+      "impeller: printed hub-face down, flat blades at 50° to the rotation plane (printable without supports), M3 set-screw boss on the shaft",
+      "intake_guard: finger guard (≤ 7 mm slots) that slips over the duct's intake end",
+      "nozzle: plugs into the outlet; printed tip-down on a flat lip",
+      "handle: pistol grip with ESC bay and a switch hole, bolted to a pad under the duct with 4 × M3 into heat-set inserts; grip_cap closes it with 2 × M3 and has a cable hole"
+    ],
+    "assumptions": [
+      "The motor is a Ø36 × 50 mm inrunner (3650 class) with a Ø5 mm shaft; outrunners need a different mount",
+      "Powered by an external 4–6 S battery or 24 V supply through a cable; ESC (60–80 A) and a servo tester / throttle pot in the grip",
+      "Printed in PETG (PA/nylon is better for the impeller)"
+    ],
+    "open_questions": [
+      "Exact motor: diameter, length, shaft diameter and length, mounting holes, inrunner or outrunner, KV?",
+      "Battery or mains supply?"
+    ]
+  },
+  "parameters": [
+    {
+      "name": "motor_d",
+      "label": "Motor can diameter",
+      "value": 36,
+      "min": 20,
+      "max": 50,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "motor_len",
+      "label": "Motor can length",
+      "value": 50,
+      "min": 20,
+      "max": 80,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "shaft_d",
+      "label": "Motor shaft diameter",
+      "value": 5,
+      "min": 2,
+      "max": 8,
+      "step": 0.01,
+      "unit": "mm"
+    },
+    {
+      "name": "shaft_len",
+      "label": "Shaft length past the motor face",
+      "value": 15,
+      "min": 8,
+      "max": 30,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "motor_bolt_circle",
+      "label": "Motor mounting hole circle",
+      "value": 25,
+      "min": 12,
+      "max": 40,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "motor_tap_depth",
+      "label": "Depth of the motor's M3 holes",
+      "value": 6,
+      "min": 3,
+      "max": 10,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "can_fit",
+      "label": "Diametral clearance of the motor can in its collar",
+      "value": 0.4,
+      "min": 0.1,
+      "max": 1,
+      "step": 0.05,
+      "unit": "mm"
+    },
+    {
+      "name": "fan_d",
+      "label": "Impeller diameter",
+      "value": 68,
+      "min": 50,
+      "max": 100,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "fan_h",
+      "label": "Impeller blade height (axial)",
+      "value": 18,
+      "min": 10,
+      "max": 30,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "hub_d",
+      "label": "Impeller hub diameter",
+      "value": 30,
+      "min": 16,
+      "max": 50,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "boss_d",
+      "label": "Impeller set-screw boss diameter",
+      "value": 14,
+      "min": 8,
+      "max": 20,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "blade_count",
+      "label": "Impeller blades",
+      "value": 7,
+      "min": 3,
+      "max": 12,
+      "step": 1,
+      "unit": "count",
+      "type": "int"
+    },
+    {
+      "name": "blade_angle",
+      "label": "Blade angle to the rotation plane",
+      "value": 50,
+      "min": 20,
+      "max": 60,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "blade_t",
+      "label": "Blade thickness",
+      "value": 2.2,
+      "min": 1.2,
+      "max": 4,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "tip_gap",
+      "label": "Radial gap between blade tips and duct",
+      "value": 0.75,
+      "min": 0.3,
+      "max": 2,
+      "step": 0.05,
+      "unit": "mm"
+    },
+    {
+      "name": "wall",
+      "label": "Duct wall around the motor mount",
+      "value": 2.5,
+      "min": 2,
+      "max": 5,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "mount_ring",
+      "label": "Motor mount ring wall (the duct's shoulder)",
+      "value": 2,
+      "min": 1.2,
+      "max": 4,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "bulkhead_t",
+      "label": "Motor bulkhead thickness",
+      "value": 3.5,
+      "min": 3,
+      "max": 8,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "collar_len",
+      "label": "Motor collar length (incl. bulkhead)",
+      "value": 18,
+      "min": 8,
+      "max": 40,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "collar_wall",
+      "label": "Motor collar wall",
+      "value": 2.5,
+      "min": 1.6,
+      "max": 5,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "shaft_hole_d",
+      "label": "Bulkhead hole for the shaft and bearing boss",
+      "value": 12,
+      "min": 6,
+      "max": 20,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "vane_count",
+      "label": "Straightening vanes",
+      "value": 6,
+      "min": 3,
+      "max": 11,
+      "step": 1,
+      "unit": "count",
+      "type": "int"
+    },
+    {
+      "name": "vane_t",
+      "label": "Vane thickness",
+      "value": 2.4,
+      "min": 1.6,
+      "max": 4,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "inlet_gap",
+      "label": "Gap between impeller and guard",
+      "value": 4,
+      "min": 2,
+      "max": 15,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "fan_gap",
+      "label": "Gap between blades and bulkhead",
+      "value": 7,
+      "min": 4,
+      "max": 15,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "boss_gap",
+      "label": "Gap between impeller boss and bulkhead",
+      "value": 1,
+      "min": 0.5,
+      "max": 3,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "motor_tail",
+      "label": "Duct length behind the motor",
+      "value": 5,
+      "min": 0,
+      "max": 40,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "pad_extra",
+      "label": "Handle pad height below the duct",
+      "value": 6,
+      "min": 4,
+      "max": 15,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "wire_hole_d",
+      "label": "Motor wire passage",
+      "value": 10,
+      "min": 6,
+      "max": 14,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "nozzle_d",
+      "label": "Nozzle outlet diameter",
+      "value": 20,
+      "min": 8,
+      "max": 50,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "nozzle_len",
+      "label": "Nozzle cone length",
+      "value": 70,
+      "min": 30,
+      "max": 200,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "nozzle_wall",
+      "label": "Nozzle wall",
+      "value": 2,
+      "min": 1.2,
+      "max": 4,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "spigot_len",
+      "label": "Nozzle spigot length",
+      "value": 10,
+      "min": 5,
+      "max": 20,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "guard_t",
+      "label": "Guard grille thickness",
+      "value": 3,
+      "min": 2,
+      "max": 6,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "guard_skirt",
+      "label": "Guard skirt length",
+      "value": 8,
+      "min": 4,
+      "max": 20,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "guard_opening",
+      "label": "Largest guard opening",
+      "value": 7,
+      "min": 4,
+      "max": 12,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "guard_rib",
+      "label": "Guard rib width",
+      "value": 1.6,
+      "min": 1,
+      "max": 3,
+      "step": 0.1,
+      "unit": "mm"
+    },
+    {
+      "name": "handle_len",
+      "label": "Grip length",
+      "value": 110,
+      "min": 80,
+      "max": 160,
+      "step": 1,
+      "unit": "mm"
+    },
+    {
+      "name": "handle_w",
+      "label": "Grip width",
+      "value": 32,
+      "min": 26,
+      "max": 45,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "handle_depth",
+      "label": "Grip depth (front to back)",
+      "value": 48,
+      "min": 36,
+      "max": 70,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "handle_wall",
+      "label": "Grip wall",
+      "value": 4,
+      "min": 2.5,
+      "max": 6,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "switch_d",
+      "label": "Switch / throttle hole",
+      "value": 12,
+      "min": 6,
+      "max": 20,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "cap_t",
+      "label": "Grip end cap thickness",
+      "value": 3.5,
+      "min": 3,
+      "max": 8,
+      "step": 0.5,
+      "unit": "mm"
+    },
+    {
+      "name": "cable_d",
+      "label": "Power cable hole",
+      "value": 8,
+      "min": 4,
+      "max": 14,
+      "step": 0.5,
+      "unit": "mm"
+    }
+  ],
+  "ground": "duct",
+  "manufacturing": {
+    "process": "fdm",
+    "hole_allowance_mm": 0.15
+  },
+  "parts": {
+    "duct": {
+      "role": "fan shroud with the motor mount shoulder and the handle pad",
+      "file": "parts/duct.py",
+      "material": "PETG",
+      "connectors": {
+        "mount_seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "mount_bore": {
+          "kind": "hole"
+        },
+        "intake": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "rim": {
+          "kind": "shaft"
+        },
+        "outlet": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "pad": {
+          "kind": "face"
+        },
+        "inserts": {
+          "kind": "frame",
+          "count": 4
+        }
+      }
+    },
+    "motor_mount": {
+      "role": "motor bulkhead on straightening vanes, slides into the duct",
+      "file": "parts/motor_mount.py",
+      "material": "PETG",
+      "connectors": {
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "ring": {
+          "kind": "shaft"
+        },
+        "motor_face": {
+          "kind": "face",
+          "symmetry": 4
+        },
+        "motor_collar": {
+          "kind": "hole"
+        },
+        "motor_screws": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "impeller": {
+      "role": "axial fan rotor on the motor shaft",
+      "file": "parts/impeller.py",
+      "material": "PETG",
+      "connectors": {
+        "bore": {
+          "kind": "hole"
+        }
+      }
+    },
+    "intake_guard": {
+      "role": "finger guard over the intake",
+      "file": "parts/guard.py",
+      "material": "PETG",
+      "connectors": {
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "socket": {
+          "kind": "hole"
+        }
+      }
+    },
+    "nozzle": {
+      "role": "converging nozzle: narrow jet",
+      "file": "parts/nozzle.py",
+      "material": "PETG",
+      "connectors": {
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        },
+        "spigot": {
+          "kind": "shaft"
+        }
+      }
+    },
+    "handle": {
+      "role": "pistol grip with ESC bay and switch hole",
+      "file": "parts/handle.py",
+      "material": "PETG",
+      "connectors": {
+        "saddle": {
+          "kind": "face"
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 4
+        },
+        "bottom": {
+          "kind": "face",
+          "symmetry": 2
+        },
+        "cap_inserts": {
+          "kind": "frame",
+          "count": 2
+        }
+      }
+    },
+    "grip_cap": {
+      "role": "closes the grip, power cable exit",
+      "file": "parts/handle.py",
+      "material": "PETG",
+      "connectors": {
+        "top": {
+          "kind": "face",
+          "symmetry": 2
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 2
+        }
+      }
+    },
+    "motor": {
+      "role": "750 W brushless motor",
+      "file": "parts/motor.py",
+      "material": "aluminium_6061",
+      "catalog": {
+        "designation": "750 W brushless inrunner, Ø36 × 50 mm, Ø5 mm shaft, 4 × M3 on Ø25 mm",
+        "fidelity": "simplified"
+      },
+      "connectors": {
+        "face": {
+          "kind": "face",
+          "symmetry": 4
+        },
+        "can": {
+          "kind": "shaft"
+        },
+        "shaft": {
+          "kind": "shaft"
+        },
+        "screw_holes": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "motor_screw": {
+      "role": "holds the motor to the bulkhead",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 4762 M3 × 8",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "handle_screw": {
+      "role": "holds the handle to the duct pad",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 4762 M3 × 10",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "cap_screw": {
+      "role": "holds the grip cap",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "ISO 4762 M3 × 8",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "pad_insert": {
+      "role": "thread in the duct pad",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "CNC Kitchen M3 × 5.7 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "cap_insert": {
+      "role": "thread in the grip end",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "CNC Kitchen M3 × 5.7 heat-set insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "rigid",
+      "a": "duct.mount_seat",
+      "b": "motor_mount.seat"
+    },
+    {
+      "type": "cylindrical",
+      "a": "duct.mount_bore",
+      "b": "motor_mount.ring",
+      "flip": true,
+      "fit": {
+        "clearance": [
+          0.05,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "rigid",
+      "a": "motor_mount.motor_face",
+      "b": "motor.face"
+    },
+    {
+      "type": "cylindrical",
+      "a": "motor_mount.motor_collar",
+      "b": "motor.can",
+      "flip": true,
+      "fit": {
+        "clearance": [
+          0.1,
+          0.8
+        ]
+      }
+    },
+    {
+      "type": "cylindrical",
+      "a": "motor.shaft",
+      "b": "impeller.bore",
+      "fit": {
+        "clearance": [
+          0.0,
+          0.15
+        ]
+      }
+    },
+    {
+      "type": "rigid",
+      "a": "duct.intake",
+      "b": "intake_guard.seat"
+    },
+    {
+      "type": "cylindrical",
+      "a": "duct.rim",
+      "b": "intake_guard.socket",
+      "fit": {
+        "clearance": [
+          0.1,
+          0.6
+        ]
+      }
+    },
+    {
+      "type": "rigid",
+      "a": "duct.outlet",
+      "b": "nozzle.seat"
+    },
+    {
+      "type": "cylindrical",
+      "a": "duct.mount_bore",
+      "b": "nozzle.spigot",
+      "fit": {
+        "clearance": [
+          0.0,
+          0.3
+        ]
+      }
+    },
+    {
+      "type": "rigid",
+      "a": "duct.pad",
+      "b": "handle.saddle"
+    },
+    {
+      "type": "rigid",
+      "a": "handle.bottom",
+      "b": "grip_cap.top"
+    },
+    {
+      "type": "rigid",
+      "a": "motor_mount.motor_screws",
+      "b": "motor_screw.placement"
+    },
+    {
+      "type": "rigid",
+      "a": "duct.inserts",
+      "b": "pad_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "handle.screws",
+      "b": "handle_screw.placement"
+    },
+    {
+      "type": "rigid",
+      "a": "handle.cap_inserts",
+      "b": "cap_insert.placement",
+      "overlap": true
+    },
+    {
+      "type": "rigid",
+      "a": "grip_cap.screws",
+      "b": "cap_screw.placement"
+    }
+  ],
+  "fasteners": [
+    {
+      "fastener": "motor_screw.seat",
+      "through": [
+        "motor_mount.motor_screws"
+      ],
+      "into": "motor.screw_holes",
+      "engagement": 1.5
+    },
+    {
+      "fastener": "handle_screw.seat",
+      "through": [
+        "handle.screws"
+      ],
+      "into": "pad_insert.thread"
+    },
+    {
+      "fastener": "cap_screw.seat",
+      "through": [
+        "grip_cap.screws"
+      ],
+      "into": "cap_insert.thread"
+    }
+  ],
+  "requirements": [
+    {
+      "text": "Small enough to hold in one hand: the whole blower fits in 220 × 100 × 220 mm",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          220,
+          100,
+          220
+        ]
+      }
+    },
+    {
+      "text": "Impeller blade tips clear the duct",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "impeller",
+          "duct"
+        ],
+        "min": 0.4
+      }
+    },
+    {
+      "text": "Impeller clears the guard",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "impeller",
+          "intake_guard"
+        ],
+        "min": 2
+      }
+    },
+    {
+      "text": "Impeller clears the motor mount",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "impeller",
+          "motor_mount"
+        ],
+        "min": 0.5
+      }
+    },
+    {
+      "text": "Impeller clears the motor screw heads",
+      "check": {
+        "kind": "clearance",
+        "between": [
+          "impeller",
+          "motor_screw[0]"
+        ],
+        "min": 1
+      }
+    },
+    {
+      "text": "Impeller is one solid piece",
+      "check": {
+        "kind": "bodies",
+        "count": 1,
+        "target": "impeller"
+      }
+    },
+    {
+      "text": "Intake guard is finger-safe: no opening wider than 7 mm"
+    }
+  ],
+  "outputs": [
+    "bom",
+    "3mf"
+  ]
+}

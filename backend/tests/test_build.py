@@ -269,3 +269,15 @@ def test_fixtures_are_valid_design_files() -> None:
     for folder in DESIGNS.iterdir():
         DesignFolder(folder).load()
     shutil.rmtree(DESIGNS / "__pycache__", ignore_errors=True)
+
+
+EXAMPLES = Path(__file__).parents[2] / "examples"
+
+
+@pytest.mark.parametrize("name", sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir()))
+async def test_the_readme_examples_build_and_verify(core: HitlCad, tmp_path: Path, name: str) -> None:
+    folder = shutil.copytree(EXAMPLES / name, tmp_path / name)
+    report = await build(core, folder, tmp_path / "out")
+    assert report.status == "succeeded", report.error
+    assert failing(report) == []
+

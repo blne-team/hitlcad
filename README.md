@@ -1,179 +1,154 @@
 # hitlcad
 
-Parametric CAD assemblies for the coding agent you already use. Claude Code or Codex declares a
-product's parts and how they connect, then writes the code that builds them in **build123d**
-(exact B-rep, STEP) or **Blender** (meshes), in VS Code. hitlcad builds it, verifies every
-connector, fit, gear mesh, fastener, collision, motion, process and requirement, and shows each
-build in a 3D panel next to the code. Select faces, pin notes to the surface and tune parameters
-there, then keep talking to the agent in its own chat: it sees what you pointed at.
+Design physical things by talking to Claude Code or Codex in VS Code. Your agent writes the CAD
+as Python. hitlcad builds it every time a file is saved, measures what came out, and shows you
+the model in 3D next to the code. When something needs changing, you click on it.
 
-hitlcad has no chat or agent of its own. It adds MCP tools to your agent and a review panel to
-VS Code. See [docs/architecture.md](docs/architecture.md) for the architecture and
-[docs/assembly-model.md](docs/assembly-model.md) for the model of a design.
+<!-- Hero: the whole VS Code window (agent chat, a part file, the 3D editor, the Design view),
+     saved as docs/images/vscode.png, goes here. -->
 
-## Install
+![Selecting a face and pinning a note in the 3D editor](docs/images/point-and-pin.gif)
 
-hitlcad ships as a folder with the hitlcad tool (a wheel), the VS Code extension (with the panel
-UI) and an installer. Unpack `hitlcad-<version>.tar.gz` and run `./install.sh`; its
-`INSTALL.md` covers prerequisites (VS Code, [uv](https://docs.astral.sh/uv/), optionally Blender
-4.5 LTS) and Windows.
+## What a session looks like
 
-## Build a release
+Say you ask for *a hand-held blower for dusting my PC: a 750 W brushless motor in a printed duct,
+PETG, with a pistol grip*. That is the [handhold-fan](examples/handhold-fan) example.
 
-```bash
-scripts/package.sh        # or the VS Code task "release: package"
+Before any geometry, the agent writes down what the product is made of and how the pieces go
+together. Printed parts get a material, bought parts come from a catalog, and every joint is
+declared between named features:
+
+```jsonc
+"impeller":     { "role": "axial fan rotor on the motor shaft", "material": "PETG",
+                  "connectors": { "bore": { "kind": "hole" } } },
+"handle_screw": { "catalog": { "designation": "ISO 4762 M3 × 10" }, ... },
+
+{ "type": "cylindrical", "a": "motor.shaft", "b": "impeller.bore", "fit": { "clearance": [0.0, 0.15] } },
+{ "text": "Impeller blade tips clear the duct",
+  "check": { "kind": "clearance", "between": ["impeller", "duct"], "min": 0.4 } }
 ```
 
-It builds the wheel and the extension with its panel UI, pins the dependencies to `uv.lock`
-(`constraints.txt`) and the default Python to `.python-version`, and writes
-`dist/hitlcad-<version>/` and `dist/hitlcad-<version>.tar.gz`. Building needs Node 20+ and uv;
-the devcontainer has both.
+Then it writes one Python file per part. Each save rebuilds the parts that changed and checks the
+whole assembly again. Agents make mistakes here. Suppose it typed the impeller's diameter in as
+70 mm instead of reading it from the parameters. The build comes back with:
 
-To publish, bump `version` in both `pyproject.toml` and `vscode-extension/package.json` (the
-script refuses a mismatch), then push a matching tag:
-
-```bash
-git tag v0.2.0 && git push origin v0.2.0
+```
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³
+✗ motion motor.shaft+impeller.bore: motor.shaft ↔ impeller.bore at 0.0°: impeller hits duct (91.11 mm³)
+✗ requirement Impeller blade tips clear the duct: impeller and duct overlap by 91.1 mm³
+✓ 151 of 155 results pass
 ```
 
-GitHub Actions (`.github/workflows/release.yml`) runs CI, builds the release and publishes it as a
-GitHub release with the `.tar.gz`, the wheel and the `.vsix` attached.
+That is the text your agent reads after the build, so it fixes the impeller and tries again before
+you've looked. Pick M3 × 12 screws for a motor with 6 mm deep holes and you get
+`bottoms out: 8.50 mm into a 6.00 mm deep motor.screw_holes[0]`, once per screw.
 
-## CI
+Once it builds clean, you look at it. In the clip above, you click the duct's mounting bore and
+pin a note to the nozzle. Your next message to the agent carries this along:
 
-`.github/workflows/ci.yml` runs on every push and pull request: ruff; the full backend suite,
-including real build123d and Blender builds, on Python 3.11, 3.12 and 3.13; the extension's
-tests, its panel UI's typecheck and build, and its packaging; and the end-to-end tests (`e2e/`):
-Playwright drives the real server and the panel UI in Chromium, each page loaded as the extension
-loads it into a webview, including the extension's sync between the 3D editor tab and the Design
-view. To run them locally:
+```
+Selected in the 3D view:
+1. duct.mount_bore: Cylinder face r=39.42 mm, axis (1.00, 0.00, 0.00), area 17813.0 mm² (face 5 of duct)
 
-```bash
-npm --prefix vscode-extension run compile
-cd e2e && npm ci && npx playwright install chromium && npm test
+Open pins (resolve them with resolve_pins once addressed):
+- Cone face, axis (-1.00, 0.00, 0.00), area 8803.8 mm² (face 3 of nozzle): Narrow the nozzle to a 20 mm outlet
 ```
 
-## Use it
+So "make that bore a bit bigger" means one specific face of one specific part, and the agent knows
+which. Pins stay attached to their part when it's rebuilt, until the agent resolves them.
 
-1. Run **hitlcad: New Design Project** in VS Code (or `hitlcad init ~/designs/my-project`) and
-   open the folder. It contains `designs/` and the files that set up your agents:
-   - `.mcp.json` gives Claude Code hitlcad's tools.
-   - `.claude/settings.json` pre-approves them.
-   - If you allow it (hitlcad asks): a prompt hook in `.claude/settings.json` and
-     `.codex/hooks.json` that adds your panel selection and open pins to your next message in
-     Claude Code and Codex, and for Codex, hitlcad's MCP server and trust for the folder in
-     `~/.codex/config.toml`, so Codex loads the hook. `hitlcad init --hooks --codex` allows both
-     without asking.
-   - `.vscode/settings.json` points VS Code's Python at the interpreter hitlcad builds with, so
-     part files resolve `build123d`.
-   - `CLAUDE.md` and `AGENTS.md` point the agents at hitlcad's skills and its rules.
-   - `.claude/skills/` and `.agents/skills/` hold hitlcad's skills for Claude Code and Codex:
-     `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract per
-     backend). Running `hitlcad init` again brings them up to date.
-   - `.gitignore`.
+## How much does it check?
 
-   The extension starts `hitlcad serve` when needed.
-2. Run **hitlcad: New Design**, name it and pick a backend, or ask your agent to create one. A
-   design is an assembly, in a folder (see [docs/assembly-model.md](docs/assembly-model.md)):
-   - `design.json`: the structure (parts, made or bought, with their connectors; the mates,
-     relations and fastener sets between them; components, which are other designs used as
-     sub-assemblies), parameters, configurations (variants), requirements and the brief;
-   - `interfaces.py`: the mating values two parts share, computed once;
-   - `parts/*.py`: the code that builds each part in its own frame, the way it is made;
-   - `assembly.py`: where each instance sits.
-3. Describe the product to Claude Code or Codex in their panel. They declare the structure
-   first and check it, then write the code part by part, with standard screws, inserts and
-   bearings from a catalog. They edit the files with their normal tools, so you review diffs as
-   usual. **Every save rebuilds** what changed: each part file is cached by exactly the
-   parameters, interface values and helpers it read. When a build finishes, the design's panel
-   opens beside the editor (`hitlcad.autoOpenPanel`). The files of the latest successful build
-   are in the design's git-ignored `build/` folder: the assembly (`model.step`, `mesh.stl`), each
-   part in its own frame (`parts/<part>.step`, `.stl`), `preview.png` and the outputs the
-   design asks for (bill of materials, 3MF, URDF, SDF).
-4. Review in the panel. The 3D view is [three-cad-viewer](https://github.com/bernhard-42/three-cad-viewer):
-   its toolbar has the instance tree, clipping planes, distance and property measurement, zebra
-   stripes, explode and standard views. Pins, Structure, Parameters, Changes, Results, BOM and
-   Brief are in the **hitlcad › Design** view, in the bottom panel by default; drag it to
-   either sidebar like any VS Code view. It follows the design tab you are looking at.
-   - **Select**: click a face, edge or vertex of an instance (B-rep parts) or a point (mesh
-     parts): "make the selected hole 0.5 mm larger". Picks are named by instance and connector,
-     e.g. `lid.screws[2]`. Shift-click adds more. The viewer's filter (top right) limits clicks
-     to vertices, edges, faces or whole instances (Solid). While the viewer's distance or
-     properties tool is on, clicks measure instead; **Place pins** turns it off.
-   - **Motion**: a mate with a range of motion (a hinge, a slide) gets a slider over the 3D view
-     that moves its moving side through the range the build checked for collisions.
-   - **Place pins** with notes, then tell the agent "address my pins". It resolves them when
-     done. Pins follow their instance and connector across rebuilds.
-   - **Structure**: parts and components as a graph, with the mates, relations and fastener
-     sets between them coloured by their results; click a part to select it. It also shows what
-     your agent reads about the design.
-   - **Parameters**: changes are written to `design.json` and rebuilt; switch configurations.
-   - **Compare**: draw an earlier revision as a ghost; the **Changes** tab lists changed
-     parameters, size and mass, results that changed and every file's diff.
-   - **Results**: what every build verified, by analysis: structure, parts, connector features,
-     mates and fits, relations, fastener sets, coverage, interference, motion, manufacturing
-     (FDM, CNC milling, sheet metal, injection molding, per made part in its own frame) and
-     requirements (size, mass, holes, walls, clearance, tolerance stacks), with renders and
-     downloads.
-   - **BOM**: made and bought parts with quantities, through components.
-   - **Brief**: what the design is meant to be, as the agent wrote it.
+For the blower, 155 things on every build:
 
-Your selection and open pins go to Claude Code or Codex with your next message: the project's
-prompt hook adds what changed since that chat was last told, and the panel shows whether it has
-been sent. Codex then asks you once to approve the hook (`/hooks`); until then it skips it. **Copy for chat**
-copies the selections and pins of every design in the workspace, to paste anywhere. In an existing
-project, **hitlcad: Set Up Claude Code and Codex for This Project** asks again (the extension also
-offers it when a project lacks the setup). `hitlcad connect` prints the manual commands for both agents.
+![The Results tab for the blower](docs/images/design-results.png)
 
-Open any `.step`, `.stl`, `.glb`, `.3mf`, `.obj` or `.ply` with **Open in 3D Viewer**.
+Each line below is quoted from that build.
 
-The full revision history lives in `~/.hitlcad` (`HITLCAD_DATA_DIR`). Design folders hold what
-you would commit plus the git-ignored `build/`.
+- **Parts** (26). Every part is a valid solid with a closed mesh.
+- **Connectors** (51). Each feature the agent declared is found in the geometry and measured:
+  `duct.mount_bore: Ø73.850 × 58.50 deep`.
+- **Mates** (27). Joined features line up, and fits are what was asked for after the printer's
+  allowance: `fit 0.200 mm (hole Ø73.850, shaft Ø73.500) after process allowances`.
+- **Fastener sets** (10). Each screw seats, clears its hole and bites:
+  `motor_screw[0].seat through motor_mount.motor_screws[0] into motor.screw_holes[3]: seated, clears, engages 4.50 mm`.
+- **Coverage** (1). Nothing floats: `all 24 instances connect to duct`.
+- **Interference** (7). No two parts overlap unless a joint says they should, like a heat-set insert
+  melted into the duct.
+- **Motion** (5). Moving parts are swept through their range:
+  `motor.shaft ↔ impeller.bore moves through a full turn (24 positions) without collision`.
+- **Manufacturing** (21). Each part is checked against its process in the orientation it's made:
+  `duct: thinnest wall 1.48 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, CNC milling, sheet
+  metal and injection molding each have their own rules.
+- **Requirements** (7). The brief's requirements, measured: `impeller to duct: 0.74 mm (needs ≥ 0.4)`.
+  "The intake guard is finger-safe" isn't something a program can settle, so that one is yours.
 
-## Configuration
+The [assembly model](docs/assembly-model.md) covers the rest: ISO 286 fits, tolerance stacks, gear
+relations, configurations.
 
-Environment variables (or `.env`), prefix `HITLCAD_`:
+## Examples
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends (plugins via entry points) |
-| `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
-| `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
-| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
-| `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
-| `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
-| `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
-| `HITLCAD_VERIFY_MOTION_SAMPLES` | `24` | Positions sampled per range of motion |
-| `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
-| `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server |
+<table>
+<tr>
+<td width="33%"><a href="examples/handhold-fan"><img src="docs/images/gallery-fan.png" alt="A hand-held ducted blower"></a></td>
+<td width="33%"><a href="examples/nas-case"><img src="docs/images/gallery-nas.png" alt="A 3D-printed micro-ATX NAS case"></a></td>
+<td width="33%"><a href="examples/happydog"><img src="docs/images/gallery-dog.png" alt="A cartoon dog figurine"></a></td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/handhold-fan"><b>Hand-held blower</b></a><br>The blower from the walkthrough: 13 parts around a 750 W motor, 24 instances with the screws and inserts, 155 checks. build123d.</td>
+<td valign="top"><a href="examples/nas-case"><b>NAS case</b></a><br>A micro-ATX NAS for four 3.5" drives, printed as nine pieces that each fit a 256 mm bed and held together by 32 M3 screws in heat-set inserts. 97 instances, 435 checks. build123d.</td>
+<td valign="top"><a href="examples/happydog"><b>Happy dog</b></a><br>A figurine in three printed pieces that peg together. Sculpted in Blender, with sliders for head tilt, ear flare and tail wag.</td>
+</tr>
+</table>
 
-## Develop
-
-Open this repository in VS Code and press F5:
-
-- **Extension** opens a second window on `~/hitlcad-playground` with the extension loaded from
-  source.
-- **Extension + Server** also runs `hitlcad serve` under the Python debugger.
-
-See `.vscode/launch.json`.
+Each one is a folder you can copy into a project's `designs/` and open, or build from a terminal:
 
 ```bash
-uv sync --extra dev
-uv run pytest                          # all tests; -m "not geometry" skips real-kernel tests
-uv run ruff check backend && uv run ruff format backend
-(cd vscode-extension && npm test)      # extension unit tests
-(cd vscode-extension && npm run compile)  # extension and panel UI (ui/ → out/ui/)
-uv run hitlcad build backend/tests/designs/gearbox --out build-out   # build and verify a design folder
+hitlcad build examples/handhold-fan --out build-out
 ```
 
-Dependencies resolve with a two-week supply-chain cooldown (`[tool.uv] exclude-newer` in
-`pyproject.toml`; `npm install --before=<date>` in `vscode-extension/` and `e2e/`). Move the date forward
-deliberately when upgrading.
+## Your agent, your files
 
-## Safety
+When you create a project, Claude Code and Codex get hitlcad's tools and skills, and a hook that
+passes along what you select and pin. You keep using them the way you already do.
 
-Model code runs locally in a child process with resource limits and a timeout, but **no
-filesystem or network isolation**. It is written by your own coding agent, which can already
-run code on your machine. The server binds to `127.0.0.1` and
-has no authentication. Keep it single-user and local until a container executor and auth are
-added.
+A design is a plain folder. Commit it and review the agent's changes as diffs:
+
+```
+handhold-fan/
+  design.json       parts, joints, parameters, requirements, the brief
+  interfaces.py     values two parts share, computed once (the bore and the shaft that fits it)
+  parts/duct.py     one file per part, modelled in its own frame, the way it's made
+  parts/...
+  assembly.py       where each part sits
+  build/            STEP, STL, 3MF, BOM, renders; regenerated, git-ignored
+```
+
+The STEP keeps the assembly's structure, so it opens in other CAD tools as parts and
+sub-assemblies, not one lump. Each part also gets its own STEP and STL for the printer or the
+machine shop. A design can ask for a bill of materials, 3MF, and URDF or SDF for a robot.
+
+The panel has more than the clip shows: parameter sliders, comparing any two revisions, the
+assembly as a graph, the BOM and the brief.
+
+![The Structure tab: the blower's parts and how they're joined](docs/images/design-structure.png)
+
+## Get started
+
+1. Download a [release](https://github.com/blne-team/solidwork/releases), unpack it and run
+   `./install.sh`. [INSTALL.md](INSTALL.md) has the details: requirements, Windows, remote
+   workspaces, settings.
+2. In VS Code, run **hitlcad: New Design Project** and open the folder it creates.
+3. Ask your agent for something to build.
+
+## More
+
+- [INSTALL.md](INSTALL.md): installing, project setup, configuration, troubleshooting
+- [docs/assembly-model.md](docs/assembly-model.md): what a design contains and how each part of it
+  is checked
+- [docs/architecture.md](docs/architecture.md): how hitlcad works inside
+- [docs/development.md](docs/development.md): working on hitlcad itself
+
+## License
+
+[MIT](LICENSE)

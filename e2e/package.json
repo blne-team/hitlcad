@@ -4,7 +4,8 @@
   "description": "End-to-end tests: the real hitlcad server, the built panel UI and the extension's webview relay, in Chromium.",
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "playwright test"
+    "test": "playwright test",
+    "screenshots": "playwright test -c screenshots.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

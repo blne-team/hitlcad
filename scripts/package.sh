@@ -37,7 +37,7 @@ echo "==> VS Code extension and panel UI"
 npm --prefix vscode-extension ci --no-audit --no-fund
 (cd vscode-extension && npm run compile && npx vsce package --no-dependencies --out "$out/$name.vsix")
 
-cp scripts/dist/install.sh scripts/dist/INSTALL.md "$out/"
+cp scripts/dist/install.sh INSTALL.md "$out/"
 chmod +x "$out/install.sh"
 tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
 
