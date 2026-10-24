@@ -208,6 +208,26 @@ test("every viewer toolbar button and tab works without errors", async ({ page }
   expect(errors).toEqual([]);
 });
 
+test("explode moves the parts of a design whose part is placed twice (box[0], box[1])", async ({ page }) => {
+  const twice = path.join(WORK, "project", "designs", "twice");
+  const { id: twiceId } = await api<{ id: string }>("POST", "/api/designs", { path: twice, create: { name: "Twice", backend: "build123d" } });
+  writeDesign(twice, { parameters: [{ name: "width", value: 30 }, { name: "height", value: 10 }], ground: "box",
+    parts: { box: { role: "a box", file: "parts/box.py", material: "PLA" } } },
+  { "parts/box.py": MODEL, "assembly.py": ASSEMBLY.replace("[Pos()]", "[Pos(-30, 0, 0), Pos(30, 0, 0)]") });
+  await api("POST", `/api/designs/${twiceId}/build`);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await openPanel(page, { name: "design", id: twiceId });
+  await viewerReady(page);
+  await expect(page.locator(".tcv_cad_tree")).toContainText("box[1]");
+  const canvas = page.locator(".cad-stage canvas").first();
+  const before = await canvas.screenshot();
+  await page.locator(".tcv_button_explode").click();
+  await page.waitForTimeout(2500); // the explode plays for 2 s
+  expect(errors).toEqual([]);
+  expect((await canvas.screenshot()).equals(before), "the parts moved apart").toBe(false);
+});
+
 test("every viewer control can be clicked at any editor width: nothing floats over it", async ({ page }) => {
   for (const width of [1280, 800, 640]) {
     await page.setViewportSize({ width, height: 700 });

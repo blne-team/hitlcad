@@ -139,6 +139,10 @@ export class CadView {
     this.display = new Display(container, options);
     this.viewer = new Viewer(this.display, options, null);
     this.viewer.render(shapes, RENDER, VIEW);
+    // three.js finds an animated node by a track name it parses, and a part named with brackets or dots
+    // (motor_screw[0], a STEP file's Part.1) does not parse: the viewer's explode threw. Name its tracks by uuid.
+    (this.viewer.animation as unknown as { _prepareSelector: (id: string) => string })._prepareSelector = (id) =>
+      this.viewer.nestedGroup.groups[id]!.uuid;
     this.three = window.THREE as typeof Three; // set by the Viewer constructor
     this.markers = new this.three.Group();
     this.viewer.scene.add(this.markers);
