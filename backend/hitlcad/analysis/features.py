@@ -1,9 +1,11 @@
-"""Measuring a part's features in its own frame, whatever the part is made of.
+"""What hitlcad asks of a part's shape, in its own frame, whatever the part is made of.
 
-Analyses ask a part's `Features`. Two adapters answer: `BrepFeatures` on its B-rep faces, exactly, and
-`MeshFeatures` on its triangle mesh, to within the mesh's facets, which each measurement reports as its
-uncertainty. A frame with no matching feature fails, so a frame cannot drift away from the geometry it
-describes. What a representation cannot measure at all raises `Unmeasurable`, and is reported unverified.
+Everything that reads a part's geometry asks its `Features`; nothing else looks at what a part is made
+of. Two adapters answer: `BrepFeatures` on its B-rep faces, exactly, and `MeshFeatures` on its triangle
+mesh, to within the mesh's facets, which each measurement reports as its uncertainty. A frame with no
+matching feature fails, so a frame cannot drift away from the geometry it describes. What a
+representation cannot answer at all (a mesh has no fillet radii and no faces, edges or vertices to
+number) raises `Unmeasurable`, saying why.
 """
 
 from __future__ import annotations
@@ -26,14 +28,25 @@ if TYPE_CHECKING:
 FULL_CIRCLE = 0.95  # of 2π: a cylindrical cut that goes this far round is a hole, not a fillet or slot end
 
 
-class Unmeasurable(Exception):
-    """What a part's representation cannot measure; the message says why."""
+class Unmeasurable(ValueError):
+    """What a part's representation cannot answer; the message says why."""
 
 
 @dataclass(frozen=True)
 class Hole:
     diameter: float
     depth: float
+
+
+@dataclass(frozen=True)
+class InsideCorner:
+    """A concave corner between faces, where a cutter or a bend leaves its radius: sharp (radius 0) or
+    rounded, running along `axis` for `extent` mm."""
+
+    radius: float
+    axis: tuple[float, float, float]
+    extent: float
+    at: tuple[float, float, float]
 
 
 class Features(ABC):
@@ -55,10 +68,21 @@ class Features(ABC):
     def holes(self) -> list[Hole]:
         """Complete round holes (through or blind)."""
 
-    @property
     @abstractmethod
-    def brep(self) -> Any:
-        """The B-rep, for checks defined on its faces and edges."""
+    def bodies(self) -> int:
+        """Separate solids."""
+
+    @abstractmethod
+    def inside_corners(self) -> list[InsideCorner]:
+        """Concave corners: sharp edges, and concave cylinders short of a full round hole."""
+
+    @abstractmethod
+    def topology(self, kind: str) -> list[Any]:
+        """Its "faces", "edges" or "vertices", numbered as the 3D view and picks number them."""
+
+    @abstractmethod
+    def exact(self) -> Any:
+        """The part as one exact shape: for distances between its faces, edges and vertices, and for STEP."""
 
 
 # --------------------------------------------------------------------------- B-rep
@@ -74,9 +98,43 @@ class BrepFeatures(Features):
     def __init__(self, shape: Any) -> None:
         self.shape = shape
 
-    @property
-    def brep(self) -> Any:
+    def bodies(self) -> int:
+        return len(self.shape.solids())
+
+    def topology(self, kind: str) -> list[Any]:
+        return getattr(self.shape, kind)()
+
+    def exact(self) -> Any:
         return self.shape
+
+    def inside_corners(self) -> list[InsideCorner]:
+        out = []
+        faces_of: dict[Any, list[Any]] = defaultdict(list)  # build123d shapes hash by OCC sameness
+        for face in self.shape.faces():
+            for edge in face.edges():
+                faces_of[edge].append(face)
+        for edge, faces in faces_of.items():
+            if edge.geom_type.name != "LINE" or len(faces) != 2:
+                continue
+            mid = edge.position_at(0.5)
+            if (
+                float(faces[0].normal_at(mid).dot(faces[1].center() - mid)) > 0
+            ):  # the second face rises on the outer side
+                out.append(InsideCorner(0.0, tuple(_vec(edge.tangent_at(0))), edge.length, tuple(_vec(mid))))
+        for face in self.shape.faces():
+            if face.geom_type.name != "CYLINDER":
+                continue
+            axis = face.axis_of_rotation
+            p = face.position_at(0.5, 0.5)
+            radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
+            if face.normal_at(p).dot(radial) >= 0:
+                continue  # faces away from its axis: convex
+            along = [(v.center() - axis.position).dot(axis.direction) for v in face.vertices()] or [0.0]
+            extent = max(along) - min(along)
+            if extent > 0 and face.area / (face.radius * extent) >= FULL_CIRCLE * 2 * math.pi:
+                continue  # a full round hole
+            out.append(InsideCorner(face.radius, tuple(_vec(axis.direction)), extent, tuple(_vec(p))))
+        return out
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)
@@ -195,15 +253,24 @@ class MeshFeatures(Features):
 
     representation = "mesh"
 
-    def __init__(self, mesh: trimesh.Trimesh) -> None:
+    def __init__(self, mesh: trimesh.Trimesh, name: str) -> None:
         self.mesh = mesh
-
-    @property
-    def brep(self) -> Any:
-        raise Unmeasurable("measured on B-rep faces and edges; this part is a mesh")
+        self.name = name
 
     def holes(self) -> list[Hole]:
-        raise Unmeasurable("holes are found on B-rep faces; this part is a mesh")
+        raise Unmeasurable(f"holes are counted on B-rep faces; {self.name} is a mesh")
+
+    def bodies(self) -> int:
+        return self.mesh.body_count
+
+    def inside_corners(self) -> list[InsideCorner]:
+        raise Unmeasurable(f"inside corner radii are measured on B-rep faces; {self.name} is a mesh")
+
+    def topology(self, kind: str) -> list[Any]:
+        raise Unmeasurable(f"{self.name} is a mesh: it has no faces, edges or vertices; pick a point on it")
+
+    def exact(self) -> Any:
+        raise Unmeasurable(f"{self.name} is a mesh: it has no exact shape")
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)

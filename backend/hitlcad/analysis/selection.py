@@ -13,16 +13,17 @@ from typing import Any
 import numpy as np
 
 from hitlcad.analysis import cadview
+from hitlcad.analysis.features import BrepFeatures, Features
 from hitlcad.analysis.geometry import DESCRIBE, fmt, location, vec
 from hitlcad.analysis.model import BuiltDesign, Leaf, PartGeometry
 from hitlcad.core import frames as fr
 from hitlcad.core.types import ComponentRef, SelectionItem, Vec
 
 
-def topology(shape: Any, ref: ComponentRef) -> Any:
+def topology(features: Features, ref: ComponentRef) -> Any:
     if ref.topo == "solid":
-        return shape
-    items = getattr(shape, cadview.TOPO_LISTS[ref.topo])()
+        return features.exact()
+    items = features.topology(cadview.TOPO_LISTS[ref.topo])
     if ref.index >= len(items):
         raise LookupError(f"{ref.instance} has {len(items)} {ref.topo}s, not {ref.index + 1}")
     return items[ref.index]
@@ -60,9 +61,7 @@ def describe_build_pick(built: BuiltDesign, point: Vec, normal: Vec | None, ref:
     """A click on a build: the exact component of a B-rep instance, or a point on a mesh instance."""
     if ref is not None:
         leaf = leaf_of(built, ref.instance)
-        if leaf.part.shape is None:
-            raise ValueError(f"{ref.instance} is a mesh: it has no faces, edges or vertices to pick")
-        item = topology(leaf.part.shape, ref)
+        item = topology(leaf.part.features, ref)
         placed = item.moved(location(leaf.transform))
         details: dict[str, Any] = {"instance": leaf.path, "part": leaf.part.name}
         if ref.topo != "solid":
@@ -116,7 +115,7 @@ def describe_file_pick(path: Path, point: Vec, normal: Vec | None, ref: Componen
         if ref is None:
             raise ValueError("a STEP pick must name its face, edge, vertex or part")
         part_path, shape = _file_part(cadview.parts(cadview.load_step(path), path.stem), ref.instance)
-        item = topology(shape, ref)
+        item = topology(BrepFeatures(shape), ref)
         details: dict[str, Any] = (
             {"part": part_path} if ref.topo == "solid" else {"part": part_path, ref.topo: ref.index}
         )

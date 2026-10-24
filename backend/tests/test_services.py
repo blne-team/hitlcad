@@ -50,7 +50,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6})
     (carried,) = core.designs.get(state.id).open_pins
     assert carried.revision == rebuilt.id and carried.point[2] == pytest.approx(26)
-    new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].shape, carried.component)
+    new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].features, carried.component)
     assert new_top.is_planar and new_top.normal_at().Z > 0.99
     saved = json.loads((folder / "design.json").read_text())
     assert next(p["value"] for p in saved["parameters"] if p["name"] == "lid_t") == 6

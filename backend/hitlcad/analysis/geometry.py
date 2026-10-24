@@ -112,10 +112,7 @@ class Resolver:
     def _leaf(self, address: str) -> Any:
         from hitlcad.analysis.selection import leaf_of
 
-        leaf = leaf_of(self.built, address)
-        if leaf.part.shape is None:
-            raise ValueError(f"{leaf.path} is a mesh: it has no faces, edges or vertices")
-        return leaf
+        return leaf_of(self.built, address)
 
     def resolve(self, ref: str) -> tuple[str, Any, Any | None]:
         """(name, the item, a direction for connector frames)."""
@@ -129,15 +126,15 @@ class Resolver:
             return f"point {fmt(list(point))}", Vertex(*point), None
         if m := _PART.match(text):
             part = self.built.parts.get(m.group(1))
-            if part is None or part.shape is None:
-                raise ValueError(f"no B-rep part {m.group(1)!r}; parts: {', '.join(self.built.parts)}")
-            return f"part {m.group(1)} (its own frame)", part.shape, None
+            if part is None:
+                raise ValueError(f"no part {m.group(1)!r}; parts: {', '.join(self.built.parts)}")
+            return f"part {m.group(1)} (its own frame)", part.features.exact(), None
         if m := _REF.match(text):
             topo, index, owner = m.group(1).lower(), int(m.group(2)), m.group(3)
             if owner is None:
                 raise ValueError(f"say which instance: '{topo} {index} of lid[0]'")
             leaf = self._leaf(owner)
-            items = getattr(leaf.part.shape, cadview.TOPO_LISTS[topo])()
+            items = leaf.part.features.topology(cadview.TOPO_LISTS[topo])
             if index >= len(items):
                 raise ValueError(f"{leaf.path} has {len(items)} {topo}s (0–{len(items) - 1})")
             return f"{topo} {index} of {leaf.path}", items[index].moved(location(leaf.transform)), None
@@ -157,7 +154,7 @@ class Resolver:
             o, z = fr.origin(f.frame), fr.z_axis(f.frame)
             return f"connector {f.address}" + (f"[{index}]" if k else ""), Vertex(*o), Vector(*z)
         leaf = self._leaf(text)
-        return f"instance {leaf.path}", leaf.part.shape.moved(location(leaf.transform)), None
+        return f"instance {leaf.path}", leaf.part.features.exact().moved(location(leaf.transform)), None
 
 
 def list_geometry(built: Any, target: str, kind: str = "faces") -> str:

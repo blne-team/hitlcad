@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import trimesh
 
-from hitlcad.analysis.features import FULL_CIRCLE, Unmeasurable
+from hitlcad.analysis.features import Features, InsideCorner, Unmeasurable
 from hitlcad.core.checks import (
     CncMillingProcess,
     FdmProcess,
@@ -141,100 +141,58 @@ def _resin_drains(body: Body) -> ProcessFinding:
                                  "open each with a drain hole")  # fmt: skip
 
 
-# --------------------------------------------------------------------------- B-rep helpers
+# --------------------------------------------------------------------------- corners
 
 
-def _brep(body: Body) -> Any:
+def _features(body: Body) -> Features:
     (leaf,) = body.leaves
-    return leaf.part.features.brep
-
-
-def _edge_faces(shape: Any) -> list[tuple[Any, list[Any]]]:
-    """Each edge with the faces that share it (build123d shapes compare and hash by OCC sameness)."""
-    faces_of: dict[Any, list[Any]] = {}
-    for face in shape.faces():
-        for edge in face.edges():
-            faces_of.setdefault(edge, []).append(face)
-    return list(faces_of.items())
-
-
-def _concave(edge: Any, faces: list[Any]) -> bool:
-    """An inside corner: the second face rises on the outer side of the first face's plane."""
-    if len(faces) != 2:
-        return False
-    mid = edge.position_at(0.5)
-    n1 = faces[0].normal_at(mid)
-    return float(n1.dot(faces[1].center() - mid)) > 0
-
-
-def _inside_radii(shape: Any) -> list[tuple[float, Any, float]]:
-    """Concave cylinders that are corners, not holes: (radius, face, axial extent)."""
-    out = []
-    for face in shape.faces():
-        if face.geom_type.name != "CYLINDER":
-            continue
-        axis = face.axis_of_rotation
-        p = face.position_at(0.5, 0.5)
-        radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
-        if face.normal_at(p).dot(radial) >= 0:
-            continue  # faces away from its axis: convex
-        verts = [v.center() for v in face.vertices()]
-        along = [(v - axis.position).dot(axis.direction) for v in verts] or [0.0]
-        extent = max(along) - min(along)
-        if extent > 0 and face.area / (face.radius * extent) >= FULL_CIRCLE * 2 * math.pi:
-            continue  # a full round hole
-        out.append((face.radius, face, extent))
-    return out
+    return leaf.part.features
 
 
 def _unverified(name: str, why: Unmeasurable) -> ProcessFinding:
     return ProcessFinding(name=name, passed=None, detail=str(why))
 
 
-def _vertical(direction: Any, tol_deg: float) -> bool:
-    return abs(direction.normalized().Z) >= math.cos(math.radians(tol_deg))
+def _vertical(corner: InsideCorner, tol_deg: float) -> bool:
+    return abs(corner.axis[2]) / float(np.linalg.norm(corner.axis)) >= math.cos(math.radians(tol_deg))
 
 
 # --------------------------------------------------------------------------- CNC milling
 
 
 def cnc_milling_checks(body: Body, rules: CncMillingProcess) -> list[ProcessFinding]:
+    mesh, tol = body.mesh, body.settings.tolerances
+    # A cutter from +Z cannot reach a surface facing down, flat or curved (the top of a horizontal hole).
+    down = (mesh.face_normals[:, 2] < -math.sin(math.radians(tol.angle_deg))) & (
+        mesh.triangles_center[:, 2] > mesh.bounds[0][2] + tol.position_mm
+    )
+    area = float(mesh.area_faces[down].sum())
+    setups = ProcessFinding(name="cnc_setups", passed=area == 0,
+                            detail="every face is reachable from +Z or is the bottom" if area == 0 else
+                            f"{area:.0f} mm² of faces point down above the bottom: they need a second setup")  # fmt: skip
     try:
-        shape = _brep(body)
+        corners = [c for c in _features(body).inside_corners() if _vertical(c, tol.angle_deg)]
     except Unmeasurable as e:
-        return [_unverified("cnc_inside_corners", e)]
-    tol = body.settings.tolerances.angle_deg
+        return [_unverified("cnc_inside_corners", e), _unverified("cnc_pocket_depth", e), setups]
     tool_r = rules.tool_diameter_mm / 2
-    sharp = [e for e, faces in _edge_faces(shape)
-             if e.geom_type.name == "LINE" and _vertical(e.tangent_at(0), tol) and _concave(e, faces)]  # fmt: skip
-    small = [(r, f) for r, f, _ in _inside_radii(shape) if _vertical(f.axis_of_rotation.direction, tol) and r < tool_r]
-    corners = ProcessFinding(
+    sharp = [c for c in corners if c.radius == 0]
+    small = [c for c in corners if 0 < c.radius < tool_r]
+    reach = ProcessFinding(
         name="cnc_inside_corners", passed=not sharp and not small,
         detail="every vertical inside corner has at least the tool radius" if not sharp and not small else
         "; ".join(filter(None, [
-            f"{len(sharp)} sharp vertical inside corners (first at {_fmt(_v(sharp[0].position_at(0.5)))})" if sharp else "",
-            f"{len(small)} inside radii under the {tool_r:g} mm tool radius (smallest r={min(r for r, _ in small):.2f})" if small else "",
+            f"{len(sharp)} sharp vertical inside corners (first at {_fmt(sharp[0].at)})" if sharp else "",
+            f"{len(small)} inside radii under the {tool_r:g} mm tool radius (smallest r={min(c.radius for c in small):.2f})" if small else "",
         ])) + f": a {rules.tool_diameter_mm:g} mm cutter cannot reach them",
     )  # fmt: skip
-    deep = [(r, ext) for r, f, ext in _inside_radii(shape)
-            if _vertical(f.axis_of_rotation.direction, tol) and ext > rules.max_depth_ratio * 2 * r]  # fmt: skip
+    deep = [c for c in corners if c.radius > 0 and c.extent > rules.max_depth_ratio * 2 * c.radius]
     depth = ProcessFinding(
         name="cnc_pocket_depth", passed=not deep,
         detail="no pocket deeper than its corner allows" if not deep else
         f"{len(deep)} pocket corners deeper than {rules.max_depth_ratio:g} × their diameter "
-        f"(worst {max(ext / (2 * r) for r, ext in deep):.1f} ×)",
+        f"(worst {max(c.extent / (2 * c.radius) for c in deep):.1f} ×)",
     )  # fmt: skip
-    lowest = shape.bounding_box().min.Z
-    under = sum(f.area for f in shape.faces()
-                if f.is_planar and -math.sin(math.radians(tol)) > f.normal_at().Z and lowest + body.settings.tolerances.position_mm < f.center().Z)  # fmt: skip
-    setups = ProcessFinding(name="cnc_setups", passed=under == 0,
-                            detail="every face is reachable from +Z or is the bottom" if under == 0 else
-                            f"{under:.0f} mm² of faces point down above the bottom: they need a second setup")  # fmt: skip
-    return [corners, depth, setups]
-
-
-def _v(p: Any) -> tuple[float, float, float]:
-    return (p.X, p.Y, p.Z)
+    return [reach, depth, setups]
 
 
 # --------------------------------------------------------------------------- sheet metal
@@ -252,11 +210,11 @@ def sheet_metal_checks(body: Body, rules: SheetMetalProcess) -> list[ProcessFind
                                detail=f"thinnest {thinnest:.2f} mm, median {median:.2f} mm (sheet "
                                       f"{rules.thickness_mm:g} ± {rules.thickness_tolerance_mm:g} mm)")  # fmt: skip
     try:
-        shape = _brep(body)
+        corners = _features(body).inside_corners()
     except Unmeasurable as e:
         return [walls, _unverified("sheet_bend_radius", e)]
-    sharp = [e for e, faces in _edge_faces(shape) if e.geom_type.name == "LINE" and _concave(e, faces)]
-    tight = [r for r, _, _ in _inside_radii(shape) if r < rules.min_bend_radius_mm]
+    sharp = [c for c in corners if c.radius == 0]
+    tight = [c.radius for c in corners if 0 < c.radius < rules.min_bend_radius_mm]
     ok = not sharp and not tight
     bends = ProcessFinding(
         name="sheet_bend_radius", passed=ok,

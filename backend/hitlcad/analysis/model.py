@@ -66,16 +66,13 @@ class PartGeometry:
 
     @cached_property
     def metrics(self) -> MeshMetrics:
-        """Measured on the mesh; a B-rep part's bodies are its solids."""
-        metrics = measure(self.mesh)
-        if self.shape is not None:
-            metrics = metrics.model_copy(update={"bodies": len(self.shape.solids())})
-        return metrics
+        """Measured on the mesh; its bodies as its representation counts them (a B-rep's solids)."""
+        return measure(self.mesh).model_copy(update={"bodies": self.features.bodies()})
 
     @cached_property
     def features(self) -> Features:
         """Its features, measured on the B-rep when it has one, else on the mesh."""
-        return BrepFeatures(self.shape) if self.shape is not None else MeshFeatures(self.mesh)
+        return BrepFeatures(self.shape) if self.shape is not None else MeshFeatures(self.mesh, self.name)
 
     @cached_property
     def digest(self) -> str:
