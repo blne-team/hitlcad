@@ -5,6 +5,8 @@
   </picture>
 </p>
 
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
+
 hitlcad is human-in-the-loop CAD. Your coding agent, Claude Code or Codex in VS Code, writes the
 CAD as Python. hitlcad builds it every time a file is saved, measures what came out, and shows you
 the model in 3D next to the code. You stay in the loop by pointing at the model instead of
