@@ -188,5 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     return int(args.fn(args))
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """The ``hitlcad`` command."""
+    # Reports print ✓ and ×, and the hook's JSON is UTF-8; a Windows console's own code page has neither.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8")
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    run()
