@@ -1,0 +1,30 @@
+{
+  "name": "solidwork",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "initializeCommand": "sh -c 'printf \"USER_UID=%s\\nUSER_GID=%s\\n\" \"$(id -u)\" \"$(id -g)\" > .devcontainer/.env'",
+
+  "workspaceFolder": "/workspaces/solidwork",
+  // "remoteEnv": {
+  //   "PATH": "/opt/conda/bin:${containerEnv:PATH}"
+  // },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        // The container's Python (build123d, hitlcad); overrides an interpreter path synced from the host machine.
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": false
+      }
+    }
+  },
+  "updateRemoteUserUID": false,
+  "remoteUser": "user",
+  "shutdownAction": "stopCompose"
+}

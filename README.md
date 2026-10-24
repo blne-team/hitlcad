@@ -1,0 +1,165 @@
+# hitlcad
+
+Parametric CAD for the coding agent you already use. Claude Code or Codex writes model code for
+**build123d** (exact B-rep, STEP) or **Blender** (meshes) in VS Code. hitlcad builds, measures
+and renders it, and shows each build in a 3D panel next to the code. Select faces, pin notes to
+the surface and tune parameters there, then keep talking to the agent in its own chat: it sees
+what you pointed at.
+
+hitlcad has no chat or agent of its own. It adds MCP tools to your agent and a review panel to
+VS Code. See [docs/architecture.md](docs/architecture.md) for the design.
+
+## Install
+
+hitlcad ships as a folder with the hitlcad tool (a wheel), the VS Code extension (with the panel
+UI) and an installer. Unpack `hitlcad-<version>.tar.gz` and run `./install.sh`; its
+`INSTALL.md` covers prerequisites (VS Code, [uv](https://docs.astral.sh/uv/), optionally Blender
+4.5 LTS) and Windows.
+
+## Build a release
+
+```bash
+scripts/package.sh        # or the VS Code task "release: package"
+```
+
+It builds the wheel and the extension with its panel UI, pins the dependencies to `uv.lock`
+(`constraints.txt`) and the default Python to `.python-version`, and writes
+`dist/hitlcad-<version>/` and `dist/hitlcad-<version>.tar.gz`. Building needs Node 20+ and uv;
+the devcontainer has both.
+
+To publish, bump `version` in both `pyproject.toml` and `vscode-extension/package.json` (the
+script refuses a mismatch), then push a matching tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+GitHub Actions (`.github/workflows/release.yml`) runs CI, builds the release and publishes it as a
+GitHub release with the `.tar.gz`, the wheel and the `.vsix` attached.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push and pull request: ruff; the full backend suite,
+including real build123d and Blender builds, on Python 3.11, 3.12 and 3.13; the extension's
+tests, its panel UI's typecheck and build, and its packaging; and the end-to-end tests (`e2e/`):
+Playwright drives the real server and the panel UI in Chromium, each page loaded as the extension
+loads it into a webview, including the extension's sync between the 3D editor tab and the Design
+view. To run them locally:
+
+```bash
+npm --prefix vscode-extension run compile
+cd e2e && npm ci && npx playwright install chromium && npm test
+```
+
+## Use it
+
+1. Run **hitlcad: New Design Project** in VS Code (or `hitlcad init ~/designs/my-project`) and
+   open the folder. It contains `designs/` and the files that set up your agents:
+   - `.mcp.json` gives Claude Code hitlcad's tools.
+   - `.claude/settings.json` pre-approves them.
+   - If you allow it (hitlcad asks): a prompt hook in `.claude/settings.json` and
+     `.codex/hooks.json` that adds your panel selection and open pins to your next message in
+     Claude Code and Codex, and for Codex, hitlcad's MCP server and trust for the folder in
+     `~/.codex/config.toml`, so Codex loads the hook. `hitlcad init --hooks --codex` allows both
+     without asking.
+   - `.vscode/settings.json` points VS Code's Python at the interpreter hitlcad builds with, so
+     `model.py` resolves `build123d`.
+   - `CLAUDE.md` and `AGENTS.md` point the agents at hitlcad's skills and its rules.
+   - `.claude/skills/` and `.agents/skills/` hold hitlcad's skills for Claude Code and Codex:
+     `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract per
+     backend). Running `hitlcad init` again brings them up to date.
+   - `.gitignore`.
+
+   The extension starts `hitlcad serve` when needed.
+2. Run **hitlcad: New Design**, name it and pick a backend, or ask your agent to create one. A
+   design is a folder with `design.json` (backend, parameters, brief) and `model.py`
+   (`build(p)`).
+3. Describe the part to Claude Code or Codex in their panel. They edit the files with their
+   normal tools, so you review diffs as usual. **Every save rebuilds.** When a build finishes,
+   the design's panel opens beside the editor (`hitlcad.autoOpenPanel`). The files of the
+   latest successful build are in the design's `build/` folder: `model.step` (or
+   `model.blend`), `mesh.stl`, `preview.png`. That folder is git-ignored.
+4. Review in the panel. The 3D view is [three-cad-viewer](https://github.com/bernhard-42/three-cad-viewer):
+   its toolbar has the part tree, clipping planes, distance and property measurement, zebra
+   stripes, explode and standard views. Pins, Parameters, Changes, Checks and Brief are in the
+   **hitlcad › Design** view, in the bottom panel by default; drag it to either sidebar like
+   any VS Code view. It follows the design tab you are looking at.
+   - **Select**: click a face, edge or vertex (build123d designs) or a point (Blender designs):
+     "make the selected hole 0.5 mm larger". Shift-click adds more. The viewer's filter (top
+     right, build123d designs) limits clicks to vertices, edges, faces or whole parts (Solid):
+     "make this part 2 mm thicker". While the viewer's distance or properties tool is on, clicks
+     measure instead; **Place pins** turns it off.
+   - **Place pins** with notes, then tell the agent "address my pins". It resolves them when
+     done.
+   - **Parameters**: changes are written to `design.json` and rebuilt.
+   - **Compare**: draw an earlier revision as a ghost; the **Changes** tab lists changed
+     parameters, size and volume, checks, and the `model.py` diff.
+   - **Assemblies**: a design of several parts returns `{"base": base, "lid": lid}` from
+     `build(p)`. Each part gets its own STEP/STL in `build/`, shows by name in the 3D view's tree
+     (and its exploded view), and overlaps between parts are reported; requirements can name a
+     part or the clearance between two parts.
+   - **Checks**: requirements, measurements, checks, renders, and STEP/STL downloads. Your
+     requirements live in `design.json` (`"requirements"`); the ones with a check, such as a size
+     range, a hole diameter, a mass limit or a minimum wall, are verified on every build and shown
+     as met, missed or for you to judge. A design that declares
+     `"manufacturing": {"process": "fdm"}` in `design.json` is also checked for FDM printing:
+     wall thickness against the nozzle and minimum wall, overhangs that need support, and bed
+     contact.
+   - **Brief**: what the design is meant to be, as the agent wrote it.
+
+Your selection and open pins go to Claude Code or Codex with your next message: the project's
+prompt hook adds what changed since that chat was last told, and the panel shows whether it has
+been sent. Codex then asks you once to approve the hook (`/hooks`); until then it skips it. **Copy for chat**
+copies the selections and pins of every design in the workspace, to paste anywhere. In an existing
+project, **hitlcad: Set Up Claude Code and Codex for This Project** asks again (the extension also
+offers it when a project lacks the setup). `hitlcad connect` prints the manual commands for both agents.
+
+Open any `.step`, `.stl`, `.glb`, `.3mf`, `.obj` or `.ply` with **Open in 3D Viewer**.
+
+The full revision history lives in `~/.hitlcad` (`HITLCAD_DATA_DIR`). Design folders hold what
+you would commit plus the git-ignored `build/`.
+
+## Configuration
+
+Environment variables (or `.env`), prefix `HITLCAD_`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends (plugins via entry points) |
+| `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
+| `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
+| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Per-build deadline |
+| `HITLCAD_EXPORT_BUILDS` | `true` | Copy each successful build to the design's `build/` folder |
+| `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
+| `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server |
+
+## Develop
+
+Open this repository in VS Code and press F5:
+
+- **Extension** opens a second window on `~/hitlcad-playground` with the extension loaded from
+  source.
+- **Extension + Server** also runs `hitlcad serve` under the Python debugger.
+
+See `.vscode/launch.json`.
+
+```bash
+uv sync --extra dev
+uv run pytest                          # all tests; -m "not geometry" skips real-kernel tests
+uv run ruff check backend && uv run ruff format backend
+(cd vscode-extension && npm test)      # extension unit tests
+(cd vscode-extension && npm run compile)  # extension and panel UI (ui/ → out/ui/)
+uv run hitlcad build model.py --backend build123d --params params.json --out build-out
+```
+
+Dependencies resolve with a two-week supply-chain cooldown (`[tool.uv] exclude-newer` in
+`pyproject.toml`; `npm install --before=<date>` in `vscode-extension/` and `e2e/`). Move the date forward
+deliberately when upgrading.
+
+## Safety
+
+Model code runs locally in a child process with resource limits and a timeout, but **no
+filesystem or network isolation**. It is written by your own coding agent, which can already
+run code on your machine. The server binds to `127.0.0.1` and
+has no authentication. Keep it single-user and local until a container executor and auth are
+added.

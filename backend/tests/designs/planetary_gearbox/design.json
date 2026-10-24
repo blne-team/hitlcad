@@ -1,0 +1,505 @@
+{
+  "hitlcad": 1,
+  "name": "Planetary gearbox",
+  "backend": "build123d",
+  "source": "model.py",
+  "parameters": [
+    {
+      "name": "module",
+      "label": "",
+      "type": "float",
+      "value": 1.25,
+      "min": 0.8,
+      "max": 2.5,
+      "step": 0.05,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "pressure_angle",
+      "label": "",
+      "type": "float",
+      "value": 20,
+      "min": 14.5,
+      "max": 25.0,
+      "unit": "deg",
+      "description": ""
+    },
+    {
+      "name": "sun_teeth",
+      "label": "",
+      "type": "int",
+      "value": 18,
+      "min": 12.0,
+      "max": 40.0,
+      "unit": "count",
+      "description": ""
+    },
+    {
+      "name": "planet_teeth",
+      "label": "",
+      "type": "int",
+      "value": 18,
+      "min": 12.0,
+      "max": 40.0,
+      "unit": "count",
+      "description": ""
+    },
+    {
+      "name": "planets",
+      "label": "",
+      "type": "int",
+      "value": 3,
+      "min": 2.0,
+      "max": 5.0,
+      "unit": "count",
+      "description": ""
+    },
+    {
+      "name": "backlash",
+      "label": "",
+      "type": "float",
+      "value": 0.15,
+      "min": 0.0,
+      "max": 0.5,
+      "step": 0.01,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "face_width",
+      "label": "",
+      "type": "float",
+      "value": 10,
+      "min": 4.0,
+      "max": 30.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "flank_points",
+      "label": "",
+      "type": "int",
+      "value": 12,
+      "min": 4.0,
+      "max": 40.0,
+      "unit": "count",
+      "description": ""
+    },
+    {
+      "name": "floor",
+      "label": "",
+      "type": "float",
+      "value": 5,
+      "min": 3.0,
+      "max": 10.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "axial_gap",
+      "label": "",
+      "type": "float",
+      "value": 0.5,
+      "min": 0.2,
+      "max": 2.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "carrier_thickness",
+      "label": "",
+      "type": "float",
+      "value": 4,
+      "min": 2.0,
+      "max": 10.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "lid_thickness",
+      "label": "",
+      "type": "float",
+      "value": 9,
+      "min": 6.0,
+      "max": 15.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "housing_od",
+      "label": "",
+      "type": "float",
+      "value": 88,
+      "min": 60.0,
+      "max": 120.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "min_wall",
+      "label": "",
+      "type": "float",
+      "value": 1.2,
+      "min": 0.8,
+      "max": 4.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "pin_d",
+      "label": "",
+      "type": "float",
+      "value": 3,
+      "min": 2.0,
+      "max": 6.0,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "pin_clearance",
+      "label": "",
+      "type": "float",
+      "value": 0.2,
+      "min": 0.0,
+      "max": 0.5,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "shaft_d",
+      "label": "",
+      "type": "float",
+      "value": 5,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "shaft_flat",
+      "label": "",
+      "type": "float",
+      "value": 4.5,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "shaft_clearance",
+      "label": "",
+      "type": "float",
+      "value": 0.1,
+      "min": 0.0,
+      "max": 0.4,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "motor_clearance_d",
+      "label": "",
+      "type": "float",
+      "value": 8,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "nema_spacing",
+      "label": "",
+      "type": "float",
+      "value": 31,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "screw_d",
+      "label": "",
+      "type": "float",
+      "value": 3.4,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "cbore_d",
+      "label": "",
+      "type": "float",
+      "value": 6,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "cbore_depth",
+      "label": "",
+      "type": "float",
+      "value": 3.2,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "pilot_d",
+      "label": "",
+      "type": "float",
+      "value": 22.2,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "pilot_depth",
+      "label": "",
+      "type": "float",
+      "value": 2,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "insert_d",
+      "label": "",
+      "type": "float",
+      "value": 4,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "insert_depth",
+      "label": "",
+      "type": "float",
+      "value": 6,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "bearing_od",
+      "label": "",
+      "type": "float",
+      "value": 22,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "bearing_width",
+      "label": "",
+      "type": "float",
+      "value": 7,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "output_d",
+      "label": "",
+      "type": "float",
+      "value": 8,
+      "unit": "mm",
+      "description": ""
+    },
+    {
+      "name": "output_length",
+      "label": "",
+      "type": "float",
+      "value": 12,
+      "unit": "mm",
+      "description": ""
+    }
+  ],
+  "brief": {
+    "title": "NEMA 17 planetary gearbox",
+    "summary": "A 4:1 single-stage planetary gearbox that bolts onto a NEMA 17 stepper: the sun sits on the motor's D shaft, the ring gear is cut into the housing, three planets turn on the carrier's pins and the carrier's 8 mm output shaft runs in a 608 bearing in the lid. Printed in PLA.",
+    "backend": "build123d",
+    "backend_rationale": "",
+    "key_dimensions": [],
+    "features": [
+      "Involute gears, module 1.25, 20\u00b0 pressure angle",
+      "Ring gear cut into the housing",
+      "Counterbored NEMA 17 mount with pilot recess",
+      "608 bearing pocket in the lid",
+      "Heat-set inserts for the lid screws"
+    ],
+    "assumptions": [],
+    "open_questions": []
+  },
+  "manufacturing": {
+    "process": "fdm",
+    "nozzle_mm": 0.4,
+    "min_wall_mm": 0.8,
+    "max_overhang_deg": 45.0
+  },
+  "requirements": [
+    {
+      "text": "Fits a 90 \u00d7 90 \u00d7 45 mm envelope",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          90.0,
+          90.0,
+          45.0
+        ]
+      }
+    },
+    {
+      "text": "Seven printed parts",
+      "check": {
+        "kind": "bodies",
+        "count": 7
+      }
+    },
+    {
+      "text": "Under 250 g in PLA",
+      "check": {
+        "max": 250.0,
+        "kind": "mass",
+        "density_g_cm3": 1.24
+      }
+    },
+    {
+      "text": "Four M3 clearance holes on the NEMA 17 31 mm pattern",
+      "check": {
+        "part": "housing",
+        "kind": "hole",
+        "diameter": 3.4,
+        "tol": 0.05,
+        "count": 4
+      }
+    },
+    {
+      "text": "Counterbores sink the M3 heads below the floor",
+      "check": {
+        "part": "housing",
+        "kind": "hole",
+        "diameter": 6.0,
+        "tol": 0.05,
+        "count": 4
+      }
+    },
+    {
+      "text": "Pilot recess for the NEMA 17 boss",
+      "check": {
+        "part": "housing",
+        "kind": "hole",
+        "diameter": 22.2,
+        "tol": 0.05,
+        "count": 1
+      }
+    },
+    {
+      "text": "Four heat-set insert holes for the lid",
+      "check": {
+        "part": "housing",
+        "kind": "hole",
+        "diameter": 4.0,
+        "tol": 0.05,
+        "count": 4
+      }
+    },
+    {
+      "text": "608 bearing pocket",
+      "check": {
+        "part": "lid",
+        "kind": "hole",
+        "diameter": 22.0,
+        "tol": 0.02,
+        "count": 1
+      }
+    },
+    {
+      "text": "Four M3 lid screw holes",
+      "check": {
+        "part": "lid",
+        "kind": "hole",
+        "diameter": 3.4,
+        "tol": 0.05,
+        "count": 4
+      }
+    },
+    {
+      "text": "Planet bore runs on a 3 mm pin with 0.2 mm clearance",
+      "check": {
+        "part": "planet_0",
+        "kind": "hole",
+        "diameter": 3.4,
+        "tol": 0.05,
+        "count": 1
+      }
+    },
+    {
+      "text": "Sun and planet mesh with backlash, no interference",
+      "check": {
+        "min": 0.03,
+        "kind": "clearance",
+        "between": [
+          "sun",
+          "planet_0"
+        ]
+      }
+    },
+    {
+      "text": "Planet and ring gear mesh with backlash",
+      "check": {
+        "min": 0.03,
+        "kind": "clearance",
+        "between": [
+          "planet_0",
+          "housing"
+        ]
+      }
+    },
+    {
+      "text": "Second planet meshes with the ring",
+      "check": {
+        "min": 0.03,
+        "kind": "clearance",
+        "between": [
+          "planet_1",
+          "housing"
+        ]
+      }
+    },
+    {
+      "text": "Planet turns freely on its pin",
+      "check": {
+        "min": 0.15,
+        "kind": "clearance",
+        "between": [
+          "planet_0",
+          "carrier"
+        ]
+      }
+    },
+    {
+      "text": "Carrier clears the housing",
+      "check": {
+        "min": 0.3,
+        "kind": "clearance",
+        "between": [
+          "carrier",
+          "housing"
+        ]
+      }
+    },
+    {
+      "text": "Carrier clears the lid",
+      "check": {
+        "min": 0.3,
+        "kind": "clearance",
+        "between": [
+          "carrier",
+          "lid"
+        ]
+      }
+    },
+    {
+      "text": "Lid seats on the housing",
+      "check": {
+        "max": 0.02,
+        "kind": "clearance",
+        "between": [
+          "housing",
+          "lid"
+        ]
+      }
+    },
+    {
+      "text": "Housing walls at least 1.1 mm",
+      "check": {
+        "part": "housing",
+        "kind": "wall",
+        "min": 1.1
+      }
+    }
+  ]
+}

@@ -1,0 +1,314 @@
+{
+  "name": "hitlcad",
+  "displayName": "hitlcad",
+  "description": "Human-in-the-loop CAD: design folders that Claude Code and Codex edit, with a live 3D review panel.",
+  "version": "0.1.0",
+  "publisher": "hitlcad-local",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blne-team/solidwork"
+  },
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "cad",
+    "3d",
+    "build123d",
+    "blender",
+    "agents"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:**/design.json",
+    "onCustomEditor:hitlcad.modelViewer"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "hitlcad.newProject",
+        "title": "New Design Project",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.newDesign",
+        "title": "New Design",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.openDesign",
+        "title": "Open Design",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.showPanel",
+        "title": "Show Design Panel",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.rebuild",
+        "title": "Rebuild Design",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.configureAgents",
+        "title": "Set Up Claude Code and Codex for This Project",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.startServer",
+        "title": "Start Server",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.showLogs",
+        "title": "Show Server Logs",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.openInViewer",
+        "title": "Open in 3D Viewer",
+        "category": "hitlcad"
+      },
+      {
+        "command": "hitlcad.copyForChat",
+        "title": "Copy Selections and Pins for Chat",
+        "category": "hitlcad",
+        "icon": "$(copy)"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "hitlcad",
+          "title": "hitlcad",
+          "icon": "media/hitlcad.svg"
+        }
+      ]
+    },
+    "views": {
+      "hitlcad": [
+        {
+          "type": "webview",
+          "id": "hitlcad.inspector",
+          "name": "Design",
+          "icon": "media/hitlcad.svg",
+          "contextualTitle": "hitlcad Design"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "hitlcad",
+      "properties": {
+        "hitlcad.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "URL of the hitlcad server."
+        },
+        "hitlcad.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the hitlcad server when it is not running."
+        },
+        "hitlcad.serverCommand": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "hitlcad",
+            "serve"
+          ],
+          "description": "Command that starts the server. The installed tool (uv tool install) provides `hitlcad`."
+        },
+        "hitlcad.serverCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for the server command. Optional for the installed tool; for a source checkout it defaults to the workspace folder whose pyproject.toml is named hitlcad."
+        },
+        "hitlcad.autoOpenPanel": {
+          "type": "string",
+          "enum": [
+            "open",
+            "notify",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Open the design's panel beside the editor when a build finishes (keeps focus in your agent's chat).",
+            "Show a notification with a Show button.",
+            "Do nothing; open panels with hitlcad: Show Design Panel."
+          ],
+          "default": "open",
+          "description": "What to do when a design in this workspace is rebuilt (by you or a coding agent) and its panel is not on screen."
+        }
+      }
+    },
+    "viewsWelcome": [
+      {
+        "view": "explorer",
+        "contents": "Start a hitlcad design project: a folder for parametric CAD designs that Claude Code and Codex can edit.\n[New Design Project](command:hitlcad.newProject)",
+        "when": "workbenchState == empty"
+      },
+      {
+        "view": "explorer",
+        "contents": "hitlcad designs are folders with design.json and model.py.\n[New Design](command:hitlcad.newDesign)\n[New Design Project](command:hitlcad.newProject)",
+        "when": "workbenchState != empty"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "hitlcad.start",
+        "title": "Design CAD parts with Claude Code and Codex",
+        "description": "Create a design project, describe a part, and review each revision in 3D.",
+        "steps": [
+          {
+            "id": "project",
+            "title": "Create a design project",
+            "description": "A project folder holds your designs and tells Claude Code and Codex how to use hitlcad.\n[New Design Project](command:hitlcad.newProject)",
+            "media": {
+              "markdown": "media/walkthrough-project.md"
+            },
+            "completionEvents": [
+              "onCommand:hitlcad.newProject"
+            ]
+          },
+          {
+            "id": "design",
+            "title": "Start a design",
+            "description": "Name the part and pick a backend: build123d for precise parts, Blender for organic shapes.\n[New Design](command:hitlcad.newDesign)",
+            "media": {
+              "markdown": "media/walkthrough-design.md"
+            },
+            "completionEvents": [
+              "onCommand:hitlcad.newDesign"
+            ]
+          },
+          {
+            "id": "review",
+            "title": "Ask your agent, then review",
+            "description": "Ask Claude Code or Codex to edit model.py. Every save rebuilds; review, pin notes and tune parameters in the panel.\n[Show Design Panel](command:hitlcad.showPanel)",
+            "media": {
+              "markdown": "media/walkthrough-review.md"
+            },
+            "completionEvents": [
+              "onCommand:hitlcad.showPanel"
+            ]
+          }
+        ]
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "hitlcad.modelViewer",
+        "displayName": "hitlcad 3D Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.stl"
+          },
+          {
+            "filenamePattern": "*.STL"
+          },
+          {
+            "filenamePattern": "*.glb"
+          },
+          {
+            "filenamePattern": "*.GLB"
+          },
+          {
+            "filenamePattern": "*.gltf"
+          },
+          {
+            "filenamePattern": "*.GLTF"
+          },
+          {
+            "filenamePattern": "*.step"
+          },
+          {
+            "filenamePattern": "*.STEP"
+          },
+          {
+            "filenamePattern": "*.stp"
+          },
+          {
+            "filenamePattern": "*.STP"
+          },
+          {
+            "filenamePattern": "*.3mf"
+          },
+          {
+            "filenamePattern": "*.3MF"
+          },
+          {
+            "filenamePattern": "*.obj"
+          },
+          {
+            "filenamePattern": "*.OBJ"
+          },
+          {
+            "filenamePattern": "*.ply"
+          },
+          {
+            "filenamePattern": "*.PLY"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "hitlcad.openInViewer",
+          "when": "resourceExtname =~ /^\\.(stl|glb|gltf|step|stp|3mf|obj|ply)$/i",
+          "group": "navigation@90"
+        },
+        {
+          "command": "hitlcad.openDesign",
+          "when": "explorerResourceIsFolder",
+          "group": "hitlcad@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "hitlcad.copyForChat",
+          "when": "activeWebviewPanelId == 'hitlcad.design' || activeCustomEditorId == 'hitlcad.modelViewer'",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p . && npm run build:ui",
+    "build:ui": "tsc -p ui && vite build -c ui/vite.config.mts",
+    "watch": "tsc -p . --watch",
+    "watch:ui": "vite build -c ui/vite.config.mts --watch",
+    "api-types": "../scripts/api-types.sh",
+    "test": "tsc -p . && node --test \"out/test/**/*.test.js\"",
+    "package": "npm run compile && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@fontsource/barlow": "5.3.0",
+    "@fontsource/barlow-semi-condensed": "5.3.0",
+    "@types/node": "22.20.5",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@types/three": "0.184.1",
+    "@types/vscode": "1.90.0",
+    "@vitejs/plugin-react": "4.7.0",
+    "@vscode/vsce": "4.0.0",
+    "openapi-typescript": "7.13.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three-cad-viewer": "5.0.7",
+    "typescript": "5.9.3",
+    "vite": "6.4.4"
+  }
+}

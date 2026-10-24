@@ -1,0 +1,98 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as vscode from "vscode";
+import { ActivityWatcher, type BuildActivity } from "./activity";
+import { offerAgentSetup } from "./agents";
+import { Api } from "./api";
+import { registerCommands } from "./commands";
+import { DesignUiHub } from "./designUi";
+import { DesignInspector, INSPECTOR_VIEW } from "./inspector";
+import { isHitlcadPyproject } from "./lib/serverCommand";
+import { MODEL_VIEW_TYPE, ModelViewerProvider } from "./modelViewer";
+import { DesignPanels } from "./panels";
+import { config, ServerManager, serverUrl } from "./server";
+import { registerStatusBar } from "./statusBar";
+import { SelectionStore } from "./webview";
+
+let server: ServerManager | null = null;
+
+export function activate(ctx: vscode.ExtensionContext): void {
+  const output = vscode.window.createOutputChannel("hitlcad");
+  const api = new Api(serverUrl);
+  server = new ServerManager(api, output, ctx.extension.packageJSON.version as string);
+  const selections = new SelectionStore();
+  const hub = new DesignUiHub(() => inspector.reveal());
+  const inspector = new DesignInspector(hub, ctx.extensionUri);
+  const panels = new DesignPanels(hub, ctx.extensionUri);
+  ctx.subscriptions.push(
+    output,
+    server,
+    panels,
+    inspector,
+    vscode.window.registerWebviewViewProvider(INSPECTOR_VIEW, inspector, { webviewOptions: { retainContextWhenHidden: true } }),
+    panels.onDidChangeActive((design) => inspector.follow(design)),
+  );
+
+  registerCommands(ctx, { api, server, panels, selections });
+  const activity = new ActivityWatcher(serverUrl, (build) => void onBuild(build, panels));
+  ctx.subscriptions.push(activity);
+  activity.start();
+  registerStatusBar(ctx);
+  ctx.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(MODEL_VIEW_TYPE, new ModelViewerProvider(server, selections, ctx.extensionUri), {
+      webviewOptions: { retainContextWhenHidden: true },
+      supportsMultipleEditorsPerDocument: true,
+    }),
+  );
+
+  // In workspaces that use hitlcad: start the server if needed, then offer the agent setup a design
+  // project lacks (it changes agent config, so only with the human's permission).
+  void (async () => {
+    if (!(await usesHitlcad())) return;
+    if (!(await api.health()) && !config().get<boolean>("autoStart", true)) return;
+    await server?.ensure({ quiet: true });
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root || !fs.existsSync(path.join(root, "designs"))) return;
+    await offerAgentSetup(ctx, await api.agentSetup(root), () => vscode.commands.executeCommand("hitlcad.configureAgents"));
+  })().catch((e: Error) => output.appendLine(`Startup: ${e.message}`));
+}
+
+/** Bring a fresh build of a design in this workspace into view, as `hitlcad.autoOpenPanel` says. */
+async function onBuild(build: BuildActivity, panels: DesignPanels): Promise<void> {
+  const mode = config().get<string>("autoOpenPanel", "open");
+  if (mode === "off" || !vscode.workspace.getWorkspaceFolder(vscode.Uri.file(build.path))) return;
+  if (panels.isVisible(build.path)) return; // it updates live
+  const design = { path: build.path, id: build.id, name: build.name };
+  if (mode === "open") {
+    await panels.show(design, vscode.ViewColumn.Beside, true);
+    return;
+  }
+  const what = build.status === "succeeded" ? `revision ${build.revision} built` : `revision ${build.revision} failed`;
+  const choice = await vscode.window.showInformationMessage(`hitlcad: ${build.name} ${what}.`, "Show");
+  if (choice) await panels.show(design);
+}
+
+export function deactivate(): void {
+  server?.dispose();
+  server = null;
+}
+
+async function usesHitlcad(): Promise<boolean> {
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const root = folder.uri.fsPath;
+    if (fs.existsSync(path.join(root, "design.json")) || fs.existsSync(path.join(root, "designs"))) return true;
+    try {
+      const mcp = fs.readFileSync(path.join(root, ".mcp.json"), "utf8");
+      if (mcp.includes('"hitlcad"')) return true;
+    } catch {
+      // no .mcp.json
+    }
+    try {
+      if (isHitlcadPyproject(fs.readFileSync(path.join(root, "pyproject.toml"), "utf8"))) return true;
+    } catch {
+      // no pyproject
+    }
+  }
+  const found = await vscode.workspace.findFiles("**/design.json", "**/node_modules/**", 1);
+  return found.length > 0;
+}

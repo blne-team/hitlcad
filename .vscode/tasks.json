@@ -1,0 +1,70 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ext: watch",
+      "type": "npm",
+      "script": "watch",
+      "path": "vscode-extension",
+      "isBackground": true,
+      "problemMatcher": "$tsc-watch",
+      "presentation": { "reveal": "never", "group": "ext" }
+    },
+    {
+      "label": "ui: watch",
+      "detail": "Rebuild the panel UI (vscode-extension/ui → out/ui) on save; reload a panel to see it",
+      "type": "npm",
+      "script": "watch:ui",
+      "path": "vscode-extension",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^(error during build:.*)$", "message": 1 },
+        "background": { "activeBegin": true, "beginsPattern": "build started", "endsPattern": "built in \\d+ms" }
+      },
+      "presentation": { "reveal": "never", "group": "ext" }
+    },
+    {
+      "label": "ext: install",
+      "detail": "Package the extension and install it into this VS Code, so design folders work without F5",
+      "type": "shell",
+      "command": "npm run package && code --install-extension \"hitlcad-$(node -p \"require('./package.json').version\").vsix\" --force",
+      "options": { "cwd": "${workspaceFolder}/vscode-extension" },
+      "problemMatcher": []
+    },
+    {
+      "label": "release: package",
+      "detail": "Build dist/hitlcad-<version>/ (wheel with the UI, VS Code extension, installer) to share",
+      "type": "shell",
+      "command": "scripts/package.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "ext: playground",
+      "detail": "Create or refresh ~/hitlcad-playground (a design project) for the Extension Development Host to open",
+      "type": "shell",
+      "command": "uv run hitlcad init --hooks --no-codex \"$HOME/hitlcad-playground\"",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "group": "ext" }
+    },
+    {
+      "label": "ext: prepare",
+      "dependsOn": ["ext: watch", "ui: watch", "ext: playground"],
+      "problemMatcher": []
+    },
+    {
+      "label": "server: wait",
+      "detail": "Wait until the debugged server answers, so the extension does not spawn its own",
+      "type": "shell",
+      "command": "for i in $(seq 1 60); do curl -sf http://127.0.0.1:8000/api/health >/dev/null && exit 0; sleep 0.5; done; echo 'hitlcad server did not come up on :8000'; exit 1",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "group": "ext" }
+    },
+    {
+      "label": "ext: prepare (external server)",
+      "dependsOn": ["ext: prepare", "server: wait"],
+      "problemMatcher": []
+    }
+  ]
+}

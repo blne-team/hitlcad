@@ -1,0 +1,49 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // The extension in a new VS Code window, which auto-starts `hitlcad serve` itself (not debuggable).
+      "name": "Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode-extension", "${userHome}/hitlcad-playground"],
+      "outFiles": ["${workspaceFolder}/vscode-extension/out/**/*.js"],
+      "preLaunchTask": "ext: prepare"
+    },
+    {
+      // Same, but waits for the server started by "Server" so it attaches to that one instead.
+      "name": "Extension (external server)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode-extension", "${userHome}/hitlcad-playground"],
+      "outFiles": ["${workspaceFolder}/vscode-extension/out/**/*.js"],
+      "preLaunchTask": "ext: prepare (external server)"
+    },
+    {
+      "name": "Server",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "hitlcad.cli",
+      "args": ["serve"],
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Extension tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/vscode-extension",
+      "runtimeArgs": ["--test", "out/test/**/*.test.js"],
+      "outFiles": ["${workspaceFolder}/vscode-extension/out/**/*.js"],
+      "preLaunchTask": "ext: watch"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Extension + Server",
+      "configurations": ["Server", "Extension (external server)"],
+      "stopAll": true
+    }
+  ]
+}

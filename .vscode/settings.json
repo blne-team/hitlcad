@@ -1,0 +1,5 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    // The installed extension would otherwise start `hitlcad serve` on :8000 here and clash with the "Server" debug config.
+    "hitlcad.autoStart": false
+}

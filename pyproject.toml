@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hitlcad"
+version = "0.1.0"
+description = "Parametric CAD for coding agents: build123d and Blender designs reviewed in VS Code"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.34",
+  "watchfiles>=1.0",
+  "pydantic>=2.11",
+  "pydantic-settings>=2.6",
+  "mcp>=2.3,<3",
+  "build123d>=0.11",
+  "trimesh>=4.5",
+  "rtree>=1.3",  # trimesh needs it for closest-point queries (describing mesh picks, carrying pins)
+  "numpy>=1.26",
+  "pillow>=11",
+  "ocp-tessellate>=3.5,<3.6",  # output format of three-cad-viewer 5.0.x (vscode-extension/ui); upgrade the two together
+  "manifold3d>=3",
+  "networkx>=3",  # trimesh needs it to measure meshes that are not closed
+  "tomlkit>=0.15.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "httpx>=0.28",
+    "ruff>=0.11",
+]
+
+[project.scripts]
+hitlcad = "hitlcad.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/hitlcad"]
+
+[tool.uv]
+# Supply-chain cooldown: only resolve releases that have been public for two weeks.
+exclude-newer = "2026-10-08T00:00:00Z"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["backend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+asyncio_mode = "auto"
+markers = ["geometry: needs build123d and Blender"]

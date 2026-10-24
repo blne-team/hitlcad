@@ -1,0 +1,891 @@
+/*
+ * hitlcad — graphite engineering surface. Safety yellow is reserved for one meaning:
+ * the human has to act (open checkpoint, pins, "your turn" badges). Nothing else uses it.
+ */
+
+:root {
+  color-scheme: light;
+
+  --ground: #e6e9ec;
+  --surface: #f4f6f7;
+  --raised: #ffffff;
+  --ink: #1b2127;
+  --ink-2: #4b5661;
+  --ink-3: #79848f;
+  --rule: #cdd3d9;
+  --rule-strong: #aab3bb;
+  --signal: #f5c400;
+  --signal-ink: #1b2127;
+  --signal-wash: #fff6cc;
+  --ok: #2b7a4b;
+  --warn: #9a6205;
+  --fail: #b8321c;
+  --focus: #2a63d4;
+  --viewport: #dde2e6;
+
+  --sans: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --narrow: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
+  --code: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.875rem;
+  --step-1: 1rem;
+  --step-2: 1.25rem;
+  --step-3: 1.75rem;
+
+  --radius-s: 3px;
+  --radius-m: 6px;
+}
+
+/* VS Code's theme, which it names on the webview's body (see hooks/useScheme.ts). */
+body[data-vscode-theme-kind="vscode-dark"],
+body[data-vscode-theme-kind="vscode-high-contrast"] {
+  color-scheme: dark;
+  --ground: #111518;
+  --surface: #171c20;
+  --raised: #1e2428;
+  --ink: #e3e7ea;
+  --ink-2: #aab4bc;
+  --ink-3: #7a858e;
+  --rule: #2b3339;
+  --rule-strong: #3d474f;
+  --signal: #f2c94c;
+  --signal-ink: #15191c;
+  --signal-wash: #2e2a17;
+  --ok: #63b884;
+  --warn: #e2a73f;
+  --fail: #ec7158;
+  --focus: #7aa2f7;
+  --viewport: #0e1215;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* `html body` outranks three-cad-viewer's global body rules (flex row, no text selection, its own background). */
+html body {
+  display: block;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 var(--step-0) / 1.45 var(--sans);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--narrow);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  margin: 0;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.muted {
+  color: var(--ink-2);
+}
+.tiny {
+  font-size: var(--step--1);
+}
+.pad {
+  padding: 12px 16px;
+}
+.ok {
+  color: var(--ok);
+}
+.fail {
+  color: var(--fail);
+}
+
+/* ------------------------------------------------------------------ layout */
+
+/* Every page fills its VS Code webview: the 3D editor tab, the Design view or a model file. */
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+.status-text {
+  font-size: var(--step--1);
+  color: var(--ink-2);
+}
+.status-text.status-failed {
+  color: var(--fail);
+}
+
+/* ------------------------------------------------------------------ controls */
+
+.button {
+  border: 1px solid var(--rule-strong);
+  background: var(--raised);
+  border-radius: var(--radius-s);
+  padding: 6px 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.button:hover:not(:disabled) {
+  border-color: var(--ink-2);
+}
+.button.small {
+  padding: 3px 9px;
+  font-size: var(--step--1);
+}
+.button.primary {
+  background: var(--ink);
+  color: var(--ground);
+  border-color: var(--ink);
+}
+.button:disabled,
+.toggle:disabled,
+.icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.icon-button {
+  border: 0;
+  background: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--ink-2);
+}
+.icon-button:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.link-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* :where() keeps these defaults at zero specificity, so classed controls (ours and three-cad-viewer's) win */
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"]), select, textarea) {
+  width: 100%;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  border-radius: var(--radius-s);
+  padding: 6px 8px;
+}
+textarea {
+  resize: vertical;
+  line-height: 1.4;
+}
+input[type="range"] {
+  accent-color: var(--ink);
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ink);
+}
+[aria-invalid="true"] {
+  border-color: var(--fail) !important;
+}
+
+.hint {
+  font-size: var(--step--1);
+  color: var(--ink-2);
+}
+.hint.fail {
+  color: var(--fail);
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Whether the agent has the selection and open pins yet (the agents' prompt hook records it). */
+.delivery {
+  color: var(--ink-2);
+  margin: 0;
+}
+.delivery.sent {
+  color: var(--ok);
+}
+
+.notice {
+  font-size: var(--step--1);
+  padding: 6px 10px;
+  border-left: 3px solid currentColor;
+  background: var(--raised);
+}
+
+code {
+  font-family: var(--code);
+  font-size: 0.8em;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  padding: 1px 5px;
+  margin-left: 6px;
+}
+
+/* ------------------------------------------------------------------ design view */
+
+.design {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  height: 100%;
+}
+.design-empty {
+  display: grid;
+  place-items: center;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.stage-head {
+  display: flex;
+  flex-wrap: wrap; /* the toolbar moves to a second row before it squeezes the title */
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+.stage-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 140px;
+  flex: 1 1 140px;
+}
+.stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.stage-title h1 {
+  font-size: var(--step-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  align-items: center;
+}
+.rev-switch {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--raised);
+  margin-right: 6px;
+}
+.rev-label {
+  font-family: var(--narrow);
+  font-weight: 500;
+  padding: 0 4px;
+  min-width: 112px;
+  text-align: center;
+}
+.toggle {
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  border-radius: var(--radius-s);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.toggle.on {
+  background: var(--ink);
+  color: var(--ground);
+  border-color: var(--ink);
+}
+.pin-toggle.on {
+  background: var(--signal);
+  color: var(--signal-ink);
+  border-color: var(--signal);
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--viewport);
+}
+
+.viewport-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+  pointer-events: none;
+  text-align: center;
+  padding: 24px;
+}
+/* three-cad-viewer's toolbar and shape filter run along the top: hitlcad's overlays sit at the bottom */
+.viewport-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--signal);
+  color: var(--signal-ink);
+  padding: 4px 12px;
+  border-radius: var(--radius-s);
+  font-weight: 500;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ Design view (VS Code view: bottom panel or a sidebar) */
+
+.inspector {
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.brief {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+
+.pins {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pins li {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.pin-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--signal);
+  color: var(--signal-ink);
+  border: 2px solid var(--signal-ink);
+  display: grid;
+  place-items: center;
+  font-family: var(--narrow);
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--rule);
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.tab {
+  border: 0;
+  background: none;
+  padding: 9px 10px 7px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-family: var(--narrow);
+  font-weight: 600;
+}
+.tab.on {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+.tab-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.error-block {
+  font-family: var(--code);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  background: var(--raised);
+  border-left: 3px solid var(--fail);
+  padding: 6px 8px;
+  margin: 6px 0 0;
+  color: var(--ink);
+  overflow-x: auto;
+}
+.code {
+  font-family: var(--code);
+  font-size: 0.75rem;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  padding: 8px;
+  overflow: auto;
+  max-height: 360px;
+  margin: 6px 0 0;
+}
+
+/* pins */
+.pins-panel {
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pins li {
+  align-items: start;
+  padding: 6px;
+  border-radius: 4px;
+}
+.pins li.active {
+  background: var(--signal-wash);
+}
+.pin-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pin-body textarea {
+  resize: vertical;
+  min-height: 2.6em;
+}
+.pin-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.resolved-pins ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.resolved-pins .pin-actions {
+  display: inline-flex;
+  margin-left: 8px;
+}
+.tab-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--signal);
+  color: var(--signal-ink);
+  font-size: 0.75rem;
+}
+
+/* brief */
+.brief h4 {
+  margin: 6px 0 2px;
+  font-family: var(--narrow);
+}
+.brief ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* parameters */
+.params {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid transparent;
+}
+.param.changed {
+  border-left-color: var(--signal);
+}
+.param-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 500;
+}
+.unit {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+.param-inputs {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 10px;
+  align-items: center;
+}
+.param-inputs:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding: 8px 0 4px;
+}
+
+/* report */
+.report {
+  padding: 12px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.report h3 {
+  font-size: var(--step-0);
+  margin-top: 6px;
+}
+.metrics {
+  border-collapse: collapse;
+  width: 100%;
+}
+.metrics th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-2);
+  padding: 3px 0;
+  width: 40%;
+}
+.metrics td {
+  padding: 3px 0;
+}
+.metrics tr + tr {
+  border-top: 1px solid var(--rule);
+}
+.checks,
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.checks li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 6px;
+}
+.check-mark {
+  font-weight: 600;
+  text-align: center;
+}
+.checks .pass .check-mark {
+  color: var(--ok);
+}
+.checks .sev-error .check-mark,
+.checks .sev-error .check-name {
+  color: var(--fail);
+}
+.checks .sev-warning .check-mark,
+.checks .sev-warning .check-name {
+  color: var(--warn);
+}
+.check-name {
+  font-weight: 500;
+}
+.preview {
+  margin: 0;
+}
+.preview img {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+}
+details summary {
+  cursor: pointer;
+  color: var(--ink-2);
+}
+
+/* status line */
+.statusline {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+  font-size: var(--step--1);
+  min-width: 0;
+}
+.statusline .spacer {
+  flex: 1;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex-shrink: 0;
+}
+.dot.status-building {
+  background: var(--ink);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.dot.status-failed {
+  background: var(--fail);
+}
+
+.conn {
+  font-weight: 500;
+}
+.conn.ok {
+  color: var(--ok);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+  }
+}
+
+/* spinner */
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--rule-strong);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.design-path {
+  font-family: var(--code);
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.statusline {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+@media (max-width: 900px) {
+  .stage-head {
+    padding: 8px 12px;
+    row-gap: 6px;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .rev-label {
+    min-width: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ selection & file view */
+
+.viewport-hint.select-hint {
+  background: #2f6df6;
+  color: #ffffff;
+}
+.selection-box {
+  position: absolute;
+  bottom: 48px;
+  right: 12px;
+  width: min(380px, calc(100% - 24px));
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--raised) 94%, transparent);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid #2f6df6;
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--step--1);
+  z-index: 5;
+}
+.selection-box header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sel-title {
+  font-family: var(--narrow);
+  font-weight: 600;
+}
+.selection-box ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.selection-box li {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 6px;
+  align-items: baseline;
+}
+.sel-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: #2f6df6;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-family: var(--narrow);
+  font-weight: 600;
+  font-size: 0.7rem;
+}
+.file-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.file-view .stage-head h1 {
+  font-size: var(--step-1);
+}
+.file-view .design-path {
+  max-width: 60vw;
+}
+
+.cad-stage {
+  position: absolute;
+  inset: 0;
+}
+/* Meshes have no vertices, edges, faces or parts to pick: a click is a point, so the viewer's pick filter does nothing. */
+.cad-stage[data-brep="false"] .tcv_shape_filter {
+  display: none !important;
+}
+.model-size {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .selection-box {
+    bottom: 50px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: 40%;
+  }
+}
+
+/* ------------------------------------------------------------------ compare */
+
+.toggle.compare-toggle.on {
+  background: #4c6ef5;
+  border-color: #4c6ef5;
+  color: #ffffff;
+}
+
+.changes {
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.changes-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.changes h3 {
+  margin: 8px 0 0;
+}
+.code.diff span {
+  display: block;
+}
+.code.diff .d-add {
+  background: color-mix(in srgb, #2f9e44 18%, transparent);
+}
+.code.diff .d-del {
+  background: color-mix(in srgb, #e03131 16%, transparent);
+}
+.code.diff .d-skip {
+  color: var(--ink-3);
+}

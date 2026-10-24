@@ -1,0 +1,14 @@
+{
+  "name": "hitlcad-e2e",
+  "private": true,
+  "description": "End-to-end tests: the real hitlcad server, the built panel UI and the extension's webview relay, in Chromium.",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3"
+  }
+}
