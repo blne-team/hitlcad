@@ -7,7 +7,7 @@ analysis of each build, which reports problems with their addresses instead of r
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -28,6 +28,19 @@ FORMAT = 2
 
 class DesignSpec(Model):
     hitlcad: Literal[2] = FORMAT
+
+    @model_validator(mode="before")
+    @classmethod
+    def _format(cls, data: Any) -> Any:
+        """A design.json of another format is one error, not one per field it no longer matches."""
+        if isinstance(data, dict) and data.get("hitlcad", FORMAT) != FORMAT:
+            raise ValueError(
+                f"design.json is hitlcad format {data['hitlcad']}; this hitlcad reads format {FORMAT} only: an "
+                "assembly of parts (parts/*.py, assembly.py, interfaces.py). Rewrite the design in format "
+                f"{FORMAT}; the hitlcad skill describes it"
+            )
+        return data
+
     name: str
     number: str = Field(default="", description="The user's own part number for the whole design")
     backend: str = Field(description="Backend for parts that do not set their own")

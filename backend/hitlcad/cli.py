@@ -54,7 +54,11 @@ def cmd_build(args: argparse.Namespace) -> int:
     renderer = None if args.no_render else BlenderWorkbenchRenderer(binary=settings.blender_binary)
     pipeline = BuildPipeline(registry, settings, default_analyses(), discover(), renderer)
     folder = DesignFolder(Path(args.design))
-    spec = folder.spec(settings.tolerances, args.configuration)
+    try:
+        spec = folder.spec(settings.tolerances, args.configuration)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     out = Path(args.out).resolve()
     report = asyncio.run(pipeline.run(spec, folder.path, out))
     print(revision_summary(Revision(id=0, origin="file", spec=spec, report=report), limit=settings.explore_limit))

@@ -44,7 +44,15 @@ class DesignFolder:
         return self.design_file.is_file()
 
     def load(self) -> DesignSpec:
-        return DesignSpec.model_validate_json(self.design_file.read_text(encoding="utf-8"))
+        """design.json, or a ValueError naming each problem where it is (not pydantic's dump of the input)."""
+        from pydantic import ValidationError
+
+        try:
+            return DesignSpec.model_validate_json(self.design_file.read_text(encoding="utf-8"))
+        except ValidationError as e:
+            problems = [("" if not err["loc"] else ".".join(map(str, err["loc"])) + ": ")
+                        + err["msg"].removeprefix("Value error, ") for err in e.errors()]  # fmt: skip
+            raise ValueError(f"{self.design_file} is not valid:\n" + "\n".join(problems)) from None
 
     def save(self, design: DesignSpec) -> None:
         text = json.dumps(design.model_dump(mode="json", exclude_defaults=True) | {"hitlcad": design.hitlcad},

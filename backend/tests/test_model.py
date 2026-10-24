@@ -229,3 +229,20 @@ def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
     # Shells apart stay apart
     trimesh.util.concatenate([body, detail.apply_translation((50, 0, 0))]).export(tmp_path / "apart.stl")
     assert len(load_mesh(tmp_path / "apart.stl").split()) == 2
+
+
+def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:
+    from hitlcad.designs.folder import DesignFolder
+
+    (tmp_path / "design.json").write_text(json.dumps({"hitlcad": 1, "name": "old", "source": "model.py"}),
+                                          encoding="utf-8")  # fmt: skip
+    with pytest.raises(ValueError) as old:
+        DesignFolder(tmp_path).load()
+    assert str(old.value).splitlines()[1:] == [
+        "design.json is hitlcad format 1; this hitlcad reads format 2 only: an assembly of parts (parts/*.py, "
+        "assembly.py, interfaces.py). Rewrite the design in format 2; the hitlcad skill describes it"
+    ]  # one problem, not one per field the old format no longer matches
+    design = {"name": "x", "backend": "build123d", "parts": {"a": {"role": "a", "file": "parts/a.py", "colour": "red"}}}
+    (tmp_path / "design.json").write_text(json.dumps(design), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"\nparts\.a\.colour: Extra inputs are not permitted$"):
+        DesignFolder(tmp_path).load()
