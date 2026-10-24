@@ -14,20 +14,21 @@ from hitlcad.designs import agents
 AGENT_GUIDE = """\
 # Design project (hitlcad)
 
-This workspace holds parametric CAD designs in `designs/<name>/` (`design.json` + `model.py`).
-The `hitlcad` MCP server builds, measures and renders them; the human reviews each build in the
-hitlcad panel in VS Code and talks to you here, in your own chat.
+This workspace holds parametric CAD assemblies in `designs/<name>/` (`design.json`, `interfaces.py`,
+`parts/`, `assembly.py`). The `hitlcad` MCP server builds, verifies and renders them; the human
+reviews each build in the hitlcad panel in VS Code and talks to you here, in your own chat.
 
-Use the `hitlcad` skill for any work on a design, and the `hitlcad-<backend>` skill before writing
-a design's `model.py`. hitlcad installs both in `.claude/skills/` and `.agents/skills/`; if they
-are missing, run `hitlcad init .` in this folder.
+Use the `hitlcad` skill for any work on a design, and the `hitlcad-<backend>` skill before writing a
+design's code. hitlcad installs both in `.claude/skills/` and `.agents/skills/`; if they are
+missing, run `hitlcad init .` in this folder.
 
+- Declare the structure in design.json before writing geometry, and check it with
+  `build_design(path, scope="structure")`.
 - Build, measure and render only through the hitlcad tools. Other CAD, Blender or bpy skills are
-  API reference for `model.py`, not a way to build or export.
-- Never edit `build/`; it is regenerated from `model.py` and `design.json`.
+  API reference for part files, not a way to build or export.
+- Never edit `build/`; it is regenerated from the design's files.
 - When the human points at something ("this", "the selected …", pins), hitlcad's prompt hook has
-  added it to their message: the selection and open pins, with pin ids. If it is not there, call
-  `get_feedback(path)`.
+  added it to their message, named by instance and connector. `explore_design(path)` repeats it.
 """
 
 GITIGNORE = """\

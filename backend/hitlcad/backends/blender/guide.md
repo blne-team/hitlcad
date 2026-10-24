@@ -1,24 +1,46 @@
-# Blender authoring contract (Blender {blender_version}, headless)
+# Blender code contract (Blender {blender_version}, headless)
 
-Write one Python module that defines `build(p)`. `p` is a dict of parameter values keyed by
-parameter name. The scene starts empty with 1 Blender unit = 1 mm, Z up. Create objects, then
-return them (an Object or list of Objects), or return `None` to export every mesh/curve object
-in the scene. Cameras and lights are discarded. Rest the model on the XY plane (lowest point at
-Z=0) unless the brief says otherwise.
+A design's code is `interfaces.py`, part files under `parts/`, `lib/` helpers and `assembly.py`.
+hitlcad runs each in Blender's Python with `p` (parameter values) and `i` (interface values, as
+attributes; see the hitlcad skill) and records what each reads. 1 Blender unit = 1 mm, Z up. Each
+part file runs in a fresh, empty scene.
+
+## Part files
+
+`def build(p, i)` returns `{part name: (object or [objects], connectors)}` for exactly the parts
+design.json assigns to the file, each part in its own frame (the way it is made; its lowest point at
+Z=0). `connectors` maps each declared connector to a 4 × 4 `mathutils.Matrix` (or an empty, whose
+world matrix is used), or a list of them for a pattern. A frame's origin sits where the mating
+connector's origin will be, Z out of the part. Meshes are not B-rep: hitlcad checks connector frames
+and placements, and reports hole and shaft sizes and fits as unverified.
+
+```python
+import bpy
+from mathutils import Matrix
+
+
+def build(p, i):
+    grip = make_grip(p["length"], p["girth"])  # your bmesh code
+    socket = Matrix.Translation((0, 0, 0)) @ Matrix.Rotation(3.14159, 4, "X")  # faces down
+    return {"grip": (grip, {"socket": socket})}
+```
+
+## assembly.py
+
+`def build(p, i)` returns `{part or component name: [Matrix, …]}`: one placement per instance.
 
 Rules:
-- Keep `model.py` self-contained: `bpy`, `bmesh`, `mathutils`, the standard library and numpy.
-  It runs in a fresh Blender process with the output folder as its working directory.
-- Every dimension a human may want to tune must come from `p[...]`.
+- Keep code self-contained: `bpy`, `bmesh`, `mathutils`, the standard library and numpy, plus `lib/`.
+- Every dimension a human may want to tune must come from `p[...]` or `i.<value>`.
 - Prefer building geometry with `bmesh` or `bpy.data` directly over `bpy.ops`, which depends on
   context. `bpy.ops.mesh.primitive_*_add` works in background mode and is fine for primitives.
 - Modifiers are applied on export; keep them on the object (Subdivision, Solidify, Boolean,
   Bevel, Array, Mirror, Screw, Displace…). Use `object.modifiers.new(name, type)`.
-- Aim for a closed (watertight) manifold mesh if the object could be 3D printed: use Solidify
-  for shells, avoid zero-thickness faces, and remove doubles (`bmesh.ops.remove_doubles`).
+- Aim for a closed (watertight) manifold mesh: use Solidify for shells, avoid zero-thickness faces,
+  and remove doubles (`bmesh.ops.remove_doubles`).
 - Seed any randomness from a parameter: `random.seed(p["seed"])`.
-- Name every object for what it is (`obj.name = "ear_left"`): when the human clicks or pins the
-  model, you are told the name of the object they hit.
+- Name every object for what it is (`obj.name = "ear_left"`): when the human clicks the model, you
+  are told the object they hit.
 - Keep triangle counts reasonable (< 500k).
 
 Skeleton:
@@ -26,25 +48,26 @@ Skeleton:
 ```python
 import bmesh
 import bpy
+from mathutils import Matrix
 from math import cos, pi, sin
 
 
-def build(p):
+def build(p, i):
     h, r, wall, twist = p["height"], p["radius"], p["wall"], p["twist_deg"]
     mesh = bpy.data.meshes.new("vase")
     bm = bmesh.new()
     rings, segs = 48, 64
-    for i in range(rings + 1):
-        t = i / rings
+    for ring in range(rings + 1):
+        t = ring / rings
         radius = r * (0.8 + 0.3 * sin(t * pi))
         angle = twist * pi / 180 * t
         for j in range(segs):
             a = 2 * pi * j / segs + angle
             bm.verts.new((radius * cos(a), radius * sin(a), h * t))
     bm.verts.ensure_lookup_table()
-    for i in range(rings):
+    for ring in range(rings):
         for j in range(segs):
-            a, b = i * segs + j, i * segs + (j + 1) % segs
+            a, b = ring * segs + j, ring * segs + (j + 1) % segs
             bm.faces.new([bm.verts[a], bm.verts[b], bm.verts[b + segs], bm.verts[a + segs]])
     bottom = bm.faces.new([bm.verts[j] for j in reversed(range(segs))])
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
@@ -55,7 +78,7 @@ def build(p):
     solid = obj.modifiers.new("wall", "SOLIDIFY")
     solid.thickness = wall
     solid.offset = -1
-    return obj
+    return {"vase": (obj, {"base": Matrix.Rotation(3.14159, 4, "X")})}
 ```
 
 Useful API notes for this version:
@@ -68,12 +91,5 @@ Useful API notes for this version:
   m.solver = "EXACT"`, then hide the cutter from the result by not returning it and setting
   `cutter.hide_render = True` and returning only the kept objects.
 
-- Assemblies: when the design is several parts, return a dict `{"body": body, "lid": [lid, knob]}`
-  (a part is one object or a list of objects), each placed where it sits in the assembly. Names
-  use letters, digits, `.`, `_` or `-`. Every part gets its own STL and overlaps between parts are
-  reported. Without a dict, all returned objects are one part.
-
-The build produces `mesh.stl` (mm), `model.blend` and `objects.glb` (the objects by name) (plus
-`part-<name>.stl` per part). You receive the
-measured bounding box, volume, watertightness and body count after each build, plus preview
-renders when your model supports images.
+The build exports each part in its own frame (`build/parts/<part>.stl`, and `.glb` with the objects
+by name), the placed assembly (`build/mesh.stl`) and the 3D view.

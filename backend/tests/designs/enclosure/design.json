@@ -1,0 +1,148 @@
+{
+  "hitlcad": 2,
+  "name": "Enclosure",
+  "backend": "build123d",
+  "parameters": [
+    {
+      "name": "width",
+      "value": 40,
+      "min": 10,
+      "max": 200
+    },
+    {
+      "name": "height",
+      "value": 20,
+      "min": 5,
+      "max": 100
+    },
+    {
+      "name": "wall",
+      "value": 2,
+      "min": 1,
+      "max": 10
+    },
+    {
+      "name": "lid_t",
+      "value": 4,
+      "min": 2,
+      "max": 10
+    }
+  ],
+  "ground": "base",
+  "manufacturing": {
+    "process": "fdm"
+  },
+  "parts": {
+    "base": {
+      "role": "open box",
+      "file": "parts/box.py",
+      "material": "PETG",
+      "connectors": {
+        "top": {
+          "kind": "face",
+          "symmetry": 4
+        },
+        "inserts": {
+          "kind": "frame",
+          "count": 4
+        }
+      }
+    },
+    "lid": {
+      "role": "closes the box",
+      "file": "parts/box.py",
+      "material": "PETG",
+      "connectors": {
+        "bottom": {
+          "kind": "face",
+          "symmetry": 4
+        },
+        "screws": {
+          "kind": "hole",
+          "count": 4
+        }
+      }
+    },
+    "insert": {
+      "role": "thread",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "M3 insert",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "placement": {
+          "kind": "frame"
+        },
+        "thread": {
+          "kind": "hole",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "screw": {
+      "role": "holds the lid",
+      "file": "parts/hardware.py",
+      "catalog": {
+        "designation": "M3x10",
+        "fidelity": "exact"
+      },
+      "connectors": {
+        "seat": {
+          "kind": "face",
+          "symmetry": "axial"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "rigid",
+      "a": "base.top",
+      "b": "lid.bottom"
+    },
+    {
+      "type": "rigid",
+      "a": "base.inserts",
+      "b": "insert.placement",
+      "overlap": true
+    }
+  ],
+  "fasteners": [
+    {
+      "fastener": "screw.seat",
+      "through": [
+        "lid.screws"
+      ],
+      "into": "insert.thread"
+    }
+  ],
+  "requirements": [
+    {
+      "text": "fits 50 mm",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          50,
+          50,
+          30
+        ]
+      }
+    }
+  ],
+  "outputs": [
+    "bom",
+    "3mf",
+    "urdf",
+    "sdf"
+  ],
+  "configurations": {
+    "wide": {
+      "width": 60
+    }
+  },
+  "brief": {
+    "title": "Electronics enclosure",
+    "summary": "An open box closed by a lid, four M3 screws into heat-set inserts."
+  }
+}

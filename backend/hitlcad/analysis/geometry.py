@@ -1,8 +1,7 @@
 """B-rep geometry of a build: what each face, edge and vertex is, measurements between them, and round holes.
 
-References use the numbering of the 3D view and of selections: "face 9 of model" is faces()[9] of
-part `model` in build123d (the parts of a STEP are its solids, as the viewer's tree shows them).
-A model with one part can drop "of model". A whole part is "part lid", a point "(x, y, z)" in mm.
+References use the numbering of the 3D view and of selections: "face 9 of lid[0]" is faces()[9] of the
+lid's STEP (`parts/lid.step`), placed where instance lid[0] sits. See `Resolver` for every form.
 """
 
 from __future__ import annotations
@@ -24,6 +23,16 @@ _NUMBER = r"\s*(-?\d+(?:\.\d+)?)\s*"
 _POINT = re.compile(rf"^\(?{_NUMBER},{_NUMBER},{_NUMBER}\)?$")
 PARALLEL_DEG = 0.5
 FULL_CIRCLE = 0.95  # of 2π: a cylindrical cut that goes this far round is a hole, not a fillet or slot end
+
+
+def location(m: Any) -> Any:
+    """A 4 × 4 frame as a build123d Location."""
+    from build123d import Location
+    from OCP.gp import gp_Trsf
+
+    t = gp_Trsf()
+    t.SetValues(*[float(m[r][c]) for r in range(3) for c in range(4)])
+    return Location(t)
 
 
 def vec(v: Any, nd: int = 3) -> list[float]:
@@ -93,62 +102,79 @@ def solid_text(part: Any, details: dict[str, Any]) -> str:
 DESCRIBE = {"face": face_text, "edge": edge_text, "vertex": vertex_text, "solid": solid_text}
 
 
-class StepModel:
-    """A built STEP with its parts, addressed the way the 3D view and selections number them."""
+class Resolver:
+    """Addresses of a built design as B-rep items in model space (or a part's own frame):
 
-    def __init__(self, step: Path) -> None:
-        self.parts = cadview.parts(cadview.load_step(step), step.stem)
+    "face 9 of lid[0]"   a face of an instance, placed      "face 9 of lid"   … of the only instance
+    "lid[0]"             the whole instance, placed          "part lid"        the part in its own frame
+    "lid.screws[2]"      a connector frame: its origin (and Z as its direction)
+    "(0, 0, 10)"         a point, mm
+    """
 
-    def part(self, name: str | None) -> tuple[str, Any]:
-        """A part by its name or path; may be omitted when the model has one part."""
-        if name is None:
-            if len(self.parts) != 1:
-                raise ValueError(f"the model has {len(self.parts)} parts; say which: {', '.join(self._names())}")
-            return next(iter(self.parts.items()))
-        hits = [(path, shape) for path, shape in self.parts.items() if name in (path, path.rsplit("/", 1)[-1])]
-        if len(hits) != 1:
-            raise ValueError(f"no single part named {name!r}; parts: {', '.join(self._names())}")
-        return hits[0]
+    def __init__(self, built: Any) -> None:
+        self.built = built
 
-    def resolve(self, ref: str) -> tuple[str, Any]:
-        """('face 9 of model', the build123d Face) for a reference, the part for 'part lid', or a Vertex
-        for '(x, y, z)'."""
-        from build123d import Vertex
+    def _leaf(self, address: str) -> Any:
+        from hitlcad.analysis.selection import leaf_of
+
+        leaf = leaf_of(self.built, address)
+        if leaf.part.shape is None:
+            raise ValueError(f"{leaf.path} is a mesh: it has no faces, edges or vertices")
+        return leaf
+
+    def resolve(self, ref: str) -> tuple[str, Any, Any | None]:
+        """(name, the item, a direction for connector frames)."""
+        from build123d import Vector, Vertex
+
+        from hitlcad.core import frames as fr
 
         text = ref.strip()
         if m := _POINT.match(text):
             point = tuple(float(c) for c in m.groups())
-            return f"point {fmt(list(point))}", Vertex(*point)
+            return f"point {fmt(list(point))}", Vertex(*point), None
         if m := _PART.match(text):
-            path, shape = self.part(m.group(1))
-            return f"part {path.rsplit('/', 1)[-1]}", shape
-        m = _REF.match(text)
-        if not m:
-            raise ValueError(f"{ref!r} is not a reference like 'face 9', 'edge 3 of block', 'part lid' or '(0, 0, 10)'")
-        topo, index, name = m.group(1).lower(), int(m.group(2)), m.group(3)
-        path, shape = self.part(name)
-        items = getattr(shape, cadview.TOPO_LISTS[topo])()
-        if index >= len(items):
-            raise ValueError(f"part {path.rsplit('/', 1)[-1]} has {len(items)} {topo}s (0–{len(items) - 1})")
-        return f"{topo} {index} of {path.rsplit('/', 1)[-1]}", items[index]
+            part = self.built.parts.get(m.group(1))
+            if part is None or part.shape is None:
+                raise ValueError(f"no B-rep part {m.group(1)!r}; parts: {', '.join(self.built.parts)}")
+            return f"part {m.group(1)} (its own frame)", part.shape, None
+        if m := _REF.match(text):
+            topo, index, owner = m.group(1).lower(), int(m.group(2)), m.group(3)
+            if owner is None:
+                raise ValueError(f"say which instance: '{topo} {index} of lid[0]'")
+            leaf = self._leaf(owner)
+            items = getattr(leaf.part.shape, cadview.TOPO_LISTS[topo])()
+            if index >= len(items):
+                raise ValueError(f"{leaf.path} has {len(items)} {topo}s (0–{len(items) - 1})")
+            return f"{topo} {index} of {leaf.path}", items[index].moved(location(leaf.transform)), None
+        if "." in text:
+            from hitlcad.core.address import End
 
-    def _names(self) -> list[str]:
-        return [path.rsplit("/", 1)[-1] for path in self.parts]
+            body, _, last = text.rpartition(".")
+            name, _, k = last.partition("[")
+            frames = self.built.frames(str(End.parse(f"{body}.{name}")))
+            index = int(k.rstrip("]")) if k else 0
+            matching = [f for f in frames if f.index == index]
+            if not matching:
+                raise ValueError(f"{text}: no frame {index}")
+            if len(matching) > 1:
+                raise ValueError(f"{text} names {len(matching)} instances; say which, e.g. {matching[0].address}")
+            f = matching[0]
+            o, z = fr.origin(f.frame), fr.z_axis(f.frame)
+            return f"connector {f.address}" + (f"[{index}]" if k else ""), Vertex(*o), Vector(*z)
+        leaf = self._leaf(text)
+        return f"instance {leaf.path}", leaf.part.shape.moved(location(leaf.transform)), None
 
 
-def list_geometry(step: Path, kind: str = "faces", part: str | None = None) -> str:
-    """Every face, edge or vertex of one part (or all parts), numbered as the 3D view numbers them."""
+def list_geometry(built: Any, target: str, kind: str = "faces") -> str:
+    """Every face, edge or vertex of a part (its own frame: "part lid") or an instance (placed: "lid[0]"),
+    numbered as picks and the measuring tool number them."""
     if kind not in TOPOS:
         raise ValueError(f"kind must be one of {', '.join(TOPOS)}")
-    model = StepModel(step)
-    selected = [model.part(part)] if part else list(model.parts.items())
-    lines = []
-    for path, shape in selected:
-        leaf = path.rsplit("/", 1)[-1]
-        counts = ", ".join(f"{len(getattr(shape, name)())} {name}" for name in TOPOS)
-        lines.append(f"Part {leaf}: {counts}")
-        topo = TOPOS[kind]
-        lines += [f"  {topo} {i}: {DESCRIBE[topo](item, {})}" for i, item in enumerate(getattr(shape, kind)())]
+    name, shape, _ = Resolver(built).resolve(target)
+    counts = ", ".join(f"{len(getattr(shape, k)())} {k}" for k in TOPOS)
+    lines = [f"{name}: {counts}"]
+    topo = TOPOS[kind]
+    lines += [f"  {topo} {i}: {DESCRIBE[topo](item, {})}" for i, item in enumerate(getattr(shape, kind)())]
     return "\n".join(lines)
 
 
@@ -163,15 +189,16 @@ def _direction(item: Any) -> tuple[str, Any] | None:
     return None
 
 
-def measure(step: Path, a: str, b: str) -> str:
-    """Minimum distance between two references, plus the angle (and parallel gap) where they have directions."""
-    model = StepModel(step)
-    (name_a, item_a), (name_b, item_b) = model.resolve(a), model.resolve(b)
+def measure(built: Any, a: str, b: str) -> str:
+    """Minimum distance between two addresses, plus the angle (and parallel gap) where they have directions."""
+    resolver = Resolver(built)
+    (name_a, item_a, dir_a_conn), (name_b, item_b, dir_b_conn) = resolver.resolve(a), resolver.resolve(b)
     distance, point_a, point_b = item_a.distance_to_with_closest_points(item_b)
     lines = [
         f"{name_a} to {name_b}: minimum distance {distance:.3f} mm, between {fmt(vec(point_a))} and {fmt(vec(point_b))}"
     ]
-    dir_a, dir_b = _direction(item_a), _direction(item_b)
+    dir_a = ("line", dir_a_conn) if dir_a_conn is not None else _direction(item_a)
+    dir_b = ("line", dir_b_conn) if dir_b_conn is not None else _direction(item_b)
     if dir_a and dir_b:
         cos = max(-1.0, min(1.0, dir_a[1].normalized().dot(dir_b[1].normalized())))
         between = math.degrees(math.acos(cos))

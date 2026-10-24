@@ -11,7 +11,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter
 
-from hitlcad.core.types import DesignBrief, Model, Pin, Revision, SelectionItem, utcnow
+from hitlcad.core.report import Revision
+from hitlcad.core.types import DesignBrief, Model, Pin, SelectionItem, utcnow
 
 
 class _Event(Model):
@@ -37,8 +38,8 @@ class DesignUpdated(_Event):
 
 class BuildStarted(_Event):
     type: Literal["build_started"] = "build_started"
-    backend: str
     origin: str
+    configuration: str | None = None
 
 
 class RevisionCreated(_Event):
@@ -123,6 +124,11 @@ class DesignState(Model):
 
     def revision(self, rev_id: int) -> Revision | None:
         return next((r for r in self.revisions if r.id == rev_id), None)
+
+    def latest(self, configuration: str | None) -> Revision | None:
+        """The latest successful revision of one configuration (None: the default one)."""
+        return next((r for r in reversed(self.revisions)
+                     if r.report.status == "succeeded" and r.spec.configuration == configuration), None)  # fmt: skip
 
     def apply(self, event: Event) -> None:
         self.updated_at = event.ts

@@ -17,12 +17,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from hitlcad import catalogs
 from hitlcad.analysis import cadview, selection
 from hitlcad.api.mcp_server import build_mcp
 from hitlcad.app import HitlCad
 from hitlcad.backends.base import BackendInfo
 from hitlcad.core.events import DesignState, Event, RevisionCreated
-from hitlcad.core.types import Pick, Pin, Revision, SelectionItem
+from hitlcad.core.report import Revision
+from hitlcad.core.types import Pick, Pin, SelectionItem
 from hitlcad.designs import agents, project
 from hitlcad.service.designs import NotFoundError
 
@@ -92,6 +94,17 @@ class UpdatePin(BaseModel):
 
 class EditParameters(BaseModel):
     values: dict[str, Any]
+
+
+class BuildRequest(BaseModel):
+    configuration: str | None = Field(
+        default=None, description="A named configuration; default: the parameters as written"
+    )
+
+
+class Structure(BaseModel):
+    overview: str
+    graph: dict[str, Any]
 
 
 class Capabilities(BaseModel):
@@ -199,28 +212,38 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
                 s, rev = designs.get(design_id), event.revision
                 await socket.send_text(json.dumps({
                     **design_summary(s), "revision": rev.id, "status": rev.report.status.value,
-                    "origin": rev.origin.value, "error": rev.report.error}))  # fmt: skip
+                    "origin": rev.origin, "error": rev.report.error}))  # fmt: skip
         except WebSocketDisconnect:
             pass
         finally:
             designs.bus.unsubscribe_all(queue)
 
     @app.post("/api/designs/{design_id}/build", status_code=201)
-    async def build_design(design_id: str) -> Revision:
-        return await builds.build(design_id, "Rebuilt on request")
+    async def build_design(design_id: str, body: BuildRequest | None = None) -> Revision:
+        return await builds.build(design_id, "Built on request", configuration=body.configuration if body else None)
+
+    @app.get("/api/designs/{design_id}/structure")
+    async def structure(design_id: str, configuration: str | None = None) -> Structure:
+        """The design graph for the panel's Structure view, and the overview an agent would read."""
+        graph = await asyncio.to_thread(core.explore.graph, design_id, configuration)
+        return Structure(overview=graph.overview(), graph=graph.structure())
+
+    @app.get("/api/catalog")
+    async def catalog(query: str, limit: int = 20) -> list[catalogs.CatalogItem]:
+        return await asyncio.to_thread(catalogs.search, query, limit)
 
     @app.post("/api/designs/{design_id}/parameters", status_code=201)
     async def edit_parameters(design_id: str, body: EditParameters) -> Revision:
         return await builds.edit_parameters(design_id, body.values)
 
-    @app.get("/api/designs/{design_id}/revisions/{revision_id}/files/{name}")
-    async def revision_file(design_id: str, revision_id: int, name: str) -> FileResponse:
+    @app.get("/api/designs/{design_id}/revisions/{revision_id}/files/{path:path}")
+    async def revision_file(design_id: str, revision_id: int, path: str) -> FileResponse:
         rev = designs.get(design_id).revision(revision_id)
-        artifact = next((a for a in rev.report.artifacts if a.name == name), None) if rev else None
+        artifact = next((a for a in rev.report.artifacts if a.path == path), None) if rev else None
         if artifact is None:
             raise HTTPException(404, "file not found")
-        path = designs.store.revision_dir(design_id, revision_id) / artifact.path
-        return FileResponse(path, media_type=artifact.media_type, filename=artifact.name,
+        file = designs.store.revision_dir(design_id, revision_id) / artifact.path
+        return FileResponse(file, media_type=artifact.media_type, filename=artifact.name,
                             content_disposition_type="inline")  # fmt: skip
 
     # ------------------------------------------------------------------ selection & pins
@@ -296,7 +319,9 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def describe_file(body: DescribeFilePick) -> SelectionItem:
         source = model_file(body.path)
         try:
-            return await asyncio.to_thread(selection.describe_pick, source, body.point, body.normal, body.component)
+            return await asyncio.to_thread(
+                selection.describe_file_pick, source, body.point, body.normal, body.component
+            )
         except Exception as e:
             raise HTTPException(422, f"could not describe the selection: {e}") from None
 

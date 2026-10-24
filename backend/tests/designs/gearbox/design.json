@@ -1,0 +1,113 @@
+{
+  "hitlcad": 2,
+  "name": "Planetary gearbox",
+  "number": "GBX-100",
+  "backend": "build123d",
+  "parameters": [
+    {"name": "module", "value": 1.25, "min": 0.8, "max": 2.5, "step": 0.05},
+    {"name": "pressure_angle", "value": 20, "min": 14.5, "max": 25, "unit": "deg"},
+    {"name": "sun_teeth", "type": "int", "value": 18, "min": 12, "max": 40, "unit": "count"},
+    {"name": "planet_teeth", "type": "int", "value": 18, "min": 12, "max": 40, "unit": "count"},
+    {"name": "planets", "type": "int", "value": 3, "min": 2, "max": 5, "unit": "count"},
+    {"name": "backlash", "value": 0.15, "min": 0, "max": 0.5},
+    {"name": "face_width", "value": 10, "min": 4, "max": 30},
+    {"name": "flank_points", "type": "int", "value": 12, "min": 4, "max": 40, "unit": "count"},
+    {"name": "floor", "value": 5, "min": 3, "max": 10},
+    {"name": "axial_gap", "value": 0.5, "min": 0.2, "max": 2},
+    {"name": "carrier_thickness", "value": 4, "min": 2, "max": 10},
+    {"name": "lid_thickness", "value": 9, "min": 6, "max": 15},
+    {"name": "housing_od", "value": 88, "min": 60, "max": 120},
+    {"name": "min_wall", "value": 1.2, "min": 0.8, "max": 4},
+    {"name": "pin_d", "value": 3, "min": 2, "max": 6},
+    {"name": "pin_clearance", "value": 0.2, "min": 0, "max": 0.5},
+    {"name": "shaft_d", "value": 5},
+    {"name": "shaft_flat", "value": 4.5},
+    {"name": "shaft_clearance", "value": 0.1, "min": 0, "max": 0.4, "description": "added to the sun bore's radius"},
+    {"name": "motor_clearance_d", "value": 8},
+    {"name": "nema_spacing", "value": 31},
+    {"name": "pilot_d", "value": 22.2},
+    {"name": "pilot_depth", "value": 2},
+    {"name": "insert_depth", "value": 6},
+    {"name": "output_d", "value": 8},
+    {"name": "output_length", "value": 12}
+  ],
+  "configurations": {"ratio_5": {"sun_teeth": 12, "planet_teeth": 18}},
+  "ground": "housing",
+  "manufacturing": {"process": "fdm"},
+  "parts": {
+    "housing": {"role": "ring gear, motor mount, lid inserts", "file": "parts/housing.py", "material": "PLA", "connectors": {
+      "axis": {"kind": "frame", "symmetry": "axial"},
+      "motor_face": {"kind": "face", "symmetry": 4},
+      "motor_pilot": {"kind": "hole"},
+      "motor_screws": {"kind": "hole", "count": 4},
+      "ring": {"kind": "gear", "internal": true, "teeth": "interfaces.ring_teeth", "module": "module", "width": "face_width"},
+      "inserts": {"kind": "frame", "count": 4},
+      "top": {"kind": "face", "symmetry": 4}}},
+    "sun": {"role": "input gear on the motor's D-shaft", "file": "parts/gears.py", "material": "PLA", "connectors": {
+      "bore": {"kind": "hole"},
+      "axis": {"kind": "frame", "symmetry": "axial"},
+      "teeth": {"kind": "gear", "teeth": "sun_teeth", "module": "module", "width": "face_width"}}},
+    "planet": {"role": "meshes with sun and ring, turns on a carrier pin", "file": "parts/gears.py", "material": "PLA", "connectors": {
+      "bore": {"kind": "hole"},
+      "teeth": {"kind": "gear", "teeth": "planet_teeth", "module": "module", "width": "face_width"}}},
+    "carrier": {"role": "planet pins and output shaft", "file": "parts/carrier.py", "material": "PLA", "connectors": {
+      "pins": {"kind": "shaft", "count": "planets"},
+      "axis": {"kind": "frame", "symmetry": "axial"},
+      "output": {"kind": "shaft"}}},
+    "lid": {"role": "closes the housing, holds the output bearing", "file": "parts/lid.py", "material": "PLA", "connectors": {
+      "bottom": {"kind": "face", "symmetry": 4},
+      "screws": {"kind": "hole", "count": 4},
+      "bearing_pocket": {"kind": "hole"}}},
+    "motor": {"role": "drive motor", "file": "parts/motor.py", "material": "aluminium_6061",
+      "catalog": {"designation": "NEMA 17 stepper, 42 × 40 mm, 5 mm D-shaft", "fidelity": "simplified"},
+      "connectors": {
+        "face": {"kind": "face", "symmetry": 4},
+        "pilot": {"kind": "shaft"},
+        "shaft": {"kind": "shaft"},
+        "screw_holes": {"kind": "hole", "count": 4}}},
+    "bearing": {"role": "supports the output shaft", "file": "parts/hardware.py",
+      "catalog": {"designation": "608-2RS deep-groove ball bearing, 8 × 22 × 7", "fidelity": "exact"},
+      "connectors": {"outer": {"kind": "shaft", "symmetry": "axial"}, "bore": {"kind": "hole", "symmetry": "axial"}}},
+    "insert": {"role": "thread for the lid screws", "file": "parts/hardware.py",
+      "catalog": {"designation": "M3 heat-set insert, standard", "fidelity": "exact"},
+      "connectors": {"placement": {"kind": "frame"}, "thread": {"kind": "hole", "symmetry": "axial"}}},
+    "lid_screw": {"role": "holds the lid", "file": "parts/hardware.py",
+      "catalog": {"designation": "ISO 4762 M3 × 14", "fidelity": "exact"},
+      "connectors": {"seat": {"kind": "face", "symmetry": "axial"}}},
+    "motor_screw": {"role": "holds the motor", "file": "parts/hardware.py",
+      "catalog": {"designation": "ISO 4762 M3 × 8", "fidelity": "exact"},
+      "connectors": {"seat": {"kind": "face", "symmetry": "axial"}}}
+  },
+  "mates": [
+    {"type": "rigid", "a": "housing.motor_face", "b": "motor.face"},
+    {"type": "cylindrical", "a": "housing.motor_pilot", "b": "motor.pilot", "fit": {"clearance": [0.1, 0.3]}},
+    {"type": "cylindrical", "a": "motor.shaft", "b": "sun.bore", "fit": {"clearance": [0.0, 0.1]}},
+    {"type": "cylindrical", "a": "carrier.axis", "b": "sun.axis"},
+    {"type": "revolute", "a": "housing.axis", "b": "carrier.axis"},
+    {"type": "cylindrical", "a": "carrier.pins", "b": "planet.bore", "fit": {"clearance": [0.2, 0.5]}},
+    {"type": "rigid", "a": "housing.inserts", "b": "insert.placement", "overlap": true},
+    {"type": "rigid", "a": "housing.top", "b": "lid.bottom"},
+    {"type": "rigid", "a": "lid.bearing_pocket", "b": "bearing.outer", "fit": {"clearance": [-0.05, 0.1]}},
+    {"type": "cylindrical", "a": "carrier.output", "b": "bearing.bore", "flip": true, "fit": {"clearance": [-0.02, 0.05]}}
+  ],
+  "relations": [
+    {"type": "gear", "a": "sun.teeth", "b": "planet.teeth"},
+    {"type": "gear", "a": "planet.teeth", "b": "housing.ring"}
+  ],
+  "fasteners": [
+    {"fastener": "motor_screw.seat", "through": ["housing.motor_screws"], "into": "motor.screw_holes"},
+    {"fastener": "lid_screw.seat", "through": ["lid.screws"], "into": "insert.thread"}
+  ],
+  "requirements": [
+    {"text": "Fits a 90 × 90 × 45 mm envelope, motor excluded", "check": {"kind": "fits_within", "box": [90, 90, 45], "target": "housing"}},
+    {"text": "The printed parts weigh under 250 g", "check": {"kind": "mass", "max": 250, "target": "housing"}},
+    {"text": "Pilot recess for the NEMA 17 boss", "check": {"kind": "hole", "target": "housing", "diameter": 22.2, "tol": 0.05, "count": 1}},
+    {"text": "The carrier clears the housing by 0.3 mm", "check": {"kind": "clearance", "between": ["carrier", "housing"], "min": 0.3}}
+  ],
+  "outputs": ["bom"],
+  "brief": {
+    "title": "NEMA 17 planetary gearbox",
+    "summary": "A 4:1 single-stage planetary gearbox that bolts onto a NEMA 17 stepper: the sun sits on the motor's D shaft, the ring gear is cut into the housing, three planets turn on the carrier's pins and the carrier's 8 mm output shaft runs in a 608 bearing in the lid. Printed in PLA.",
+    "features": ["Involute gears, module 1.25, 20° pressure angle", "Ring gear cut into the housing", "Counterbored NEMA 17 mount with pilot recess", "608 bearing pocket in the lid", "Heat-set inserts for the lid screws"]
+  }
+}

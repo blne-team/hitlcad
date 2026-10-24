@@ -38,22 +38,28 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    """Run a model file through the full pipeline outside any design folder — useful for backend authors."""
+    """Build a design folder through the full pipeline into a directory of its own, outside the server: for
+    CI and for backend authors."""
+    from hitlcad.analysis.base import default_analyses
     from hitlcad.backends.registry import BackendRegistry
-    from hitlcad.core.types import BuildSpec, ParamSpec
-    from hitlcad.pipeline import BuildPipeline
+    from hitlcad.build.pipeline import BuildPipeline
+    from hitlcad.core.report import Revision
+    from hitlcad.designs.folder import DesignFolder
+    from hitlcad.exporters import discover
+    from hitlcad.graph import revision_summary
     from hitlcad.render.base import BlenderWorkbenchRenderer
 
     settings = get_settings()
     registry = BackendRegistry.from_settings(settings)
-    params = [ParamSpec.model_validate(p) for p in json.loads(Path(args.params).read_text())] if args.params else []
     renderer = None if args.no_render else BlenderWorkbenchRenderer(binary=settings.blender_binary)
-    pipeline = BuildPipeline(registry, renderer)
-    spec = BuildSpec(backend=args.backend, source=Path(args.source).read_text(), parameters=params)
-    report = asyncio.run(pipeline.run(spec, Path(args.out)))
-    print(report.model_dump_json(indent=2, exclude={"artifacts"}))
-    print(f"outputs in {Path(args.out).resolve()}")
-    return 0 if report.status == "succeeded" else 1
+    pipeline = BuildPipeline(registry, settings, default_analyses(), discover(), renderer)
+    folder = DesignFolder(Path(args.design))
+    spec = folder.spec(settings.tolerances, args.configuration)
+    out = Path(args.out).resolve()
+    report = asyncio.run(pipeline.run(spec, folder.path, out))
+    print(revision_summary(Revision(id=0, origin="file", spec=spec, report=report), limit=settings.explore_limit))
+    print(f"outputs in {out}")
+    return 0 if report.status == "succeeded" and not report.failing() else 1
 
 
 def _permission(flag: bool | None, question: str, option: str) -> bool:
@@ -148,10 +154,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("doctor", help="check backends and renderer").set_defaults(fn=cmd_doctor)
 
-    p = sub.add_parser("build", help="build a model file through the pipeline")
-    p.add_argument("source", help="Python file defining build(p)")
-    p.add_argument("--backend", default="build123d")
-    p.add_argument("--params", help="JSON file with a list of ParamSpec objects")
+    p = sub.add_parser("build", help="build and verify a design folder (exit 1 on a failed build or result)")
+    p.add_argument("design", help="the design folder (holding design.json)")
+    p.add_argument("--configuration", help="a named configuration")
     p.add_argument("--out", default="build-out")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(fn=cmd_build)

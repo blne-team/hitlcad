@@ -1,4 +1,5 @@
-"""Model files as three-cad-viewer input (its instanced format), in mm, Z up: every 3D view in hitlcad.
+"""Loose model files as three-cad-viewer input (its instanced format), in mm, Z up: the file viewer. A
+build's own view is written by `build.assemble` from its parts.
 
 STEP keeps its B-rep topology: part `/asm/block` carries `faces_i`, `edges_i` and `vertices_i`, which are
 `faces()[i]`, `edges()[i]` and `vertices()[i]` of that part in build123d, so `component` maps a pick in
@@ -28,20 +29,13 @@ OTHER_SURFACE, OTHER_CURVE = 10, 8  # GeomAbs ordinals the viewer shows as "Othe
 TOPO_LISTS = {"face": "faces", "edge": "edges", "vertex": "vertices"}
 
 
-def write_view(source: Path, target: Path, parts: dict[str, Path] | None = None) -> None:
-    """Tessellate `source` (STEP or any mesh file) into `target` for the viewer. A STEP carries its own
-    parts; a mesh assembly passes its `parts` ({name: mesh file}) so the viewer shows them by name."""
-    if source.suffix.lower() in BREP:
-        data = brep_view(load_step(source), source.stem)
-    elif parts:
-        import trimesh
-
-        scene = trimesh.Scene()
-        for name, path in parts.items():
-            scene.add_geometry(load_mesh(path).to_geometry(), node_name=name, geom_name=name)
-        data = mesh_view(scene, source.stem)
-    else:
-        data = mesh_view(load_mesh(source), source.stem)
+def write_view(source: Path, target: Path) -> None:
+    """Tessellate a loose model file (STEP or any mesh) into `target` for the file viewer."""
+    data = (
+        brep_view(load_step(source), source.stem)
+        if source.suffix.lower() in BREP
+        else mesh_view(load_mesh(source), source.stem)
+    )
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":")))
     tmp.replace(target)
@@ -171,18 +165,27 @@ def _mesh_shape(mesh: trimesh.Trimesh) -> dict[str, Any]:
     }
 
 
-def mesh_view(scene: trimesh.Scene, name: str) -> dict[str, Any]:
-    from ocp_tessellate.utils import numpy_to_buffer_json
+IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 
-    identity = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+
+def mesh_view_parts(scene: trimesh.Scene, name: str = "") -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Each mesh of a scene tessellated for the viewer, and its entry in the view's tree."""
     instances, parts = [], []
     for i, (node, mesh) in enumerate(_meshes(scene)):
         instances.append(_mesh_shape(mesh))
         parts.append({
             "id": f"/{name}/{node}", "type": "shapes", "subtype": "solid", "name": node, "shape": {"ref": i},
             "state": [1, 1], "color": MESH_COLOR, "alpha": 1.0, "material": None, "normalize_uvs": True,
-            "texture": None, "loc": identity, "renderback": False, "accuracy": None, "bb": None,
+            "texture": None, "loc": IDENTITY, "renderback": False, "accuracy": None, "bb": None,
         })  # fmt: skip
+    return instances, parts
+
+
+def mesh_view(scene: trimesh.Scene, name: str) -> dict[str, Any]:
+    from ocp_tessellate.utils import numpy_to_buffer_json
+
+    identity = IDENTITY
+    instances, parts = mesh_view_parts(scene, name)
     if not parts:
         raise ValueError("no triangle meshes in the file")
     lo, hi = scene.bounds

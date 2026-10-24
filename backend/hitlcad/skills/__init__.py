@@ -1,7 +1,7 @@
 """Agent skills hitlcad installs into design projects, for Claude Code and Codex.
 
-Each folder here is one skill, copied whole into a project; `$checks` and `$processes` in its
-SKILL.md are filled in from the requirement checks and manufacturing processes. Every enabled
+Each folder here is one skill, copied whole into a project; `$connectors`, `$mates`, `$relations`,
+`$fasteners`, `$checks` and `$processes` in its SKILL.md are filled in from the framework's unions. Every enabled
 backend adds a `hitlcad-<backend>` skill holding its authoring guide. Skill folders named
 `hitlcad*` in a project belong to hitlcad: installing replaces them with the current set.
 """
@@ -37,9 +37,9 @@ def _read(folder: Traversable, prefix: str = "") -> Skill:
 
 def _backend_skill(backend: CADBackend) -> Skill:
     description = (
-        f'Code contract for hitlcad {backend.title} designs (backend "{backend.name}" in design.json): what '
-        f"build(p) in model.py returns, units, allowed imports and idioms. Read it before writing or editing "
-        f"the model.py of a {backend.name} design."
+        f'Code contract for hitlcad {backend.title} part files and assembly.py (backend "{backend.name}" in '
+        f"design.json): what build(p, i) returns, connector frames, placements, catalog parts, imports and idioms. "
+        f"Read it before writing or editing the code of a {backend.name} design."
     )
     body = f"**{backend.title}.** {backend.summary}\n\n{backend.authoring_guide()}"
     return {"SKILL.md": f"---\nname: {PREFIX}-{backend.name}\ndescription: {json.dumps(description)}\n---\n\n{body}"}
@@ -47,7 +47,7 @@ def _backend_skill(backend: CADBackend) -> Skill:
 
 def render(backends: Iterable[CADBackend]) -> dict[str, Skill]:
     """Every skill by name."""
-    values = {"checks": describe.requirement_checks("  "), "processes": describe.manufacturing_processes("  ")}
+    values = describe.guide("")
     skills: dict[str, Skill] = {}
     for folder in files(__name__).iterdir():
         if folder.is_dir() and folder.name != "__pycache__":

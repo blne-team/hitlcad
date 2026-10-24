@@ -1,0 +1,16 @@
+{
+  "PLA": {"density_g_cm3": 1.24, "processes": ["fdm"], "min_thread_engagement_d": 2.0},
+  "PETG": {"density_g_cm3": 1.27, "processes": ["fdm"], "min_thread_engagement_d": 2.0},
+  "ABS": {"density_g_cm3": 1.04, "processes": ["fdm", "injection_molding"], "min_thread_engagement_d": 2.0},
+  "ASA": {"density_g_cm3": 1.07, "processes": ["fdm"], "min_thread_engagement_d": 2.0},
+  "PC": {"density_g_cm3": 1.20, "processes": ["fdm", "injection_molding", "cnc_milling"], "min_thread_engagement_d": 2.0},
+  "PA12": {"density_g_cm3": 1.01, "processes": ["fdm", "injection_molding"], "min_thread_engagement_d": 2.0},
+  "TPU": {"density_g_cm3": 1.21, "processes": ["fdm"], "min_thread_engagement_d": 2.5},
+  "PP": {"density_g_cm3": 0.91, "processes": ["injection_molding"], "min_thread_engagement_d": 2.5},
+  "POM": {"density_g_cm3": 1.41, "processes": ["cnc_milling", "injection_molding"], "min_thread_engagement_d": 1.5},
+  "aluminium_6061": {"density_g_cm3": 2.70, "processes": ["cnc_milling", "sheet_metal"], "min_thread_engagement_d": 2.0},
+  "aluminium_5052": {"density_g_cm3": 2.68, "processes": ["sheet_metal", "cnc_milling"], "min_thread_engagement_d": 2.0},
+  "steel": {"density_g_cm3": 7.85, "processes": ["cnc_milling", "sheet_metal"], "min_thread_engagement_d": 1.0},
+  "stainless_304": {"density_g_cm3": 8.00, "processes": ["cnc_milling", "sheet_metal"], "min_thread_engagement_d": 1.0},
+  "brass": {"density_g_cm3": 8.50, "processes": ["cnc_milling"], "min_thread_engagement_d": 1.5}
+}

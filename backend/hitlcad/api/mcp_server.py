@@ -1,9 +1,9 @@
 """MCP tools that plug hitlcad into the user's own coding agent (Claude Code, Codex, …).
 
-The agent keeps its normal workflow: it edits design files with its own tools and talks to the
-human in its own chat. hitlcad adds what a coding agent cannot do alone: build CAD models,
-measure and render them, and read what the human selected or pinned in the 3D panel.
-Every tool takes the design folder's absolute path.
+The agent keeps its normal workflow: it edits design files with its own tools and talks to the human in
+its own chat. hitlcad adds what a coding agent cannot do alone: build and verify CAD assemblies, explore
+their structure, find standard parts, measure geometry, and read what the human pointed at. Every tool
+takes the design folder's absolute path; every name a tool answers with can be passed back to a tool.
 """
 
 from __future__ import annotations
@@ -14,46 +14,41 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from hitlcad import describe
+from hitlcad import catalogs, describe, materials
 from hitlcad.analysis import geometry
+from hitlcad.analysis.model import StructureError
 from hitlcad.app import HitlCad
-from hitlcad.core.types import Revision
+from hitlcad.core.report import Revision
+from hitlcad.graph import MARK, revision_summary
+from hitlcad.render.section import joint_frames, section_png
 from hitlcad.service.designs import NotFoundError
 
 INSTRUCTIONS = f"""\
-hitlcad builds, measures and renders parametric CAD designs. A design is a folder holding \
-design.json (name, backend, parameters, optional brief) and model.py (defines build(p)). The \
-human reviews every build in the hitlcad panel in VS Code: 3D view, checks, parameters, \
-selections and pins. They talk to you in your own chat, not in hitlcad.
+hitlcad builds, verifies and renders parametric CAD assemblies. A design is a folder: design.json \
+declares its parts (made or catalog), their connectors, the mates, relations and fastener sets \
+between them, parameters, configurations and requirements; interfaces.py computes mating values \
+once; parts/*.py build parts in their own frames; assembly.py places instances. The human reviews \
+every build in the hitlcad panel in VS Code and talks to you in your own chat.
 
-Work like this:
-- create_design(path, name, backend) for a new design. The code contract for a backend is the \
-hitlcad-<backend> skill that hitlcad init installs in the project: read it before writing model code.
-- Edit model.py and design.json with your own file tools. Saving rebuilds the panel's view.
-- build_design(path) returns measurements, checks, requirement results and renders: look at them \
-before you report back. Put what the human asks for in design.json "requirements" with a check \
-where one fits ({describe.CHECK_KINDS}), so every build verifies it.
-- A design of several parts is an assembly: build(p) returns {{"base": base, "lid": lid}}; each part \
-gets its own files, overlaps between parts are reported, and requirements can name a part.
-- When the human says "this", "here", "the selected …" or mentions pins, call \
-get_feedback(path). Resolve pins you addressed with resolve_pins.
-- For build123d designs, list_geometry(path) shows every face (or edge) of the build with the \
-numbers selections use, and measure_geometry(path, a, b) measures between them: check \
-wall thicknesses, clearances and angles there rather than estimating from renders.
+Work like this (the hitlcad skill has the details):
+- create_design(path, name, backend) scaffolds a design. Declare the structure in design.json first, \
+then build_design(path, scope="structure") checks it before any geometry exists.
+- search_catalog(query) before modelling a screw, nut, insert or bearing.
+- Write interfaces.py, the part files and assembly.py with your own file tools; saving rebuilds.
+- build_design(path) verifies every connector, mate, relation, fastener set and requirement \
+({describe.CHECK_KINDS}); failures come first, with section views through failing joints. \
+scope="<part or instance>" answers about one part of a large product.
+- explore_design(path, focus) answers about the design or one part, instance, connector, mate, \
+parameter (with its impact), interfaces.<name>, configuration or 'rev N'. It also tells you what the \
+human selected and pinned.
+- list_geometry and measure_geometry measure exactly; compare_revisions shows what changed.
+- Resolve pins you addressed with resolve_pins.
 
 All tools take the design folder's absolute path."""
 
 
-def _content(state_dir: Any, rev: Revision, extra: str = "") -> list[str | Image]:
-    parts: list[str | Image] = [describe.revision_text(rev) + (f"\n\n{extra}" if extra else "")]
-    png = describe.preview_png(rev, state_dir)
-    if png:
-        parts += [describe.PREVIEW_CAPTION, Image(data=png, format="png")]
-    return parts
-
-
 def build_mcp(core: HitlCad) -> MCPServer:
-    designs, builds, feedback, registry = core.designs, core.builds, core.feedback, core.registry
+    designs, builds, feedback, explore, registry = core.designs, core.builds, core.feedback, core.explore, core.registry
     mcp = MCPServer("hitlcad", instructions=INSTRUCTIONS)
 
     def guard(fn: Any) -> Any:
@@ -63,52 +58,146 @@ def build_mcp(core: HitlCad) -> MCPServer:
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return await fn(*args, **kwargs)
-            except (NotFoundError, ValueError, KeyError) as e:
+            except (NotFoundError, StructureError, ValueError, KeyError, LookupError) as e:
                 return f"ERROR: {e}"
 
         return wrapper
 
+    def images(design_id: str, rev: Revision) -> list[str | Image]:
+        out: list[str | Image] = []
+        preview = rev.report.artifact("preview")
+        directory = feedback.revision_dir(design_id, rev)
+        if preview and (directory / preview.path).is_file():
+            out += [describe.PREVIEW_CAPTION, Image(data=(directory / preview.path).read_bytes(), format="png")]
+        failing = [
+            r for r in rev.report.results if r.status == "fail" and r.analysis in ("mate", "fastener", "relation")
+        ]
+        if failing and rev.report.status == "succeeded":
+            built = feedback.built(design_id, rev)
+            for result in failing[:3]:
+                cut = joint_frames(built, result)
+                if cut is None:
+                    continue
+                frame, instances = cut
+                png = section_png(
+                    built, frame, instances, core.settings.section_size, f"{MARK['fail']} {result.subject}"
+                )
+                if png:
+                    out += [
+                        f"Section through {result.subject} (the plane holding its axis):",
+                        Image(data=png, format="png"),
+                    ]
+        return out
+
     @mcp.tool(structured_output=False)
     @guard
     async def list_backends() -> str:
-        """List CAD backends with what each is good at."""
-        lines = [f"- {b.name}: {b.title} — {b.summary}" for b in registry.available()]
-        return "Available backends:\n" + "\n".join(lines)
+        """CAD backends with what each is good at, and the materials, catalog providers and exporters there are."""
+        lines = ["Backends:"] + [f"- {b.name}: {b.title} — {b.summary}" for b in registry.available()]
+        lines.append("Materials (add your own in a materials.json): " + materials.names(materials.builtin()))
+        lines.append("Catalog providers: " + "; ".join(f"{p.name} ({p.usage})" for p in catalogs.providers().values()))
+        lines.append("Exporters (design.json outputs): " + "; ".join(f"{e.name}: {e.summary}"
+                                                                     for e in core.pipeline.exporters.values()))  # fmt: skip
+        return "\n".join(lines)
 
     @mcp.tool(structured_output=False)
     @guard
     async def create_design(path: str, name: str, backend: str = "build123d") -> str:
-        """Create a design folder at `path` (absolute) with its design.json, and show it in the panel. You write model.py."""
+        """Scaffold a design folder at `path` (absolute): design.json, interfaces.py, assembly.py and parts/.
+        Declare the structure in design.json, then build_design(path, scope="structure")."""
         state, created = designs.open(path, backend, name)
-        return (f"Created {', '.join(created) or 'nothing (the design already existed)'} in {state.path}. "
-                f"Read the hitlcad-{state.backend} skill, write model.py and the parameters in design.json; "
-                f"saving model.py builds it, or call build_design.")  # fmt: skip
+        return (f"Created {', '.join(created) or 'nothing (the design already existed)'} in {state.path}. Read the "
+                f"hitlcad and hitlcad-{state.backend} skills, declare parts, connectors and mates in design.json, then "
+                "check them with build_design(path, scope='structure').")  # fmt: skip
 
     @mcp.tool(structured_output=False)
     @guard
-    async def get_design(path: str) -> str:
-        """Current state of the design at `path`: latest build, brief, selection and open pins."""
-        return describe.design_text(designs.ensure(path))
+    async def search_catalog(query: str, limit: int = 10) -> str:
+        """Standard parts matching `query` ("M3 socket head screw", "608 bearing", "M3 heat-set insert"): the
+        designation, the call that makes it in a part file, its sizes and its connectors."""
+        items = catalogs.search(query, limit)
+        if not items:
+            return (
+                f"Nothing matches {query!r}. Vendor parts (motors, boards) come from STEP files: hitlcad.catalogs.step."
+            )
+        lines = []
+        for item in items:
+            sizes = (
+                f" · sizes {', '.join(item.sizes[:12])}{' …' if len(item.sizes) > 12 else ''}"
+                if len(item.sizes) > 1
+                else ""
+            )
+            lines.append(f"- {item.designation} [{item.family}, {item.provider}, {item.material}]: {item.call}{sizes}")
+            lines.append("  connectors: " + "; ".join(f"{k} ({v})" for k, v in item.connectors.items()))
+        return "\n".join(lines)
 
     @mcp.tool(structured_output=False)
     @guard
-    async def build_design(path: str, summary: str = "") -> list[str | Image]:
-        """Build the design's current files. Returns measurements, checks and renders of the new revision."""
+    async def build_design(path: str, scope: str | None = None, configuration: str | None = None,
+                           summary: str = "") -> list[str | Image]:  # fmt: skip
+        """Build and verify the design. scope="structure" checks design.json, interfaces.py and assembly.py
+        without building geometry (seconds). scope="<part or instance>" builds (unchanged parts come from the
+        cache) and answers about that part. configuration="<name>" builds one configuration, "all" every one.
+        Failures come first, with section views through failing joints."""
         state = designs.ensure(path)
-        rev = await builds.build(state.id, summary)
-        notes = []
-        if rev.report.status == "succeeded":
-            notes.append(f"Outputs written to {designs.folder(state.id).build_dir}/ (the human can open them there).")
+        if scope == "structure":
+            results, plan = await builds.check_structure(state.id)
+            lines = [f"Structure of {state.name}:"]
+            if plan and not plan.error:
+                lines.append(f"  interface values: {len(plan.interfaces)}; placed: "
+                             + ", ".join(f"{n} ×{len(p)}" if len(p) > 1 else n for n, p in plan.placements.items()))  # fmt: skip
+            bad = [r for r in results if r.status != "pass"]
+            lines += [f"  {MARK[r.status]} {r.subject}: {r.detail}" for r in bad] or ["  ✓ every reference resolves"]
+            return ["\n".join(lines)]
+        if configuration == "all":
+            revisions = await builds.build_all(state.id, summary)
+            out: list[str | Image] = [revision_summary(r, limit=core.settings.explore_limit) for r in revisions]
+            return out + images(state.id, revisions[0])
+        rev = await builds.build(state.id, summary, configuration=configuration)
+        text = revision_summary(rev, [scope] if scope else None, core.settings.explore_limit)
+        if rev.report.status == "succeeded" and configuration is None:
+            text += f"\nOutputs in {designs.folder(state.id).build_dir}/ (the human can open them there)."
         if pins := len(designs.get(state.id).open_pins):
-            notes.append(f"{pins} open pin(s) from the human: see get_feedback.")
-        extra = "\n".join(notes)
-        return _content(designs.store.revision_dir(state.id, rev.id), rev, extra)
+            text += f"\n{pins} open pin(s) from the human: explore_design(path) lists them."
+        return [text, *images(state.id, rev)]
 
     @mcp.tool(structured_output=False)
     @guard
-    async def get_feedback(path: str) -> str:
-        """What the human selected in the 3D view and the notes they pinned to the model (with pin ids)."""
-        return describe.feedback_text(designs.ensure(path))
+    async def explore_design(path: str, focus: str | None = None, configuration: str | None = None) -> str:
+        """The design graph. Without focus: the overview (failures, open pins, selection, parts, staleness).
+        focus = a part, instance (planet[2], tilt/planet[2]), component, connector (lid.screws), mate (a+b),
+        relation (a~b), fastener set, parameter (with what it affects), interfaces.<name>, configuration or 'rev N'."""
+        state = designs.ensure(path)
+        return await asyncio.to_thread(lambda: explore.graph(state.id, configuration).explore(focus))
+
+    @mcp.tool(structured_output=False)
+    @guard
+    async def compare_revisions(path: str, base: int, target: int | None = None) -> str:
+        """What changed from revision `base` to `target` (default: the latest): parameters, file diffs, results
+        that changed status, parts rebuilt, size and mass."""
+        return explore.compare(designs.ensure(path).id, base, target)
+
+    @mcp.tool(structured_output=False)
+    @guard
+    async def list_geometry(path: str, target: str, kind: str = "faces", revision: int | None = None) -> str:
+        """Every face (kind="faces"), edge or vertex of an instance ("lid[0]", placed) or a part ("part lid", its
+        own frame) in the latest build (or `revision`), numbered as picks and measure_geometry number them:
+        "face 9 of lid[0]" is faces()[9] of build/parts/lid.step, placed."""
+        state = designs.ensure(path)
+        rev = feedback.built_revision(state.id, revision)
+        built = await asyncio.to_thread(feedback.built, state.id, rev)
+        return f"Revision {rev.id}\n" + await asyncio.to_thread(geometry.list_geometry, built, target, kind)
+
+    @mcp.tool(structured_output=False)
+    @guard
+    async def measure_geometry(path: str, a: str, b: str, revision: int | None = None) -> str:
+        """Minimum distance between two addresses, with the angle where both have a direction and the gap between
+        parallel faces: "face 9 of lid[0]", an instance "lid[0]", a part "part lid", a connector frame
+        "lid.screws[2]" (its origin, Z as direction), or a point "(0, 0, 10)" in mm."""
+        state = designs.ensure(path)
+        rev = feedback.built_revision(state.id, revision)
+        built = await asyncio.to_thread(feedback.built, state.id, rev)
+        return f"Revision {rev.id}\n" + await asyncio.to_thread(geometry.measure, built, a, b)
 
     @mcp.tool(structured_output=False)
     @guard
@@ -118,35 +207,5 @@ def build_mcp(core: HitlCad) -> MCPServer:
         resolved = feedback.resolve_pins(state.id, pin_ids, reply)
         left = len(designs.get(state.id).open_pins)
         return f"Resolved {len(resolved)} pin(s); {left} still open."
-
-    @mcp.tool(structured_output=False)
-    @guard
-    async def get_revision(path: str, revision: int) -> str:
-        """Source, parameters and report of an earlier revision, including ones built from the human's parameter edits."""
-        rev = designs.ensure(path).revision(revision)
-        if rev is None:
-            raise NotFoundError(f"revision {revision} not found")
-        return describe.revision_text(rev) + "\n\nSource:\n```python\n" + rev.spec.source + "\n```"
-
-    @mcp.tool(structured_output=False)
-    @guard
-    async def list_geometry(
-        path: str, kind: str = "faces", part: str | None = None, revision: int | None = None
-    ) -> str:
-        """Every face (kind="faces"), edge or vertex of a build123d design's latest build (or `revision`),
-        numbered as the human's selections and pins name them: "face 9 of model" is faces()[9] of part
-        `model` in import_step("build/model.step"). Each line gives the type, size and position."""
-        rev, step = feedback.step_file(designs.ensure(path).id, revision)
-        return f"Revision {rev.id}\n" + await asyncio.to_thread(geometry.list_geometry, step, kind, part)
-
-    @mcp.tool(structured_output=False)
-    @guard
-    async def measure_geometry(path: str, a: str, b: str, revision: int | None = None) -> str:
-        """Minimum distance between two faces, edges, vertices, parts or points of a build123d design's latest
-        build (or `revision`), with the angle where both have a direction and the gap between parallel
-        faces. Name them as selections do: "face 9", "edge 3 of block", a whole part "part lid", or a point
-        "(0, 0, 10)" in mm."""
-        rev, step = feedback.step_file(designs.ensure(path).id, revision)
-        return f"Revision {rev.id}\n" + await asyncio.to_thread(geometry.measure, step, a, b)
 
     return mcp

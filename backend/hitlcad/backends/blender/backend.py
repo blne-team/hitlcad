@@ -9,8 +9,6 @@ from pathlib import Path
 
 from hitlcad.backends.subprocess_backend import SubprocessBackend
 
-ENTRY = Path(__file__).with_name("entry.py")
-
 
 class BlenderBackend(SubprocessBackend):
     name = "blender"
@@ -19,10 +17,13 @@ class BlenderBackend(SubprocessBackend):
         "Polygon-mesh modelling with Blender's bpy/bmesh, modifiers and geometry nodes. Best for "
         "organic, sculptural, decorative or freeform shapes: figurines, vases, ornaments, "
         "stylised products, terrain, twisted or smoothed forms. Output is a mesh (no STEP); "
-        "dimensional precision is lower than B-rep."
+        "dimensional precision is lower than B-rep. Connector frames are checked; features measured on "
+        "B-rep (hole and shaft sizes, fits) are reported unverified."
     )
+    brep = False
+    entry = Path(__file__).with_name("entry.py")
 
-    def __init__(self, *, binary: str = "blender", **kwargs: object) -> None:
+    def __init__(self, *, binary: str, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.binary = binary
 
@@ -50,5 +51,5 @@ class BlenderBackend(SubprocessBackend):
     def command(self, job_file: Path) -> list[str]:
         return [
             self.binary, "--background", "--factory-startup", "--offline-mode", "-noaudio",
-            "--python-exit-code", "1", "--python", str(ENTRY), "--", str(job_file),
+            "--python-exit-code", "1", "--python", str(self.entry), "--", str(job_file),
         ]  # fmt: skip

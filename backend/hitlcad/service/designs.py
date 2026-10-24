@@ -13,9 +13,10 @@ import json
 from pathlib import Path
 
 from hitlcad.backends.registry import BackendRegistry
+from hitlcad.core.design import DesignSpec
 from hitlcad.core.events import DesignOpened, DesignState, DesignUpdated, Event
 from hitlcad.core.types import new_id
-from hitlcad.designs.folder import DESIGN_FILE, DesignFile, DesignFolder
+from hitlcad.designs.folder import DESIGN_FILE, DesignFolder
 from hitlcad.service.bus import EventBus
 from hitlcad.store.base import DesignStore
 
@@ -107,7 +108,19 @@ class DesignService:
         design_id = self.id_for(_absolute(path).path)
         return self.get(design_id) if design_id else self.open(path)[0]
 
-    def sync(self, design_id: str, design: DesignFile | None = None) -> None:
+    def where_used(self, design_id: str) -> list[str]:
+        """Registered designs that use this one as a component, directly."""
+        path = Path(self.get(design_id).path)
+        out = []
+        for folder, other in self.folders().items():
+            try:
+                if path in DesignFolder(Path(folder)).components():
+                    out.append(other)
+            except (OSError, ValueError):  # an unreadable design.json: its own build reports it
+                continue
+        return out
+
+    def sync(self, design_id: str, design: DesignSpec | None = None) -> None:
         """Mirror the parts of design.json the panel shows (name, backend, brief) into the log."""
         state = self.get(design_id)
         try:

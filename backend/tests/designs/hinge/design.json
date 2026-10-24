@@ -1,0 +1,117 @@
+{
+  "hitlcad": 2,
+  "name": "Hinged box",
+  "backend": "build123d",
+  "parameters": [
+    {
+      "name": "size",
+      "value": 40,
+      "min": 20,
+      "max": 100
+    },
+    {
+      "name": "height",
+      "value": 15,
+      "min": 5,
+      "max": 50
+    },
+    {
+      "name": "lid_t",
+      "value": 3,
+      "min": 1,
+      "max": 10
+    },
+    {
+      "name": "pin_d",
+      "value": 3,
+      "min": 1,
+      "max": 6
+    },
+    {
+      "name": "pin_clearance",
+      "value": 0.4,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "name": "knuckle_gap",
+      "value": 0.5,
+      "min": 0.1,
+      "max": 2
+    },
+    {
+      "name": "stop_h",
+      "value": 30,
+      "min": 0,
+      "max": 60,
+      "description": "a post behind the hinge the open lid hits; 0: none"
+    }
+  ],
+  "ground": "base",
+  "manufacturing": {
+    "process": "fdm"
+  },
+  "parts": {
+    "base": {
+      "role": "box with the hinge knuckle",
+      "file": "parts/box.py",
+      "material": "PLA",
+      "connectors": {
+        "hinge": {
+          "kind": "hole"
+        },
+        "foot": {
+          "kind": "face",
+          "symmetry": 2
+        }
+      }
+    },
+    "lid": {
+      "role": "swings open on its pin",
+      "file": "parts/box.py",
+      "material": "PLA",
+      "connectors": {
+        "pin": {
+          "kind": "shaft"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "cylindrical",
+      "a": "base.hinge",
+      "b": "lid.pin",
+      "fit": {
+        "clearance": [
+          0.1,
+          0.5
+        ]
+      },
+      "limits": {
+        "angle": [
+          -100,
+          0
+        ]
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "text": "Fits a 60 mm cube",
+      "check": {
+        "kind": "fits_within",
+        "box": [
+          60,
+          60,
+          60
+        ],
+        "target": "base"
+      }
+    }
+  ],
+  "exports": {
+    "foot": "base.foot",
+    "hinge": "base.hinge"
+  }
+}

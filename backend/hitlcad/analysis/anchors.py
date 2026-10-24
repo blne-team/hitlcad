@@ -1,31 +1,42 @@
-"""Carry pins and selections to a new build by matching geometry, not face numbers.
+"""Carrying picks and pins to a new build. Face numbers change when a part is rebuilt, so picks are carried
+by what they are, each kind by one rule:
 
-Rebuilding a model renumbers its faces. A pick on the old build is carried when exactly one
-component of the new build matches it: on the same part of an assembly (mating parts sit too close
-to tell apart by position), the same kind (face, edge, vertex) and surface or curve type, the same orientation (a planar face's normal, a round face's axis, a straight edge's
-direction), and the nearest such component to the old point within reach. Anything else, such as
-no candidate in reach or a near tie, is not carried: the pick stays on the revision it was made on.
-A whole part is the part of the same name; its point keeps its place relative to the part's bounding
-box (a pin on top of a part that got thicker stays on top), then moves onto the part's surface.
-Mesh builds (no B-rep) carry a pick to the nearest point of the new mesh within reach.
+- A pick on a connector's feature keeps its connector: it lands on that connector's feature in the new
+  build (the same frame of a pattern).
+- A pick on a whole instance keeps the instance; its point keeps its place relative to the instance's
+  bounding box, on the surface.
+- Any other face, edge or vertex is matched by geometry within its part, in the part's own frame: the
+  same kind and surface or curve type, the same orientation, the nearest within reach of the old point,
+  and clearly nearer than any other candidate.
+- A point on a mesh moves to the nearest point of the same instance within reach.
+
+Anything without a match stays on the revision it was made on; the panel and the agent say so.
 """
 
 from __future__ import annotations
 
 import math
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 from hitlcad.analysis import cadview
+from hitlcad.analysis.geometry import vec
+from hitlcad.analysis.model import BuiltDesign, Leaf, StructureError
+from hitlcad.analysis.selection import connector_of, leaf_of, topology
+from hitlcad.core import frames as fr
 from hitlcad.core.types import ComponentRef, Pick, Vec
 
-REACH = 0.1  # of the new model's bounding-box diagonal: how far a face may move and still be "the same"
-TIE = 0.1  # of the reach: a runner-up this close to the best match makes the match ambiguous
-ALIGNED_DEG = 1.0
+
+@dataclass(frozen=True)
+class AnchorSettings:
+    reach: float  # × the part's bounding-box diagonal
+    tie: float  # × the reach
+    aligned_deg: float
 
 
 def _direction(item: Any) -> Any | None:
-    """What has to stay aligned for two components to be the same: normal, axis or edge direction."""
     kind = item.geom_type.name
     if kind == "PLANE":
         return item.normal_at()
@@ -36,88 +47,108 @@ def _direction(item: Any) -> Any | None:
     return None
 
 
-def _aligned(a: Any | None, b: Any | None, signed: bool) -> bool:
+def _aligned(a: Any | None, b: Any | None, signed: bool, limit: float) -> bool:
     if a is None or b is None:
         return a is None and b is None
     cos = a.normalized().dot(b.normalized())
-    return math.degrees(math.acos(max(-1.0, min(1.0, cos if signed else abs(cos))))) <= ALIGNED_DEG
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos if signed else abs(cos))))) <= limit
 
 
-def _reach(parts: dict[str, Any]) -> float:
-    from build123d import Compound
-
-    return REACH * Compound(children=list(parts.values())).bounding_box().diagonal
+def _to(m: fr.Frame, p: Any) -> Vec:
+    return tuple(float(v) for v in (m @ np.append(np.asarray(p, dtype=float), 1.0))[:3])  # type: ignore[return-value]
 
 
-def _carry_brep(old: dict[str, Any], new: dict[str, Any], pick: Pick) -> Pick | None:
+def _on(item: Any, local: Vec) -> Vec:
     from build123d import Vertex
 
-    ref = pick.component
-    if ref is None or ref.part not in old or ref.part not in new:
-        return None
-    if ref.topo == "solid":
-        return _carry_part(old[ref.part], new[ref.part], pick)
-    point = Vertex(*pick.point)
-    lists = cadview.TOPO_LISTS[ref.topo]
-    items = getattr(old[ref.part], lists)()
-    if ref.index >= len(items):
-        return None
-    before = items[ref.index]
+    _, on_item, _ = item.distance_to_with_closest_points(Vertex(*local))
+    return (on_item.X, on_item.Y, on_item.Z)
+
+
+def _carry_connector(old: Leaf, new: Leaf, ref: ComponentRef, connector: str, local: Vec, tol: Any) -> Pick | None:
+    """The face of the new part that is the same connector's feature."""
+    items = getattr(new.part.shape, cadview.TOPO_LISTS["face"])()
+    for index, item in enumerate(items):
+        if connector_of(new.part, item, tol) == connector:
+            moved = _to(new.transform, _on(item, local))
+            return Pick(point=moved, normal=None, component=ref.model_copy(update={"index": index}))
+    return None
+
+
+def _carry_geometry(old: Leaf, new: Leaf, ref: ComponentRef, local: Vec, settings: AnchorSettings) -> Pick | None:
+    from build123d import Vertex
+
+    before = topology(old.part.shape, ref)
     kind, direction = before.geom_type, _direction(before)
     signed = kind.name == "PLANE"  # a planar face's normal has a side; axes and edge directions do not
-    found = [
-        (item.distance_to(point), index, item)
-        for index, item in enumerate(getattr(new[ref.part], lists)())
-        if item.geom_type == kind and _aligned(direction, _direction(item), signed)
-    ]
+    point = Vertex(*local)
+    found = sorted(
+        ((item.distance_to(point), index, item)
+         for index, item in enumerate(getattr(new.part.shape, cadview.TOPO_LISTS[ref.topo])())
+         if item.geom_type == kind and _aligned(direction, _direction(item), signed, settings.aligned_deg)),
+        key=lambda f: f[0],
+    )  # fmt: skip
     if not found:
         return None
-    found.sort(key=lambda f: f[0])
-    reach = _reach(new)
+    reach = settings.reach * new.part.shape.bounding_box().diagonal
     distance, index, item = found[0]
-    if distance > reach or (len(found) > 1 and found[1][0] - distance < TIE * reach):
+    if distance > reach or (len(found) > 1 and found[1][0] - distance < settings.tie * reach):
         return None
-    _, on_item, _ = item.distance_to_with_closest_points(point)
-    moved: Vec = (on_item.X, on_item.Y, on_item.Z)
-    return Pick(point=moved, normal=pick.normal, component=ComponentRef(part=ref.part, topo=ref.topo, index=index))
+    return Pick(
+        point=_to(new.transform, _on(item, local)), normal=None, component=ref.model_copy(update={"index": index})
+    )
 
 
-def _carry_part(old: Any, new: Any, pick: Pick) -> Pick:
-    from build123d import Compound, Vertex
+def _carry_instance(old: Leaf, new: Leaf, ref: ComponentRef, local: Vec) -> Pick:
+    from build123d import Compound
 
-    was, now = old.bounding_box(), new.bounding_box()
-    scaled = [
-        lo + (p - old_lo) * (size / old_size if old_size > 0 else 1)
-        for p, old_lo, old_size, lo, size in zip(
-            pick.point, _xyz(was.min), _xyz(was.size), _xyz(now.min), _xyz(now.size), strict=True
-        )
-    ]
-    _, on_part, _ = Compound(children=new.faces()).distance_to_with_closest_points(Vertex(*scaled))
-    return Pick(point=(on_part.X, on_part.Y, on_part.Z), normal=pick.normal, component=pick.component)
+    was, now = old.part.shape.bounding_box(), new.part.shape.bounding_box()
+    scaled = [lo + (p - old_lo) * (size / old_size if old_size > 0 else 1)
+              for p, old_lo, old_size, lo, size in zip(local, vec(was.min), vec(was.size), vec(now.min), vec(now.size),
+                                                       strict=True)]  # fmt: skip
+    on = _on(Compound(children=new.part.shape.faces()), tuple(scaled))  # type: ignore[arg-type]
+    return Pick(point=_to(new.transform, on), normal=None, component=ref)
 
 
-def _xyz(v: Any) -> tuple[float, float, float]:
-    return (v.X, v.Y, v.Z)
-
-
-def _carry_mesh(new_mesh: Any, reach: float, pick: Pick) -> Pick | None:
+def _carry_point(
+    old: BuiltDesign, new: BuiltDesign, pick: Pick, instance: str, settings: AnchorSettings
+) -> Pick | None:
     import trimesh
 
-    closest, distance, _ = trimesh.proximity.closest_point(new_mesh, [pick.point])
+    try:
+        before, after = leaf_of(old, instance), leaf_of(new, instance)
+    except (StructureError, LookupError):
+        return None
+    local = _to(np.linalg.inv(before.transform), pick.point)
+    closest, distance, _ = trimesh.proximity.closest_point(after.part.mesh, [local])
+    reach = settings.reach * float(math.dist(*after.part.mesh.bounds))
     if float(distance[0]) > reach:
         return None
-    return Pick(point=tuple(float(c) for c in closest[0]), normal=pick.normal, component=None)
+    return Pick(point=_to(after.transform, closest[0]), normal=pick.normal, component=None)
 
 
-def carry(old_geometry: Path, new_geometry: Path, picks: list[Pick]) -> list[Pick | None]:
-    """Each pick on `old_geometry` placed on `new_geometry`, or None where it has no clear match."""
-    brep = {g.suffix.lower() in cadview.BREP for g in (old_geometry, new_geometry)}
-    if brep == {True}:
-        old = cadview.parts(cadview.load_step(old_geometry), old_geometry.stem)
-        new = cadview.parts(cadview.load_step(new_geometry), new_geometry.stem)
-        return [_carry_brep(old, new, pick) for pick in picks]
-    if brep == {False}:
-        mesh = cadview.load_mesh(new_geometry).to_geometry()
-        reach = REACH * float(math.dist(*mesh.bounds))
-        return [_carry_mesh(mesh, reach, pick) for pick in picks]
-    return [None for _ in picks]  # the backend changed between B-rep and mesh: nothing comparable
+def carry(old: BuiltDesign, new: BuiltDesign, picks: list[tuple[Pick, str | None, str | None]],
+          settings: AnchorSettings) -> list[Pick | None]:  # fmt: skip
+    """Each (pick, its connector, its instance) placed on `new`, or None where it has no clear match."""
+    out: list[Pick | None] = []
+    for pick, connector, instance in picks:
+        ref = pick.component
+        if ref is None:
+            out.append(_carry_point(old, new, pick, instance, settings) if instance else None)
+            continue
+        try:
+            before, after = leaf_of(old, ref.instance), leaf_of(new, ref.instance)
+        except (StructureError, LookupError):
+            out.append(None)
+            continue
+        if before.part.shape is None or after.part.shape is None:
+            out.append(None)
+            continue
+        local = _to(np.linalg.inv(before.transform), pick.point)
+        if ref.topo == "solid":
+            out.append(_carry_instance(before, after, ref, local))
+        elif connector:
+            out.append(_carry_connector(before, after, ref, connector.rpartition(".")[2], local, new.tolerances))
+        else:
+            out.append(_carry_geometry(before, after, ref, local, settings))
+    return out

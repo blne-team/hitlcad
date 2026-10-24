@@ -1,107 +1,92 @@
-"""Subprocess entry point for build123d models. Self-contained: imports nothing from hitlcad.
+"""build123d entry point, run as `python -I entry.py <job.json>` in hitlcad's environment (cwd = work dir).
 
-Usage: python -I entry.py <job.json>   (cwd = output directory)
+Modes: `plan` (interface values and placements) and `parts` (build part files, export each part in its
+own frame as STEP and STL, with its connector frames).
 """
 
-import json
-import re
 import sys
-import traceback
+from pathlib import Path
+from typing import Any
 
-MODEL_FILENAME = "model.py"
-PART_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-
-def _model_traceback(exc: BaseException) -> str:
-    frames = [f for f in traceback.extract_tb(exc.__traceback__) if f.filename == MODEL_FILENAME]
-    lines = [f"  model.py line {f.lineno}, in {f.name}: {f.line or ''}" for f in frames]
-    return "\n".join(lines + [f"{type(exc).__name__}: {exc}"])
+from hitlcad.backends import runtime
+from hitlcad.backends.runtime import ModelError, Runtime
 
 
-def _as_shape(result, build123d):
-    if result is None:
-        raise TypeError("build(p) returned None; return a Part/Solid/Compound")
-    if hasattr(result, "part") and not isinstance(result, build123d.Shape):  # BuildPart context
-        result = result.part
-    if isinstance(result, list | tuple):
-        shapes = [_as_shape(r, build123d) for r in result]
-        result = build123d.Compound(children=shapes)
-    if not isinstance(result, build123d.Shape):
-        raise TypeError(f"build(p) returned {type(result).__name__}; expected a build123d Shape")
-    if not result.solids():
-        raise ValueError("build(p) returned a shape without solids; 3D output is required")
-    return result
+def matrix(value: Any) -> list[list[float]]:
+    """A placement or connector frame as a 4 × 4 matrix: a build123d Location, or a 4 × 4 nested list."""
+    from build123d import Location
+
+    if isinstance(value, Location):
+        t = value.wrapped.Transformation()
+        return [[t.Value(r, c) for c in range(1, 5)] for r in range(1, 4)] + [[0.0, 0.0, 0.0, 1.0]]
+    rows = [list(map(float, row)) for row in value] if isinstance(value, list | tuple) else None
+    if rows is None or len(rows) != 4 or any(len(r) != 4 for r in rows):
+        raise ModelError(f"a placement or connector frame is a build123d Location, got {type(value).__name__}")
+    return rows
 
 
-def _parts(result, build123d):
-    """build(p) returns one shape (a part), or a dict {part name: shape} (an assembly)."""
-    if not isinstance(result, dict):
-        return None
-    if not result:
-        raise ValueError("build(p) returned an empty dict; an assembly needs at least one part")
-    parts = {}
-    for name, value in result.items():
-        if not isinstance(name, str) or not PART_NAME.match(name):
-            raise ValueError(f"part name {name!r}: use letters, digits, '.', '_' or '-'")
-        parts[name] = _as_shape(value, build123d)
-        parts[name].label = name
-    return parts
+def _shape(value: Any, what: str) -> Any:
+    import build123d
+
+    if hasattr(value, "part") and not isinstance(value, build123d.Shape):  # a BuildPart context
+        value = value.part
+    if isinstance(value, list | tuple):
+        value = build123d.Compound(children=[_shape(v, what) for v in value])
+    if not isinstance(value, build123d.Shape):
+        raise ModelError(f"{what} is a {type(value).__name__}; expected a build123d Shape")
+    if not value.solids():
+        raise ModelError(f"{what} has no solids; parts are 3D")
+    return value
 
 
-def main() -> int:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        job = json.load(f)
-    result: dict = {"ok": False, "files": [], "info": {}}
-    try:
-        import build123d
+def _part(
+    file: str, name: str, value: Any, declared: list[str], tolerance: dict[str, float], out: Path
+) -> dict[str, Any]:
+    import build123d
 
-        with open(MODEL_FILENAME, encoding="utf-8") as f:
-            source = f.read()
-        namespace = {"__name__": "hitlcad_model"}
+    from hitlcad.sdk import CatalogPart
+
+    what = f"{file}: part {name!r}"
+    catalog = None
+    if isinstance(value, CatalogPart):
+        shape, connectors = value.shape, value.connectors
+        catalog = {"provider": value.provider, "designation": value.designation, "material": value.material,
+                   "metadata": value.metadata}  # fmt: skip
+    elif isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], dict):
+        shape, connectors = value
+    else:
+        raise ModelError(f"{what}: return (shape, {{connector: location or [locations]}}) or a catalog part")
+    shape = _shape(shape, what)
+    missing = [c for c in declared if c not in connectors]
+    if missing:
+        raise ModelError(f"{what} declares connectors it does not return: {', '.join(missing)}")
+    frames = {c: [matrix(v) for v in runtime.as_list(connectors[c])] for c in declared}
+    (out / "parts").mkdir(exist_ok=True)
+    step, stl = f"parts/{name}.step", f"parts/{name}.stl"
+    shape.label = name
+    build123d.export_step(shape, str(out / step))
+    build123d.export_stl(shape, str(out / stl), tolerance=tolerance["linear"], angular_tolerance=tolerance["angular"])
+    return {"name": name, "mesh": stl, "step": step, "connectors": frames, "catalog": catalog,
+            "valid": bool(shape.is_valid)}  # fmt: skip
+
+
+def parts(rt: Runtime, job: dict[str, Any]) -> dict[str, Any]:
+    tolerance = {"linear": job["mesh_tolerance_mm"], "angular": job["mesh_angular_tolerance"]}
+    files = []
+    for n, (file, expected) in enumerate(job["files"].items()):
         try:
-            exec(compile(source, MODEL_FILENAME, "exec"), namespace)
-            if not callable(namespace.get("build")):
-                raise TypeError("model.py must define a top-level function build(p)")
-            built = namespace["build"](dict(job["params"]))
-            parts = _parts(built, build123d)
-            shape = None if parts else _as_shape(built, build123d)
-        except Exception as e:  # model error: report in model terms
-            result["error"] = _model_traceback(e)
-            return 0
-
-        part_files = []
-        for name, part in (parts or {}).items():  # before grouping them: a grouped part no longer exports alone
-            build123d.export_stl(part, f"part-{name}.stl", tolerance=job.get("tolerance", 0.01), angular_tolerance=0.1)
-            build123d.export_step(part, f"part-{name}.step")
-            part_files += [
-                {"name": f"part-{name}.stl", "media_type": "model/stl", "role": "part_mesh"},
-                {"name": f"part-{name}.step", "media_type": "model/step", "role": "part_exchange"},
-            ]
-        if parts:
-            shape = build123d.Compound(children=list(parts.values()))  # the assembly, its parts named by label
-        build123d.export_stl(shape, "mesh.stl", tolerance=job.get("tolerance", 0.01), angular_tolerance=0.1)
-        build123d.export_step(shape, "model.step")
-        bb = shape.bounding_box()
-        result["info"] = {
-            "brep_volume_mm3": shape.volume,
-            "brep_valid": bool(shape.is_valid),
-            "solids": len(shape.solids()),
-            "faces": len(shape.faces()),
-            "brep_bbox": [[bb.min.X, bb.min.Y, bb.min.Z], [bb.max.X, bb.max.Y, bb.max.Z]],
-        }
-        result["files"] = [
-            {"name": "mesh.stl", "media_type": "model/stl", "role": "mesh"},
-            {"name": "model.step", "media_type": "model/step", "role": "exchange"},
-        ]
-        result["files"] += part_files
-        result["ok"] = True
-    except Exception:
-        result["error"] = "internal build error:\n" + traceback.format_exc(limit=8)
-    finally:
-        with open("result.json", "w", encoding="utf-8") as f:
-            json.dump(result, f)
-    return 0
+            result, reads = rt.call_build(file, f"hitlcad_part_{n}")
+            if not isinstance(result, dict):
+                raise ModelError(f"{file}: build(p, i) returned {type(result).__name__}; return {{part name: …}}")
+            if set(result) != set(expected):
+                raise ModelError(f"{file} returned parts {', '.join(map(str, result)) or 'none'}; design.json "
+                                 f"declares {', '.join(expected)} in it")  # fmt: skip
+            built = [_part(file, name, result[name], expected[name], tolerance, Path(job["out"])) for name in expected]
+            files.append({"file": file, "reads": reads.as_json(), "parts": built})
+        except Exception as e:  # each file on its own: the others still build
+            files.append({"file": file, "error": rt.describe(e)})
+    return {"files": files}
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    runtime.run(Path(sys.argv[1]), {"plan": lambda rt, job: runtime.plan(rt, job, matrix), "parts": parts})

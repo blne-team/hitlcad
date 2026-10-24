@@ -7,8 +7,6 @@ from pathlib import Path
 
 from hitlcad.backends.subprocess_backend import SubprocessBackend
 
-ENTRY = Path(__file__).with_name("entry.py")
-
 
 class Build123dBackend(SubprocessBackend):
     name = "build123d"
@@ -16,9 +14,12 @@ class Build123dBackend(SubprocessBackend):
     summary = (
         "Exact boundary-representation solid modelling on OpenCASCADE. Best for mechanical and "
         "functional parts: enclosures, brackets, mounts, gears, fixtures, anything with precise "
-        "dimensions, holes, fillets and chamfers that may be manufactured. Exports STEP. Poor at "
-        "organic or sculpted shapes."
+        "dimensions, holes, fillets and chamfers that may be manufactured. Exports STEP; connector "
+        "features and fits are measured on the B-rep. Standard parts come from catalog providers. "
+        "Poor at organic or sculpted shapes."
     )
+    brep = True
+    entry = Path(__file__).with_name("entry.py")
 
     def __init__(self, *, python: str | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)  # type: ignore[arg-type]
@@ -33,4 +34,4 @@ class Build123dBackend(SubprocessBackend):
         return files("hitlcad.backends.build123d").joinpath("guide.md").read_text(encoding="utf-8")
 
     def command(self, job_file: Path) -> list[str]:
-        return [self.python, "-I", str(ENTRY), str(job_file)]
+        return [self.python, "-I", str(self.entry), str(job_file)]

@@ -1,43 +1,35 @@
-"""Design folders: a design is any directory holding ``design.json`` and its model source.
+"""Design folders: a design is any directory holding ``design.json`` and its code.
 
-    my-hook/
-      design.json   {"hitlcad": 1, "name", "backend", "source": "model.py", "parameters": [...], "brief": {...}}
-      model.py      defines build(p), reading every tunable value from p
-      build/        outputs of the latest successful build (model.step, mesh.stl, …); git-ignored
+    gearbox/
+      design.json     structure, parameters, configurations, requirements, brief (format 2)
+      interfaces.py   mating values, one function each: def lid_bolt_xy(p, i)
+      parts/*.py      def build(p, i) -> {part: (shape, connectors)}, in each part's own frame
+      lib/*.py        helpers shared by part files
+      vendor/         vendor files (STEP), checksummed into each build
+      assembly.py     def build(p, i) -> {part or component: [placement, …]}
+      build/          outputs of the latest successful build; git-ignored
 
-design.json and the model source are the source of truth, edited by people and coding agents
-and committed to git. build/ is regenerated; the full revision history lives in hitlcad's data
-directory.
+design.json and the code are the source of truth, edited by people and coding agents and committed
+to git. build/ is regenerated; the full revision history lives in hitlcad's data directory.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
-from typing import Literal
 
-from pydantic import Field
-
-from hitlcad.core.types import BuildReport, BuildSpec, DesignBrief, Manufacturing, Model, ParamSpec, Requirement
+from hitlcad.core.design import DesignSpec
+from hitlcad.core.report import BuildReport, BuildSpec
+from hitlcad.core.structure import Tolerances
 
 DESIGN_FILE = "design.json"
 BUILD_DIR = "build"
 BUILD_MARKER = "# hitlcad build outputs: regenerated on every build, never committed\n"
-EXPORTED_ROLES = frozenset({"exchange", "mesh", "native", "objects", "part_exchange", "part_mesh", "preview", "log"})
-
-
-class DesignFile(Model):
-    hitlcad: Literal[1] = 1
-    name: str
-    backend: str
-    source: str = Field(default="model.py", description="Model source file, relative to the design folder")
-    parameters: list[ParamSpec] = Field(default_factory=list)
-    brief: DesignBrief | None = None
-    manufacturing: Manufacturing | None = Field(
-        default=None, description='How it will be made, e.g. {"process": "fdm"}'
-    )
-    requirements: list[Requirement] = Field(default_factory=list, description="What every build is verified against")
+CODE = ("interfaces.py", "assembly.py")
+CODE_DIRS = ("parts", "lib")
+ASSET_DIRS = ("vendor",)
 
 
 class DesignFolder:
@@ -51,38 +43,57 @@ class DesignFolder:
     def exists(self) -> bool:
         return self.design_file.is_file()
 
-    def load(self) -> DesignFile:
-        return DesignFile.model_validate_json(self.design_file.read_text(encoding="utf-8"))
+    def load(self) -> DesignSpec:
+        return DesignSpec.model_validate_json(self.design_file.read_text(encoding="utf-8"))
 
-    def source_path(self, design: DesignFile | None = None) -> Path:
-        design = design or self.load()
-        src = (self.path / design.source).resolve()
-        if self.path not in src.parents:
-            raise ValueError(f"source {design.source!r} must be inside the design folder")
-        return src
-
-    def read_source(self, design: DesignFile | None = None) -> str:
-        return self.source_path(design).read_text(encoding="utf-8")
-
-    def save(self, design: DesignFile) -> None:
-        text = json.dumps(design.model_dump(mode="json", exclude_none=True), indent=2, ensure_ascii=False) + "\n"
+    def save(self, design: DesignSpec) -> None:
+        text = json.dumps(design.model_dump(mode="json", exclude_defaults=True) | {"hitlcad": design.hitlcad},
+                          indent=2, ensure_ascii=False) + "\n"  # fmt: skip
         tmp = self.design_file.with_suffix(".json.tmp")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(self.design_file)  # atomic: watchers never see a half-written file
 
-    def spec(self, design: DesignFile | None = None) -> BuildSpec:
-        """What a build of the folder's current files depends on (not the brief)."""
-        design = design or self.load()
-        return BuildSpec(backend=design.backend, source=self.read_source(design), parameters=design.parameters,
-                         manufacturing=design.manufacturing, requirements=design.requirements)  # fmt: skip
+    def sources(self) -> dict[str, str]:
+        """The design's code, by path relative to the folder."""
+        out = {name: (self.path / name).read_text(encoding="utf-8") for name in CODE if (self.path / name).is_file()}
+        for folder in CODE_DIRS:
+            for file in sorted((self.path / folder).rglob("*.py")):
+                if "__pycache__" not in file.parts:
+                    out[file.relative_to(self.path).as_posix()] = file.read_text(encoding="utf-8")
+        return out
+
+    def assets(self) -> dict[str, str]:
+        return {f.relative_to(self.path).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
+                for folder in ASSET_DIRS for f in sorted((self.path / folder).rglob("*")) if f.is_file()}  # fmt: skip
+
+    def spec(
+        self, defaults: Tolerances, configuration: str | None = None, *, _stack: tuple[Path, ...] = ()
+    ) -> BuildSpec:
+        """What a build of the folder's current files depends on, with its components' specs."""
+        if self.path in _stack:
+            chain = " -> ".join(str(p) for p in (*_stack, self.path))
+            raise ValueError(f"designs use each other in a cycle: {chain}")
+        design = self.load()
+        components = {}
+        for name, use in design.components.items():
+            child = DesignFolder(self.path / use.design)
+            if not child.exists():
+                raise ValueError(f"component {name}: no {DESIGN_FILE} in {child.path}")
+            components[name] = child.spec(defaults, _stack=(*_stack, self.path))
+        return BuildSpec(design=design, sources=self.sources(), assets=self.assets(), configuration=configuration,
+                         tolerances=design.verification.resolve(defaults), components=components)  # fmt: skip
+
+    def components(self) -> list[Path]:
+        """The folders of the designs this one uses."""
+        return [(self.path / use.design).resolve() for use in self.load().components.values()]
 
     @property
     def build_dir(self) -> Path:
         return self.path / BUILD_DIR
 
     def export_build(self, revision_dir: Path, report: BuildReport) -> list[str]:
-        """Replace build/ with a build's outputs, so they can be opened from the workspace.
-        Returns the files written. A build/ folder hitlcad did not create is left alone."""
+        """Replace build/ with a build's outputs, so they can be opened from the workspace. Returns the files
+        written. A build/ folder hitlcad did not create is left alone."""
         target, marker = self.build_dir, self.build_dir / ".gitignore"
         if target.exists() and not (marker.is_file() and marker.read_text(encoding="utf-8").startswith(BUILD_MARKER)):
             raise FileExistsError(f"{target} exists and was not created by hitlcad; not overwriting it")
@@ -92,9 +103,10 @@ class DesignFolder:
         staging.mkdir()
         written = []
         for artifact in report.artifacts:
-            if artifact.role in EXPORTED_ROLES and (revision_dir / artifact.path).is_file():
-                shutil.copy2(revision_dir / artifact.path, staging / artifact.name)
-                written.append(artifact.name)
+            if artifact.role != "source" and (revision_dir / artifact.path).is_file():  # the sources are here already
+                (staging / artifact.path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(revision_dir / artifact.path, staging / artifact.path)
+                written.append(artifact.path)
         (staging / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
         (staging / ".gitignore").write_text(BUILD_MARKER + "*\n", encoding="utf-8")
         if target.exists():
@@ -104,9 +116,33 @@ class DesignFolder:
         return [*written, "report.json"]
 
     def scaffold(self, name: str, backend: str) -> list[str]:
-        """Create design.json if missing; the model source comes from the agent. Returns the files written."""
-        self.path.mkdir(parents=True, exist_ok=True)
+        """A new design: design.json, interfaces.py, assembly.py and an empty parts/ (the agent writes the
+        structure and the code). Returns the files written; an existing design is left as it is."""
         if self.exists():
             return []
-        self.save(DesignFile(name=name, backend=backend))
-        return [DESIGN_FILE]
+        self.path.mkdir(parents=True, exist_ok=True)
+        written = []
+        files = {
+            "interfaces.py": INTERFACES_TEMPLATE,
+            "assembly.py": ASSEMBLY_TEMPLATE,
+            "parts/.gitkeep": "",
+        }
+        for rel, text in files.items():
+            target = self.path / rel
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+                written.append(rel)
+        self.save(DesignSpec(name=name, backend=backend))
+        return [DESIGN_FILE, *written]
+
+
+INTERFACES_TEMPLATE = '''"""Mating values: one function per value, def name(p, i). Parts and assembly.py read them as i.<name>."""
+'''
+
+ASSEMBLY_TEMPLATE = '''"""Where each part and component instance sits: def build(p, i) -> {name: [placement, …]}."""
+
+
+def build(p, i):
+    return {}
+'''

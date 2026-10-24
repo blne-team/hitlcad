@@ -54,6 +54,6 @@ class ContextFeed:
         if cleared:
             parts.append("Nothing is selected or pinned any more in:\n" + "\n".join(cleared))
         if unchanged:
-            parts.append("Still pointed at, unchanged since you were last told (get_feedback(path) repeats the "
+            parts.append("Still pointed at, unchanged since you were last told (explore_design(path) repeats the "
                          "details):\n" + "\n".join(unchanged))  # fmt: skip
         return "\n\n".join(parts)

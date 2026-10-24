@@ -85,6 +85,11 @@ class LocalExecutor:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             out, _ = await proc.communicate()
+        except asyncio.CancelledError:  # the build was cancelled (a shutdown): leave no process behind
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            await asyncio.shield(proc.wait())
+            raise
         text = out.decode("utf-8", errors="replace")
         if len(text) > LOG_LIMIT:
             text = "…[truncated]…\n" + text[-LOG_LIMIT:]

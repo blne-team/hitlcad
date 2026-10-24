@@ -1,56 +1,64 @@
-"""What the human points at in the panel: the selection and pins, described against a build's
-geometry (its STEP when it has one, else its mesh) and carried onto each new build."""
+"""What the human points at in the panel: the selection and pins, described against a build (its instances,
+their parts' B-rep or meshes, their connectors) and carried onto each new build."""
 
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from hitlcad.analysis.anchors import AnchorSettings
+from hitlcad.analysis.model import BuiltDesign
 from hitlcad.core.events import PinsChanged, SelectionChanged
-from hitlcad.core.types import Pick, Pin, Revision, SelectionItem
+from hitlcad.core.report import Revision
+from hitlcad.core.types import Pick, Pin, SelectionItem
 from hitlcad.service.designs import DesignService, NotFoundError
+
+LOADED = 8  # built designs kept in memory: picks and carries reload the same few revisions
 
 
 class FeedbackService:
-    def __init__(self, designs: DesignService) -> None:
+    def __init__(self, designs: DesignService, anchors: AnchorSettings) -> None:
         self.designs = designs
+        self.anchors = anchors
+        self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
 
-    # ------------------------------------------------------------------ geometry of a revision
+    # ------------------------------------------------------------------ builds of revisions
 
     def built_revision(self, design_id: str, revision: int | None) -> Revision:
-        """`revision`, or the latest successful one; it must have built."""
+        """`revision`, or the latest successful one of the default configuration; it must have built."""
         state = self.designs.get(design_id)
-        rev = state.revision(revision) if revision else state.latest_successful_revision
+        rev = state.revision(revision) if revision else state.latest(None)
         if rev is None or rev.report.status != "succeeded":
             raise NotFoundError(
                 f"revision {revision} did not build" if revision else "there is no successful build yet"
             )
         return rev
 
-    def step_file(self, design_id: str, revision: int | None) -> tuple[Revision, Path]:
-        """The B-rep (STEP) of a built revision; only build123d designs have one."""
-        rev = self.built_revision(design_id, revision)
-        step = rev.report.artifact("exchange")
-        if step is None:
-            raise NotFoundError(f"revision {rev.id} has no STEP: only build123d designs have faces and edges")
-        return rev, self.designs.store.revision_dir(design_id, rev.id) / step.path
+    def revision_dir(self, design_id: str, rev: Revision) -> Path:
+        return self.designs.store.revision_dir(design_id, rev.id)
 
-    def geometry_file(self, design_id: str, rev: Revision) -> Path:
-        """What clicks on a built revision are described against: its STEP if it has one, else its named
-        objects (Blender), else its mesh."""
-        geometry = rev.report.artifact("exchange") or rev.report.artifact("objects") or rev.report.artifact("mesh")
-        assert geometry is not None  # every successful build has a mesh
-        return self.designs.store.revision_dir(design_id, rev.id) / geometry.path
+    def built(self, design_id: str, rev: Revision) -> BuiltDesign:
+        from hitlcad.build.pipeline import load_built
+
+        key = (design_id, rev.id)
+        if key not in self._loaded:
+            folder = Path(self.designs.get(design_id).path)
+            self._loaded[key] = load_built(rev.report, rev.spec, folder, self.revision_dir(design_id, rev))
+            while len(self._loaded) > LOADED:
+                self._loaded.popitem(last=False)
+        self._loaded.move_to_end(key)
+        return self._loaded[key]
 
     async def describe_picks(self, design_id: str, revision: int | None, picks: list[Pick]) -> list[SelectionItem]:
-        from hitlcad.analysis.selection import describe_pick
+        from hitlcad.analysis.selection import describe_build_pick
 
         rev = self.built_revision(design_id, revision)
-        target = self.geometry_file(design_id, rev)
+        built = await asyncio.to_thread(self.built, design_id, rev)
         items = []
         for pick in picks:
-            item = await asyncio.to_thread(describe_pick, target, pick.point, pick.normal, pick.component)
+            item = await asyncio.to_thread(describe_build_pick, built, pick.point, pick.normal, pick.component)
             items.append(item.model_copy(update={"revision": rev.id}))
         return items
 
@@ -75,8 +83,8 @@ class FeedbackService:
 
     async def add_pin(self, design_id: str, pick: Pick, note: str = "", revision: int | None = None) -> Pin:
         (described,) = await self.describe_picks(design_id, revision, [pick])
-        pin = Pin(point=pick.point, normal=pick.normal, component=pick.component, note=note, label=described.label,
-                  revision=described.revision)  # fmt: skip
+        pin = Pin(point=pick.point, normal=pick.normal, instance=described.instance, component=described.component,
+                  connector=described.connector, note=note, label=described.label, revision=described.revision)  # fmt: skip
         self._save_pins(design_id, [*self.designs.get(design_id).pins, pin])
         return pin
 
@@ -101,21 +109,25 @@ class FeedbackService:
     # ------------------------------------------------------------------ across rebuilds
 
     async def carry(self, design_id: str, revision: Revision) -> None:
-        """Move open pins and the selection onto a new build where their geometry clearly matches."""
+        """Move open pins and the selection of the same configuration onto a new build where they clearly match."""
         from hitlcad.analysis.anchors import carry
 
         state = self.designs.get(design_id)
-        target = self.geometry_file(design_id, revision)
-        pins = [p for p in state.pins if not p.resolved and p.revision is not None and p.revision != revision.id]
-        items = [i for i in state.selection if i.revision is not None and i.revision != revision.id]
-        moved: dict[str, Pick] = {}  # pin / selection id -> its pick on the new build
+        target = await asyncio.to_thread(self.built, design_id, revision)
+        same = {r.id for r in state.revisions if r.spec.configuration == revision.spec.configuration}
+        pins = [p for p in state.pins if not p.resolved and p.revision in same and p.revision != revision.id]
+        items = [i for i in state.selection if i.revision in same and i.revision != revision.id]
+        moved: dict[str, Pick] = {}
         for source in sorted({x.revision for x in [*pins, *items] if x.revision is not None}):
             old = state.revision(source)
             if old is None or old.report.status != "succeeded":
                 continue
             batch = [x for x in [*pins, *items] if x.revision == source]
-            picks = [Pick(point=x.point, normal=x.normal, component=x.component) for x in batch]
-            carried = await asyncio.to_thread(carry, self.geometry_file(design_id, old), target, picks)
+            picks = [
+                (Pick(point=x.point, normal=x.normal, component=x.component), x.connector, x.instance) for x in batch
+            ]
+            built = await asyncio.to_thread(self.built, design_id, old)
+            carried = await asyncio.to_thread(carry, built, target, picks, self.anchors)
             moved |= {x.id: pick for x, pick in zip(batch, carried, strict=True) if pick is not None}
         if not moved:
             return
@@ -124,7 +136,8 @@ class FeedbackService:
         )
         if any(p.id in described for p in pins):
             self._save_pins(design_id, [
-                p.model_copy(update={"point": d.point, "component": d.component, "label": d.label, "revision": revision.id})
+                p.model_copy(update={"point": d.point, "instance": d.instance, "component": d.component,
+                                     "connector": d.connector, "label": d.label, "revision": revision.id})
                 if (d := described.get(p.id)) else p
                 for p in self.designs.get(design_id).pins
             ])  # fmt: skip

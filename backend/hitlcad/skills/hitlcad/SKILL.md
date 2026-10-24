@@ -1,76 +1,127 @@
 ---
 name: hitlcad
-description: "Create, edit, build, measure and review the parametric CAD designs of this hitlcad project (designs/<name>/ with design.json and model.py), reviewed by the human in the hitlcad panel in VS Code. Use for any request to make or change a part, enclosure, bracket, figurine or other 3D model here, to check requirements, fit or printability, and to act on what the human selected or pinned in the panel. Takes precedence over generic CAD, build123d, Blender, bpy or mesh skills for building, exporting, rendering and checking; use those only as API reference for model.py."
+description: "Create, edit, build, verify and review the parametric CAD assemblies of this hitlcad project (designs/<name>/: design.json, interfaces.py, parts/, assembly.py), reviewed by the human in the hitlcad panel in VS Code. Use for any request to make or change a part, assembly, enclosure, mechanism, bracket, figurine or other 3D model here, to check fits, fasteners, motion, requirements or manufacturability, to find standard parts, and to act on what the human selected or pinned. Takes precedence over generic CAD, build123d, Blender, bpy or mesh skills for building, exporting, rendering and checking; use those only as API reference for part files."
 ---
 
 # Working on hitlcad designs
 
-The `hitlcad` MCP server builds, measures and renders the designs in this project; the human
-reviews each build in the hitlcad panel in VS Code (3D view, checks, parameters, selections and
-pins) and talks to you in your own chat. All hitlcad tools take the design folder's absolute path.
+The `hitlcad` MCP server builds, verifies and renders the designs of this project; the human reviews
+each build in the hitlcad panel in VS Code and talks to you in your own chat. All hitlcad tools take
+the design folder's absolute path, and every name a tool answers with can be passed back to a tool.
 
-## Layout
+## What a design is
 
-Each design is a folder in `designs/` containing:
-- `design.json`: name, backend (see `list_backends`), parameters (name, value, min, max, unit,
-  …), an optional `brief` (title, summary, key dimensions, features, assumptions, open questions)
-  that the panel shows, `requirements`, and an optional `manufacturing` process.
-  Write the human's requirements as `{"text": "…", "check": {…}}`; every build verifies each
-  check and reports pass, fail or unverified (no check: the human judges it). Add `"part": "lid"`
-  to any check but `clearance` to verify one part of an assembly. Checks:
+A design is an assembly: instances of parts (and of other designs, as components), held together by
+mates, relations and fastener sets that every build verifies.
+
+```
+designs/<name>/
+  design.json     the structure: parts, connectors, mates, relations, fastener sets, parameters,
+                  configurations, requirements, brief
+  interfaces.py   mating values, one function each: def bolt_circle(p, i)
+  parts/*.py      def build(p, i) -> {part: (shape, connectors)}: each part in its own frame
+  lib/*.py        helpers part files share (not parts)
+  vendor/         vendor STEP files
+  assembly.py     def build(p, i) -> {part or component: [placement, …]}
+  build/          the latest successful build's outputs: never edit, point the human here
+```
+
+- **Part**: one rigid body, made (a `material`, a `manufacturing` process) or bought (a `catalog`
+  entry). Its own frame is how it is made: a printed part stands as it prints.
+- **Instance**: one placement of a part: `lid`, or `planet[2]` when placed several times.
+- **Interface value**: a mating dimension computed once in interfaces.py; parts and assembly.py read
+  it as `i.<name>`, so two parts that meet read the same number.
+- **Connector**: a named frame (or pattern of frames) on a part, at a feature another part meets.
+- **Mate**: two connectors held together, with the motion they allow, a fit and limits.
+- **Relation**: coupled motion (gears, rack and pinion, lead screw).
+- **Fastener set**: a catalog fastener through clearance holes into a thread or insert.
+- **Component**: another design used as a sub-assembly, its parameters bound by this one.
+- **Configuration**: a named set of parameter values: a product variant.
+
+**One design per product.** Group related parts by file (a gear set in `parts/gears.py`). Make a
+separate design used as a component only for reuse (used in more than one place), an independent
+life (built, versioned or tested on its own), a unit of supply (bought or made elsewhere as one
+item), or scale (too large for one context).
+
+## Workflow
+
+1. `create_design(path, name, backend)` (backends: `list_backends`). For a new or substantially
+   changed design, write the `brief` and tell the human your assumptions.
+2. **Structure first.** In design.json declare every part with its `role`, `file`, `material` or
+   `catalog`, its connectors, then the mates, relations, fastener sets, `ground` and the
+   requirements the human gave (with a check where one fits). Use `search_catalog` for screws, nuts,
+   washers, inserts and bearings before modelling any. Run `build_design(path, scope="structure")`
+   until every reference resolves.
+3. **Interfaces.** Put every value two parts share in interfaces.py: bolt circles, centre
+   distances, bore sizes, catalog sizes, the heights where parts sit. Never type a mating value twice.
+4. **Parts.** Read the `hitlcad-<backend>` skill. Build a skeleton first (envelopes with the
+   connector features), then detail one part file at a time and check it with
+   `build_design(path, scope="<part>")`. Unchanged part files come from the cache.
+5. **Assembly.** assembly.py places every instance from interface values (or with the SDK's
+   `mate_to`), so placements follow the same numbers as the geometry.
+6. **Verify.** `build_design(path)` lists failures first: frames that do not agree, fits out of
+   range, fasteners that do not clear or engage, collisions (also through each mate's range of
+   motion), floating instances, process problems, requirements. Fix the cause, not the check. Look
+   at the preview and the section views.
+7. Before changing a parameter or interface value, `explore_design(path, "<name>")` shows what reads
+   it and what it affects. After a change, `compare_revisions` shows what moved.
+8. Configurations: `build_design(path, configuration="all")` verifies every variant.
+
+## Reading the human
+
+When the human says "this", "here", "the selected …" or mentions pins, hitlcad's prompt hook has added
+what they point at to their message ("The human is pointing at these in the hitlcad panel"),
+named by instance and connector. `explore_design(path)` repeats it. After addressing pins, call
+`resolve_pins` with a short reply. Parameter values the human set in the panel are deliberate.
+
+## design.json reference
+
+**Connectors** (`"connectors": {"name": {...}}` on a part). A frame's origin is where the mating
+connector's origin will be, and its Z points out of the part, so mated connectors face each other;
+X fixes the rotation about Z where it matters (a bolt pattern's clocking), `symmetry` says where it
+does not. `count` (a number or a parameter name) is how many frames a pattern has. Kinds:
+$connectors
+
+**Mates** (`"mates": [...]`). Ends are `part.connector` (every instance of the part),
+`part[k].connector` or `component.export`; patterns pair one-to-one by position. After placement the
+frames must agree in what the type fixes (within `verification`). Optional: `fit`
+(`{"clearance": [min, max]}` diametral mm, negative is interference, or `{"iso": "H7/g6"}`) between a
+hole and a shaft; `limits` (`{"angle": [lo, hi]}` degrees, `{"travel": [lo, hi]}` mm), swept for
+collisions; `offset` (mm along a's Z); `overlap: true` when the parts are meant to overlap there (a
+heat-set insert's knurls, a modelled thread). Types:
+$mates
+
+**Relations** (`"relations": [...]`), verified from the frames and the connectors' nominal values:
+$relations
+
+**Fastener sets** (`"fasteners": [...]`): seated, the shank clears every through hole, the thread
+engages at least the into part's material minimum (or `engagement` × diameter) without bottoming out:
+$fasteners
+
+**Requirements** (`"requirements": [{"text": "…", "check": {…}}]`). `target` is a part (its own
+frame), an instance or component path (placed), or nothing (the whole design). Checks:
 $checks
-  Set `manufacturing` when the part will be made; every build is then checked for that process:
+
+**Manufacturing** (`"manufacturing"` on the design, or on a made part). Each made part is checked in
+its own frame:
 $processes
-- `model.py`: defines `build(p)`; `p` maps parameter names to values. A design of several parts
-  (an assembly) returns `{"base": base, "lid": lid}`: each part gets its own files and checks,
-  and the human sees and selects them by name.
-- `build/`: outputs of the latest successful build (`model.step` or `model.blend`, `mesh.stl`,
-  `preview.png`, `build.log`, `report.json`). Regenerated on every build and git-ignored; point
-  the human here when they want the files.
 
-## Working on a design
+**Components** (`"components": {"name": {"design": "../other", "configuration": …, "bind":
+{"param": "my_param" or "interfaces.value"}, "flexible": false}}`). A component exposes connectors
+through its own `exports` (`{"output": "carrier.output"}`); mate to those, never inside it.
 
-1. New designs go in `designs/<name>/`; create one with `create_design`. Pick the backend from
-   `list_backends`.
-2. Read the `hitlcad-<backend>` skill (e.g. `hitlcad-build123d`) before writing model code. It
-   is the code contract: what `build(p)` returns, allowed imports and idioms.
-3. For a new or substantially changed part, write the `brief` in `design.json` first and tell
-   the human your assumptions in chat.
-4. Edit `model.py` and `design.json` with your normal file tools. Keep `parameters` in
-   `design.json` in sync with what `model.py` reads. Saving rebuilds the panel's view.
-5. Call `build_design(path)`. It returns measurements, checks and preview renders: look at the
-   images and compare the numbers with what was asked before you report back. For build123d
-   designs, `list_geometry(path)` lists every face (or edge) with the numbers selections use, and
-   `measure_geometry(path, "face 3", "face 7")` measures distances, angles and wall gaps exactly.
-6. The human may tune parameters in the panel; those values are written to `design.json` and
-   are deliberate.
-7. When the human says "this", "here", "the selected …" or mentions pins: hitlcad's prompt hook
-   adds what they point at to their message ("The human is pointing at these in the hitlcad
-   panel"). It gives a design in full when its selection or pins changed since you were last
-   told, and a one-line reminder while they stay unchanged; call `get_feedback(path)` for the
-   full details again. The human may also paste the same text. After addressing pins, call
-   `resolve_pins` with a short reply.
+**Configurations** (`"configurations": {"ratio_5": {"sun_teeth": 12}}`), **verification**
+(`{"position_mm", "angle_deg", "motion_samples"}`, defaults from hitlcad's settings) and **outputs**
+(exporters run on every build: see `list_backends`) complete the file.
 
-## Modelling principles
+## Rules
 
-- Every dimension a person might tune is a parameter in `design.json` (snake_case, with a range,
-  unit and label) and is read from `p[...]` in the model.
-- Millimetres, Z up, the part resting on the XY plane at Z=0 unless told otherwise.
-- Prefer robust, simple geometry over fragile cleverness.
-- After each build, compare the measured size and volume with what was asked and look at every
-  render view. Never claim printability, fit or strength that no check reports.
-- Pins and selections are model-space points in mm, Z up: the same frame as the build report.
-  On build123d designs they also name the exact face, edge or vertex: "face 9 of model" is
-  `import_step("build/model.step").faces()[9]` (`edges()` and `vertices()` likewise). With the
-  panel's filter on Solid they name a whole part instead, "part lid": the human means that part
-  as a whole, e.g. to resize, move or remove it. The geometry tools take both forms.
-
-## What hitlcad owns
-
-- Builds, exports, renders and checks run only through the hitlcad tools. Do not run
-  build123d, Blender or export scripts yourself, and do not save models, meshes or renders
-  outside `build/`: the panel, the revision history and the checks would not see them.
-- Never edit `build/`; it is regenerated from `model.py` and `design.json`.
-- Other CAD, build123d, Blender, bpy or mesh skills are API reference here: put what they teach
-  into `build(p)` in `model.py`, not into scripts of your own, and do not run their tools on
-  `build/` outputs.
+- Millimetres, Z up. A part's own frame is how it is made; assembly.py says where it sits.
+- Never type a mating value twice: interfaces.py. Part files read `p` and `i`, import `lib/` and the
+  catalog providers, and never import each other.
+- Catalog parts come from a provider (`search_catalog`) or a vendor STEP (`hitlcad.catalogs.step`);
+  model one only when neither exists, with `"fidelity": "simplified"`.
+- Never claim a fit, clearance, printability or strength that no result reports.
+- Builds, exports, renders and checks run only through the hitlcad tools. Do not run build123d,
+  Blender or export scripts yourself, and never edit `build/`.
+- Other CAD, build123d, Blender, bpy or mesh skills are API reference for part files only.

@@ -1,61 +1,82 @@
-"""Base class for backends that run model code in a child process via an entry script.
+"""Base class for backends that run a design's code in a child process via an entry script.
 
-Protocol between parent and entry script (cwd = output directory):
+Protocol between parent and entry script (cwd = the work directory):
 
-    in:  model.py, job.json {"params": {...}, ...}
-    out: result.json {"ok": bool, "error": str|None, "files": [{name, media_type, role}], "info": {...}}
+    in:  job.json {"mode": "plan" | "parts", "src": <design sources>, "params": {...}, "files": {...}, ...}
+    out: result.json {"ok": bool, "error": str | None, ...the mode's fields}
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from hitlcad.backends.base import BackendBuild, CADBackend, OutputFile
+from hitlcad.backends import runtime
+from hitlcad.backends.base import CADBackend, PartsOutcome, PlanOutcome
 from hitlcad.backends.executor import Executor, LocalExecutor
+from hitlcad.core.types import Value
 
 
 class SubprocessBackend(CADBackend):
+    entry: ClassVar[Path]  # the entry script
+
     def __init__(
-        self, *, executor: Executor | None = None, timeout_s: float = 180.0, memory_mb: int | None = None
-    ) -> None:
+        self, *, executor: Executor | None = None, timeout_s: float, memory_mb: int | None = None,
+        mesh_tolerance_mm: float, mesh_angular_tolerance: float,
+    ) -> None:  # fmt: skip
         self.executor = executor or LocalExecutor()
         self.timeout_s = timeout_s
         self.memory_mb = memory_mb
+        self.mesh_tolerance_mm = mesh_tolerance_mm
+        self.mesh_angular_tolerance = mesh_angular_tolerance
+
+    def fingerprint(self) -> str:
+        code = b"".join(p.read_bytes() for p in (self.entry, Path(runtime.__file__)))
+        return hashlib.sha256(
+            code + f"{self.name}:{self.mesh_tolerance_mm}:{self.mesh_angular_tolerance}".encode()
+        ).hexdigest()
 
     @abstractmethod
     def command(self, job_file: Path) -> list[str]:
-        """argv that runs the entry script for ``job_file`` (cwd will be the output directory)."""
+        """argv that runs the entry script for ``job_file`` (cwd is the work directory)."""
 
-    def job_options(self) -> dict[str, Any]:
-        return {}
-
-    async def build(self, source: str, params: dict[str, Any], out_dir: Path) -> BackendBuild:
-        # The child runs with cwd=out_dir, so paths handed to it must not be relative to ours.
-        out_dir = out_dir.resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "model.py").write_text(source, encoding="utf-8")
-        job_file = out_dir / "job.json"
-        job_file.write_text(json.dumps({"params": params, **self.job_options()}), encoding="utf-8")
-        result_file = out_dir / "result.json"
+    async def _run(self, work: Path, job: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        # The child runs with cwd=work, so paths handed to it must not be relative to ours.
+        work = work.resolve()
+        work.mkdir(parents=True, exist_ok=True)
+        job_file = work / "job.json"
+        job_file.write_text(json.dumps(job), encoding="utf-8")
+        result_file = work / "result.json"
         result_file.unlink(missing_ok=True)
-
-        run = await self.executor.run(
-            self.command(job_file), out_dir, timeout_s=self.timeout_s, memory_mb=self.memory_mb
-        )
+        run = await self.executor.run(self.command(job_file), work, timeout_s=self.timeout_s, memory_mb=self.memory_mb)
         if run.timed_out:
-            return BackendBuild(log=run.output, error=f"build exceeded the {self.timeout_s:.0f}s time limit")
+            return {"ok": False, "error": f"the build exceeded the {self.timeout_s:.0f}s time limit"}, run.output
         if not result_file.is_file():
             tail = "\n".join(run.output.strip().splitlines()[-25:])
-            return BackendBuild(log=run.output, error=f"build process exited with code {run.returncode}:\n{tail}")
+            return {"ok": False, "error": f"the build process exited with code {run.returncode}:\n{tail}"}, run.output
+        return json.loads(result_file.read_text(encoding="utf-8")), run.output
 
-        result = json.loads(result_file.read_text(encoding="utf-8"))
-        files = [OutputFile(**f) for f in result.get("files", []) if (out_dir / f["name"]).is_file()]
-        return BackendBuild(
-            files=files,
-            log=run.output,
-            error=None if result.get("ok") else (result.get("error") or "build failed without an error message"),
-            info=result.get("info", {}),
-        )
+    async def plan(self, src: Path, values: dict[str, Value], work: Path) -> PlanOutcome:
+        result, log = await self._run(work, {"mode": "plan", "src": str(src.resolve()), "params": values})
+        if not result["ok"]:
+            return PlanOutcome(error=result["error"], log=log)
+        return PlanOutcome.model_validate({**{k: v for k, v in result.items() if k != "ok"}, "log": log})
+
+    async def build_parts(
+        self, src: Path, values: dict[str, Value], files: dict[str, dict[str, list[str]]], work: Path
+    ) -> PartsOutcome:
+        job = {
+            "mode": "parts",
+            "src": str(src.resolve()),
+            "params": values,
+            "files": files,
+            "mesh_tolerance_mm": self.mesh_tolerance_mm,
+            "mesh_angular_tolerance": self.mesh_angular_tolerance,
+        }
+        result, log = await self._run(work, job)
+        if not result["ok"]:
+            return PartsOutcome(error=result["error"], log=log)
+        return PartsOutcome(files=result["files"], log=log)

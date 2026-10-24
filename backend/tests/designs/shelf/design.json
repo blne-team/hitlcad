@@ -1,0 +1,19 @@
+{
+  "hitlcad": 2,
+  "name": "Shelf of hinged boxes",
+  "backend": "build123d",
+  "parameters": [
+    {"name": "box_size", "value": 30, "min": 20, "max": 60},
+    {"name": "plate_t", "value": 4, "min": 2, "max": 10}
+  ],
+  "ground": "plate",
+  "parts": {
+    "plate": {"role": "carries two boxes", "file": "parts/plate.py", "material": "PLA", "connectors": {
+      "slots": {"kind": "face", "count": 2, "symmetry": 2}}}
+  },
+  "components": {
+    "box": {"design": "../hinge", "bind": {"size": "box_size"}, "flexible": true}
+  },
+  "mates": [{"type": "rigid", "a": "plate.slots", "b": "box.foot"}],
+  "outputs": ["bom"]
+}

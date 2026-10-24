@@ -10,7 +10,7 @@ from typing import Protocol
 from PIL import Image, ImageDraw, ImageFont
 
 from hitlcad.backends.executor import Executor, LocalExecutor
-from hitlcad.core.types import MeshMetrics
+from hitlcad.core.report import MeshMetrics
 
 ENTRY = Path(__file__).with_name("blender_entry.py")
 PREVIEW_FILE = "preview.png"
