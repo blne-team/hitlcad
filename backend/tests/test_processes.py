@@ -14,6 +14,7 @@ from build123d import (
     Locations,
     Mode,
     Pos,
+    export_gltf,
     export_step,
     export_stl,
     fillet,
@@ -38,11 +39,12 @@ SETTINGS = AnalysisSettings(tolerances=Tolerances(position_mm=0.01, angle_deg=0.
 
 
 def body(shape, tmp_path: Path, name: str) -> Body:
-    step, stl = tmp_path / f"{name}.step", tmp_path / f"{name}.stl"
+    step, stl, glb = tmp_path / f"{name}.step", tmp_path / f"{name}.stl", tmp_path / f"{name}.glb"
     export_step(shape, str(step))
     export_stl(shape, str(stl), tolerance=0.01, angular_tolerance=0.1)
+    export_gltf(shape, str(glb), binary=True, linear_deflection=0.01, angular_deflection=0.1)
     part = PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
-                        mesh_file=stl, step_file=step, objects_file=None, frames={}, catalog=None, reads=Reads(),
+                        mesh_file=stl, step_file=step, objects_file=glb, frames={}, catalog=None, reads=Reads(),
                         cached=False)  # fmt: skip
     return Body(name, [Leaf(name, part, None, fr.IDENTITY)], SETTINGS)  # type: ignore[arg-type]
 

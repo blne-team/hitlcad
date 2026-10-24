@@ -20,15 +20,16 @@ class ExploreService:
     def graph(self, design_id: str, configuration: str | None = None) -> DesignGraph:
         state = self.designs.get(design_id)
         folder = DesignFolder(Path(state.path))
+        design, design_error = None, None
         try:
             design = folder.load()
-        except (OSError, ValueError):
-            design = None
+        except (OSError, ValueError) as e:
+            design_error = str(e)
         revision = state.latest(configuration)
         stale = self._stale(folder, revision) if revision else []
         used_by = [self.designs.get(i).name for i in self.designs.where_used(design_id)]
-        return DesignGraph(Context(state=state, design=design, revision=revision, stale=stale, used_by=used_by,
-                                   limit=self.settings.explore_limit))  # fmt: skip
+        return DesignGraph(Context(state=state, design=design, design_error=design_error, revision=revision,
+                                   stale=stale, used_by=used_by, limit=self.settings.explore_limit))  # fmt: skip
 
     @staticmethod
     def _stale(folder: DesignFolder, revision: Revision) -> list[str]:

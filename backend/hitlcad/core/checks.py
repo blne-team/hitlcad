@@ -187,13 +187,15 @@ class ClearanceCheck(_Bounded, _Check):
         return list(self.between)
 
     def verify(self, build: BuildBodies) -> Verdict:
+        from hitlcad.analysis.features import Unmeasurable
+
         a, b = (build.placed(name) for name in self.between)
         try:
             shared = a.overlap(b)
             if shared > build.overlap_mm3:
                 return self.min is None, f"{a.name} and {b.name} overlap by {shared:.1f} mm³"
             passed, detail = _bounds(a.gap(b), self.min, self.max, "mm")
-        except ValueError as e:  # a mesh is not closed
+        except Unmeasurable as e:  # a mesh is not closed
             return None, f"not measurable: {e}"
         return passed, f"{a.name} to {b.name}: {detail}"
 

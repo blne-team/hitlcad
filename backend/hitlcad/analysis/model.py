@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from hitlcad.analysis.features import BrepFeatures, Features, Hole, MeshFeatures
+from hitlcad.analysis import cadview
+from hitlcad.analysis.features import BrepFeatures, Features, Hole, MeshFeatures, Unmeasurable
 from hitlcad.analysis.mesh import load_mesh, measure, measure_union
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
@@ -53,7 +54,7 @@ class PartGeometry:
     backend: str
     mesh_file: Path
     step_file: Path | None
-    objects_file: Path | None
+    objects_file: Path
     frames: dict[str, list[fr.Frame]]
     catalog: CatalogInfo | None
     reads: Reads
@@ -71,22 +72,19 @@ class PartGeometry:
 
     @cached_property
     def features(self) -> Features:
-        """Its features, measured on the B-rep when it has one, else on the mesh."""
-        return BrepFeatures(self.shape) if self.shape is not None else MeshFeatures(self.mesh, self.name)
+        """Its geometry, measured on the B-rep when its backend made one, else on the mesh."""
+
+        def objects() -> list[cadview.ObjectMesh]:
+            return cadview.object_meshes(cadview.load_mesh(self.objects_file))
+
+        if self.step_file is None:
+            return MeshFeatures(self.name, lambda: self.mesh, objects)
+        return BrepFeatures(self.name, cadview.load_step(self.step_file), lambda: self.mesh, objects)
 
     @cached_property
     def digest(self) -> str:
         """The part's mesh by content: what cached results about it depend on."""
         return hashlib.sha256(self.mesh_file.read_bytes()).hexdigest()
-
-    @cached_property
-    def shape(self) -> Any | None:
-        """The B-rep, when the part's backend has one."""
-        if self.step_file is None:
-            return None
-        from build123d import import_step
-
-        return import_step(str(self.step_file))
 
     @cached_property
     def manifold(self) -> manifold3d.Manifold:
@@ -95,7 +93,7 @@ class PartGeometry:
         solid = manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(self.mesh.vertices, dtype=np.float32),
                                                     tri_verts=np.asarray(self.mesh.faces, dtype=np.uint32)))  # fmt: skip
         if solid.status() != manifold3d.Error.NoError or solid.is_empty():
-            raise ValueError(f"part {self.name} is not a closed mesh")
+            raise Unmeasurable(f"part {self.name} is not a closed mesh")
         return solid
 
     @property

@@ -4,8 +4,9 @@ A backend runs a design's code (`interfaces.py`, part files, `assembly.py`) thro
 in its own child process, in two steps:
 
     plan          evaluate every interface value and run assembly.py: the placements, before geometry
-    build_parts   run part files; export each part in its own frame (mesh.stl always, a STEP when the
-                  backend is B-rep), with its connector frames and what the code read
+    build_parts   run part files; export each part in its own frame (an STL that analyses measure, a GLB
+                  of its named objects in their colours, and a STEP when the backend is B-rep), with its
+                  connector frames and what the code read
 
 Everything after that (assembly, measurement, analyses, exports) is backend-independent, except that a
 backend may also write the built assembly in its own format (`write_assembly`) from the parts' files.
@@ -50,7 +51,7 @@ class BuiltPart(Model):
     name: str
     mesh: str = Field(description="STL in the part's own frame, mm")
     step: str | None = Field(default=None, description="STEP in the part's own frame (B-rep backends)")
-    objects: str | None = Field(default=None, description="GLB of the part's named objects (mesh backends)")
+    objects: str = Field(description="GLB of the part's named objects in their colours, in its own frame")
     connectors: dict[str, list[Matrix]] = Field(default_factory=dict)
     catalog: CatalogInfo | None = None
     valid: bool | None = Field(default=None, description="The kernel's own validity check, where it has one")
@@ -75,7 +76,7 @@ class CADBackend(ABC):
     title: str
     #: One paragraph for the agent: what this backend is good and bad at.
     summary: str
-    #: Its parts carry a B-rep (STEP): connector features and holes can be measured on them.
+    #: Its parts carry a B-rep (STEP): exact, with faces, edges and vertices to pick, number and measure between.
     brep: ClassVar[bool]
 
     @abstractmethod

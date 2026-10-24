@@ -316,9 +316,10 @@ Part files import `lib/`, the model SDK and catalog providers, never each other.
 instance in order (`planet[0]`, `planet[1]`, …). It places and nothing else; what a placement
 needs comes from `i`, and catalog data from the providers.
 
-**The model SDK** (`hitlcad.sdk`) knows no library: `mate_to(frame_on_part, frame_on_target)`
-returns the placement that makes a connector frame face a target frame, and `CatalogPart` is what
-providers return.
+**The model SDK** (`hitlcad.sdk`) knows no library and imports nothing, so every backend's Python
+loads it: `mate_to(frame_on_part, frame_on_target)` returns the placement that makes a connector frame
+face a target frame (build123d Locations, Blender Matrices or 4 × 4 lists in, the same out), and
+`CatalogPart` is what providers return.
 
 **Catalog providers** (entry points `hitlcad.catalogs`; `search_catalog` searches them all):
 
@@ -393,10 +394,10 @@ pair's overlap by the parts' meshes and transforms, so a rebuild recomputes only
 | File | Contents |
 | --- | --- |
 | `model.step` | the assembly as a STEP product structure, instances named by path (only when every part is B-rep) |
-| `model.blend` | the assembly as one Blender scene, 1 unit = 1 mm, Z up (when a part, a component's included, is a Blender part): each part's objects with their names and materials in a collection of their own (a part of another backend as one object from its STL), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
+| `model.blend` | the assembly as one Blender scene, 1 unit = 1 mm, Z up (when a part, a component's included, is a Blender part): each part's objects with their names and materials in a collection of their own (from its `.glb`, whichever backend built it), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
 | `mesh.stl` | the placed assembly as one mesh |
-| `parts/<part>.step`, `.stl` (`.glb` for mesh parts, with the objects' names and materials) | each part once, in its own frame |
-| `view.json` | the 3D view: each part tessellated once, drawn per instance; a mesh part in its materials' colours, one shape per colour |
+| `parts/<part>.stl`, `.glb` (its objects' names, materials and colours), `.step` (B-rep parts) | each part once, in its own frame |
+| `view.json` | the 3D view: each part tessellated once through its features, drawn per instance; a B-rep part one `exact` shape whose faces, edges and vertices picks name, a mesh part one shape per colour |
 | `preview.png` | iso, front, right and top renders |
 | the exporters' files | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 | `report.json`, `build.log` | the report, the backends' output |

@@ -17,6 +17,7 @@ import numpy as np
 
 from hitlcad.analysis.base import Context, label, result
 from hitlcad.analysis.coverage import Link, nested_links
+from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.interference import allowed, boxes_touch, overlap, placed_bounds
 from hitlcad.analysis.model import BuiltDesign, Leaf
 from hitlcad.core import frames as fr
@@ -192,7 +193,7 @@ class Motion:
                     continue
                 try:
                     shared = overlap(ctx, leaves[p], motion, other, moved.get(q, fr.IDENTITY))
-                except ValueError:
+                except Unmeasurable:
                     continue  # an open mesh: the interference analysis already says so
                 if shared > ctx.settings.overlap_mm3:
                     return p, q, shared

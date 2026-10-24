@@ -176,7 +176,8 @@ def test_projects_add_and_override_materials(tmp_path: Path) -> None:
                 "PLA": {"density_g_cm3": 1.3, "min_thread_engagement_d": 2.5},
                 "wood": {"density_g_cm3": 0.6, "min_thread_engagement_d": 3},
             }
-        )
+        ),
+        encoding="utf-8",
     )
     design = tmp_path / "designs" / "a"
     design.mkdir(parents=True)
@@ -191,7 +192,7 @@ def test_frames_turn_about_any_axis() -> None:
 
 
 def test_view_quaternions_hold_for_every_rotation() -> None:
-    from hitlcad.build.assemble import quaternion
+    from hitlcad.analysis.cadview import quaternion
 
     def rotate(q: tuple[float, ...], v: np.ndarray) -> np.ndarray:
         x, y, z, w = q
@@ -208,3 +209,23 @@ def test_view_quaternions_hold_for_every_rotation() -> None:
         q = quaternion(m)
         for v in np.eye(3):
             assert np.allclose(rotate(q, v), m[:3, :3] @ v)
+
+
+def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
+    import trimesh
+
+    from hitlcad.analysis.mesh import load_mesh
+
+    # A body with a detail half sunk into it, modelled as two objects: one solid of their union's volume
+    body, detail = trimesh.creation.box((20, 20, 20)), trimesh.creation.box((10, 10, 10)).apply_translation((0, 0, 10))
+    trimesh.util.concatenate([body, detail]).export(tmp_path / "figure.stl")
+    figure = load_mesh(tmp_path / "figure.stl")
+    assert len(figure.split()) == 1 and figure.volume == pytest.approx(8000 + 500)
+    # A sealed hollow stays one: an inward-facing shell is cut from the solid around it
+    hollow = trimesh.creation.box((10, 10, 10))
+    hollow.invert()
+    trimesh.util.concatenate([body, hollow]).export(tmp_path / "hollow.stl")
+    assert load_mesh(tmp_path / "hollow.stl").volume == pytest.approx(8000 - 1000)
+    # Shells apart stay apart
+    trimesh.util.concatenate([body, detail.apply_translation((50, 0, 0))]).export(tmp_path / "apart.stl")
+    assert len(load_mesh(tmp_path / "apart.stl").split()) == 2

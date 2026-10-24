@@ -1061,7 +1061,7 @@ export interface components {
              * Manufacturing
              * @description Default process for made parts
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
             verification: components["schemas"]["Verification"];
             /**
              * Outputs
@@ -1250,8 +1250,10 @@ export interface components {
         /**
          * FdmProcess
          * @description FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-         *     Z): wall thickness, overhangs and bed contact. `hole_allowance_mm` / `shaft_allowance_mm`: how much
-         *     printed holes come out smaller and shafts larger than modelled, for fit checks.
+         *     Z): wall thickness, overhangs and bed contact. With `supports`, overhangs print on support and are
+         *     reported, not failed: for shapes that cannot avoid them, like figurines. `hole_allowance_mm` /
+         *     `shaft_allowance_mm`: how much printed holes come out smaller and shafts larger than modelled, for fit
+         *     checks.
          */
         FdmProcess: {
             /**
@@ -1288,6 +1290,12 @@ export interface components {
              * @default 1
              */
             ignored_overhang_mm2: number;
+            /**
+             * Supports
+             * @description Printed with support under its overhangs
+             * @default false
+             */
+            supports: boolean;
             /**
              * Hole Allowance Mm
              * @default 0
@@ -1706,6 +1714,12 @@ export interface components {
             values: {
                 [key: string]: number;
             };
+            /**
+             * Uncertainty Mm
+             * @description Either way on the values in mm: a mesh's facets
+             * @default 0
+             */
+            uncertainty_mm: number;
         };
         /** MeshMetrics */
         MeshMetrics: {
@@ -1897,7 +1911,7 @@ export interface components {
              * Manufacturing
              * @description Overrides the design's process for this made part
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
             /**
              * Backend
              * @description Overrides the design's backend
@@ -2099,6 +2113,34 @@ export interface components {
             text: string;
             /** Check */
             check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"]) | null;
+        };
+        /**
+         * ResinProcess
+         * @description Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and no hollow sealed
+         *     inside the part, which traps uncured resin. `hole_allowance_mm` / `shaft_allowance_mm` as for FDM.
+         */
+        ResinProcess: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            process: "resin";
+            /**
+             * Min Wall Mm
+             * @description Thinnest wall that prints and survives washing
+             * @default 0.6
+             */
+            min_wall_mm: number;
+            /**
+             * Hole Allowance Mm
+             * @default 0
+             */
+            hole_allowance_mm: number;
+            /**
+             * Shaft Allowance Mm
+             * @default 0
+             */
+            shaft_allowance_mm: number;
         };
         /**
          * Result

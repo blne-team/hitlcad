@@ -193,13 +193,7 @@ class _Interfaces:
 
 
 def _in(filename: str | None, folder: Path) -> bool:
-    if not filename:
-        return False
-    try:
-        Path(filename).resolve().relative_to(folder)
-        return True
-    except ValueError:
-        return False
+    return bool(filename) and Path(filename).resolve().is_relative_to(folder)
 
 
 def _plain(value: Any, what: str) -> Any:

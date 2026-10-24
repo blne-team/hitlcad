@@ -1,51 +1,35 @@
 """What a built design becomes on disk: the assembly as a STEP product structure, as one mesh, as the 3D
 view (three-cad-viewer's instanced format), and as the tree a backend writes its own assembly file from.
 
-The view tessellates each part once and draws it per instance at the instance's place, nested by
-component. Viewer ids are `/<design>/<instance path>`, and "face i" of an instance is `faces()[i]` of
-its part's STEP (`parts/<part>.step`), the way picks and the geometry tools number them. A mesh part
-shows its materials' colours: in one colour it is one shape, as any part; in several, the instance is a
-group of one shape per colour (`/<design>/<instance path>/<material>`), because a viewer shape has one
-colour. Mesh picks name a point, which the build resolves to its instance, so the extra level changes
-no pick.
+The view draws each part per instance at the instance's place, nested by component, the way
+`analysis.cadview.View` draws any part. Viewer ids are `/<design>/<instance path>`, and "face i" of an
+instance is `faces()[i]` of its part's STEP (`parts/<part>.step`), the way picks and the geometry tools
+number them. A part in several colours is a group of one shape per colour at its instance's id
+(`/<design>/<instance path>/<material>`); mesh picks name a point, which the build resolves to its
+instance, so the extra level changes no pick.
 """
 
 from __future__ import annotations
 
-import json
-import math
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import trimesh
-
 from hitlcad.analysis import cadview
+from hitlcad.analysis.features import Unmeasurable, flat
 from hitlcad.analysis.geometry import location
 from hitlcad.analysis.model import BuiltDesign, PartGeometry
 from hitlcad.core import frames as fr
 
-IDENTITY_LOC = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-
-
-def flat(shape: Any) -> Any:
-    """A part's shape as one object: a compound of its solids with no children, so viewers and face
-    numbering treat it as one part."""
-    from build123d import Compound
-
-    solids = shape.solids()
-    return Compound(list(solids)) if len(solids) != 1 else solids[0]
-
 
 def step_assembly(built: BuiltDesign, target: Path) -> bool:
     """The assembly as STEP: nested compounds named by instance, each part shared by its instances. False
-    (and nothing written) when a part has no B-rep."""
+    (and nothing written) when a part has no exact shape."""
     from build123d import Compound, export_step
 
-    if any(part.step_file is None for part in all_parts(built)):
+    try:
+        shapes = {id(part): flat(part.features.exact()) for part in all_parts(built)}
+    except Unmeasurable:
         return False
-    shapes: dict[int, Any] = {}
 
     def node(design: BuiltDesign, name: str) -> Any:
         children = []
@@ -54,9 +38,7 @@ def step_assembly(built: BuiltDesign, target: Path) -> bool:
                 child = node(design.components[part_or_component], address)
                 child.location = location(local)
             else:
-                part = design.parts[part_or_component]
-                base = shapes.setdefault(id(part), flat(part.shape))
-                child = base.moved(location(local))
+                child = shapes[id(design.parts[part_or_component])].moved(location(local))
                 child.label = address
             children.append(child)
         return Compound(children=children, label=name)
@@ -70,127 +52,22 @@ def all_parts(built: BuiltDesign) -> list[PartGeometry]:
     return [*built.parts.values(), *(p for c in built.components.values() for p in all_parts(c))]
 
 
-@dataclass(frozen=True)
-class Piece:
-    """What of a part has one colour: one shape in the view, one object in 3MF."""
-
-    name: str
-    color: str | None
-    mesh: trimesh.Trimesh
-
-
-def pieces(part: PartGeometry) -> list[Piece]:
-    """A part by colour, in its own frame. A mesh part's colours are its objects' materials (`parts/<part>.glb`),
-    each piece named by its materials; any other part is one piece without a colour."""
-    if part.objects_file is None:
-        return [Piece(part.name, None, part.mesh)]
-    by_color: dict[str | None, list[trimesh.Trimesh]] = {}
-    for _, mesh in cadview.meshes(cadview.load_mesh(part.objects_file)):
-        by_color.setdefault(cadview.color(mesh), []).append(mesh)
-    out = []
-    for color, meshes in by_color.items():
-        names = dict.fromkeys(m.visual.material.name for m in meshes if getattr(m.visual, "material", None))
-        whole = trimesh.util.concatenate([trimesh.Trimesh(m.vertices, m.faces, process=False) for m in meshes])
-        # glTF splits vertices where normals differ; merged again, the view finds creases as on the STL
-        out.append(Piece("+".join(names) or part.name, color, trimesh.Trimesh(whole.vertices, whole.faces)))
-    return out
-
-
 def tree(built: BuiltDesign) -> dict[str, Any]:
     """The assembly as a backend's own file takes it (`CADBackend.write_assembly`): each design's parts by their
-    files in their own frames (`objects`: a mesh part's named objects; `mesh`: its STL), its components alike,
-    and its instances with their placements."""
+    named objects in their own frames (`parts/<part>.glb`), its components alike, and its instances with their
+    placements."""
     return {
         "name": built.spec.name,
-        "parts": {
-            name: {"objects": str(part.objects_file.resolve()) if part.objects_file else None,
-                   "mesh": str(part.mesh_file.resolve())}
-            for name, part in built.parts.items()
-        },
+        "parts": {name: str(part.objects_file.resolve()) for name, part in built.parts.items()},
         "components": {name: tree(child) for name, child in built.components.items()},
         "instances": [{"name": address, "of": name, "transform": fr.as_matrix(local)}
                       for address, name, local in built.instances()],
     }  # fmt: skip
 
 
-def quaternion(m: fr.Frame) -> tuple[float, float, float, float]:
-    """(x, y, z, w) of a rotation matrix, by Shepperd's method: stable for every rotation, half turns included."""
-    r = m[:3, :3]
-    trace = r[0, 0] + r[1, 1] + r[2, 2]
-    if trace > 0:
-        s = math.sqrt(trace + 1) * 2
-        return ((r[2, 1] - r[1, 2]) / s, (r[0, 2] - r[2, 0]) / s, (r[1, 0] - r[0, 1]) / s, s / 4)
-    if r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
-        s = math.sqrt(1 + r[0, 0] - r[1, 1] - r[2, 2]) * 2
-        return (s / 4, (r[0, 1] + r[1, 0]) / s, (r[0, 2] + r[2, 0]) / s, (r[2, 1] - r[1, 2]) / s)
-    if r[1, 1] > r[2, 2]:
-        s = math.sqrt(1 + r[1, 1] - r[0, 0] - r[2, 2]) * 2
-        return ((r[0, 1] + r[1, 0]) / s, s / 4, (r[1, 2] + r[2, 1]) / s, (r[0, 2] - r[2, 0]) / s)
-    s = math.sqrt(1 + r[2, 2] - r[0, 0] - r[1, 1]) * 2
-    return ((r[0, 2] + r[2, 0]) / s, (r[1, 2] + r[2, 1]) / s, s / 4, (r[1, 0] - r[0, 1]) / s)
-
-
-def _loc(m: fr.Frame) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    return (tuple(float(v) for v in m[:3, 3]), tuple(float(v) for v in quaternion(m)))  # type: ignore[return-value]
-
-
-def _frame(loc: Any) -> fr.Frame:
-    """The matrix of a view `loc`: a position and an (x, y, z, w) quaternion."""
-    position, (x, y, z, w) = loc
-    m = trimesh.transformations.quaternion_matrix((w, x, y, z))
-    m[:3, 3] = position
-    return m
-
-
-def _tessellate(part: PartGeometry) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """One part's tessellation, a shape per colour, and the view entry template for each."""
-    if part.shape is not None:
-        from ocp_tessellate.convert import tessellate_group, to_ocpgroup
-
-        group, instances = to_ocpgroup(flat(part.shape), names=[part.name])
-        meshed, shapes, _ = tessellate_group(group, instances)
-        (leaf,) = _leaves(shapes)
-        return [(meshed[0], leaf)]
-    return [cadview.mesh_entry(p.mesh, "", p.name.replace("/", "_"), p.color) for p in pieces(part)]
-
-
-def _leaves(node: dict[str, Any]) -> list[dict[str, Any]]:
-    if "parts" in node:
-        return [leaf for child in node["parts"] for leaf in _leaves(child)]
-    return [node]
-
-
-def _node(path: str, name: str, parts: list[dict[str, Any]], loc: Any = IDENTITY_LOC) -> dict[str, Any]:
-    return {"version": 3, "parts": parts, "loc": loc, "name": name, "id": path, "normal_len": 0}
-
-
 def write_view(built: BuiltDesign, target: Path) -> None:
-    from ocp_tessellate.utils import numpy_to_buffer_json
-
-    meshes: list[dict[str, Any]] = []
-    refs: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+    view = cadview.View()
     root = built.spec.name.replace("/", "_")
-
-    def part_entry(part: PartGeometry, path: str, name: str, transform: fr.Frame) -> dict[str, Any]:
-        if id(part) not in refs:
-            refs[id(part)] = []
-            for mesh, template in _tessellate(part):
-                meshes.append(mesh)
-                refs[id(part)].append((len(meshes) - 1, template))
-        shapes = refs[id(part)]
-        if len(shapes) > 1:
-            leaves = [{**t, "id": f"{path}/{t['name']}", "shape": {"ref": ref}} for ref, t in shapes]
-            return _node(path, name, leaves, _loc(transform))
-        ((ref, template),) = shapes
-        # ocp-tessellate meshes a part relative to its solids' own placement and returns that placement as
-        # the template's loc: the instance places the part, and the part's loc places its mesh within it.
-        return {
-            **template,
-            "id": path,
-            "name": name,
-            "shape": {"ref": ref},
-            "loc": _loc(transform @ _frame(template["loc"])),
-        }
 
     def group(design: BuiltDesign, path: str, name: str, transform: fr.Frame) -> dict[str, Any]:
         parts = []
@@ -199,16 +76,10 @@ def write_view(built: BuiltDesign, target: Path) -> None:
             if part_or_component in design.components:
                 parts.append(group(design.components[part_or_component], f"{path}/{address}", address, placed))
             else:
-                parts.append(part_entry(design.parts[part_or_component], f"{path}/{address}", address, placed))
-        return _node(path, name, parts)
+                parts.append(view.part(design.parts[part_or_component].features, f"{path}/{address}", address, placed))
+        return cadview.group(path, name, parts)
 
-    tree = group(built, f"/{root}", root, fr.IDENTITY)
-    lo, hi = built.mesh.bounds if len(built.mesh.faces) else (np.zeros(3), np.zeros(3))
-    tree["bb"] = {f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")}
-    data = numpy_to_buffer_json({"instances": meshes, "shapes": tree})
-    tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":")))
-    tmp.replace(target)
+    view.write(group(built, f"/{root}", root, fr.IDENTITY), built.mesh.bounds, target)
 
 
 def instance_of(view_id: str) -> str:

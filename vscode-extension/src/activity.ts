@@ -42,13 +42,7 @@ export class ActivityWatcher implements vscode.Disposable {
     socket.onopen = () => {
       this.delay = RETRY_MIN_MS;
     };
-    socket.onmessage = (msg: MessageEvent) => {
-      try {
-        this.onBuild(JSON.parse(String(msg.data)) as BuildActivity);
-      } catch {
-        // malformed message: skip it
-      }
-    };
+    socket.onmessage = (msg: MessageEvent) => this.onBuild(JSON.parse(String(msg.data)) as BuildActivity);
     // Node's WebSocket fires only `error`, never `close`, when the connection is refused: either one reconnects, once.
     const reconnect = () => {
       if (this.disposed || this.socket !== socket) return;

@@ -62,11 +62,11 @@ def prompt_hook(config: dict[str, Any], command: str) -> bool:
 def json_file(root: Path, name: str, update: Callable[[dict[str, Any]], bool]) -> bool:
     """Apply ``update`` to the JSON object in ``root/name`` (created if missing); write it if changed."""
     file = root / name
-    config = json.loads(file.read_text()) if file.is_file() else {}
+    config = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
     if not update(config):
         return False
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(json.dumps(config, indent=2) + "\n")
+    file.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return True
 
 
@@ -78,7 +78,7 @@ def codex_config(root: Path, server_url: str) -> bool:
     """Add hitlcad's MCP server to Codex's config.toml and trust ``root``, keeping every other line
     as it is. Returns True when the file was changed."""
     file = codex_config_file()
-    before = file.read_text() if file.is_file() else ""
+    before = file.read_text(encoding="utf-8") if file.is_file() else ""
     doc = tomlkit.parse(before)
     servers = doc.setdefault("mcp_servers", tomlkit.table(is_super_table=True))
     server = servers.setdefault("hitlcad", tomlkit.table())
@@ -90,17 +90,17 @@ def codex_config(root: Path, server_url: str) -> bool:
     if after == before:
         return False
     file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text(after)
+    file.write_text(after, encoding="utf-8")
     return True
 
 
 def status(root: Path) -> AgentSetup:
     def hooked(name: str) -> bool:
         file = root / name
-        return file.is_file() and any(map(_is_ours, _handlers(json.loads(file.read_text()))))
+        return file.is_file() and any(map(_is_ours, _handlers(json.loads(file.read_text(encoding="utf-8")))))
 
     file = codex_config_file()
-    doc = tomlkit.parse(file.read_text()) if file.is_file() else tomlkit.document()
+    doc = tomlkit.parse(file.read_text(encoding="utf-8")) if file.is_file() else tomlkit.document()
     trusted = doc.get("projects", {}).get(str(root), {}).get("trust_level") == "trusted"
     return AgentSetup(
         hooks=hooked(CLAUDE_SETTINGS) and hooked(CODEX_HOOKS),

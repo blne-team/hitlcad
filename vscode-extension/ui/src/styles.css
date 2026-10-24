@@ -835,7 +835,7 @@ details summary {
   inset: 0;
 }
 /* Meshes have no vertices, edges, faces or parts to pick: a click is a point, so the viewer's pick filter does nothing. */
-.cad-stage[data-brep="false"] .tcv_shape_filter {
+.cad-stage[data-exact="false"] .tcv_shape_filter {
   display: none !important;
 }
 .model-size {

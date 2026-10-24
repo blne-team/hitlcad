@@ -265,7 +265,8 @@ class BuildPipeline:
             async with self._component_locks[target.name]:  # two designs may build the same component at once
                 if (
                     report_file.is_file()
-                    and (cached := BuildReport.model_validate_json(report_file.read_text())).status == "succeeded"
+                    and (cached := BuildReport.model_validate_json(report_file.read_text(encoding="utf-8"))).status
+                    == "succeeded"
                 ):
                     report = cached
                 else:
@@ -325,7 +326,7 @@ class BuildPipeline:
         return PartGeometry(
             name=bp.name, spec=spec.design.parts[bp.name], file=outcome.file, backend=spec.design.part_backend(bp.name),
             mesh_file=out_dir / bp.mesh, step_file=out_dir / bp.step if bp.step else None,
-            objects_file=out_dir / bp.objects if bp.objects else None,
+            objects_file=out_dir / bp.objects,
             frames={k: [fr.as_frame(m) for m in v] for k, v in bp.connectors.items()}, catalog=bp.catalog,
             reads=outcome.reads, cached=outcome.cached, valid=bp.valid,
         )  # fmt: skip
@@ -385,12 +386,9 @@ class BuildPipeline:
                 artifacts.append(
                     _artifact(out_dir, part.step_file.relative_to(out_dir).as_posix(), "model/step", "part_exchange")
                 )
-            if part.objects_file:
-                artifacts.append(
-                    _artifact(
-                        out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects"
-                    )
-                )
+            artifacts.append(
+                _artifact(out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects")
+            )
         await asyncio.to_thread(built.mesh.export, out_dir / MESH_FILE)
         artifacts.append(_artifact(out_dir, MESH_FILE, "model/stl", "mesh"))
         if await asyncio.to_thread(assemble.step_assembly, built, out_dir / STEP_FILE):
@@ -494,10 +492,9 @@ def load_built(report: BuildReport, spec: BuildSpec, folder: Path, out_dir: Path
     for pr in report.parts:
         stl = out_dir / "parts" / f"{pr.name}.stl"
         step = out_dir / "parts" / f"{pr.name}.step"
-        glb = out_dir / "parts" / f"{pr.name}.glb"
         parts[pr.name] = PartGeometry(
             name=pr.name, spec=design.parts[pr.name], file=pr.file, backend=pr.backend, mesh_file=stl,
-            step_file=step if step.is_file() else None, objects_file=glb if glb.is_file() else None,
+            step_file=step if step.is_file() else None, objects_file=out_dir / "parts" / f"{pr.name}.glb",
             frames={k: [fr.as_frame(m) for m in c.frames] for k, c in pr.connectors.items()},
             catalog=pr.catalog, reads=pr.reads, cached=pr.cached,
         )  # fmt: skip

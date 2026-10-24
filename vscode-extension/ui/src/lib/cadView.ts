@@ -52,6 +52,26 @@ const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: fals
 /** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
 export const instanceOf = (viewerPath: string): string => viewerPath.replace(/^\/+/, "").split("/").slice(1).join("/");
 
+/**
+ * The ids of a view's exact shapes: B-rep parts, whose faces, edges and vertices are the part's own, numbered
+ * as the server numbers them (it marks them `exact`). A click on one names its component; a click on any
+ * other shape (a mesh) is a point.
+ */
+export function exactShapes(data: unknown): Set<string> {
+  interface Node {
+    id: string;
+    exact?: boolean;
+    parts?: Node[];
+  }
+  const out = new Set<string>();
+  const walk = (node: Node) => {
+    if (node.exact) out.add(node.id);
+    node.parts?.forEach(walk);
+  };
+  walk((data as { shapes: Node }).shapes);
+  return out;
+}
+
 const decode = (data: unknown): Shapes => {
   if (!isInstancedFormat(data)) throw new Error("the server sent a model the viewer cannot read");
   return decodeInstancedFormat(data);
@@ -77,6 +97,7 @@ export class CadView {
   private readonly extent: number;
   private ghost: Three.Group | null = null;
   private readonly rootId: string;
+  private readonly exact: Set<string>;
   private readonly moved = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
   private press: { x: number; y: number } | null = null;
   private canvasSize: { width: number; height: number };
@@ -85,9 +106,9 @@ export class CadView {
     private readonly container: HTMLElement,
     data: unknown,
     dark: boolean,
-    private readonly brep: boolean,
     private readonly onPick: (pick: Pick, additive: boolean) => void,
   ) {
+    this.exact = exactShapes(data);
     const shapes = decode(data);
     this.rootId = shapes.id;
     const bb = shapes.bb;
@@ -242,20 +263,20 @@ export class CadView {
   };
 
   /**
-   * Resolve a click with the viewer's GPU id picker, honouring its All/Vertex/Edge/Face/Solid filter.
-   * Under Solid the picker hits a face and names the part it belongs to (`solidPath`): the pick is that part.
+   * Resolve a click with the viewer's GPU id picker, honouring its All/Vertex/Edge/Face/Solid filter. On an
+   * exact shape the pick names its component; under Solid the picker hits a face and names the part it
+   * belongs to (`solidPath`): the pick is that part. On any other shape it is a point.
    */
   private pick(clientX: number, clientY: number): Pick | null {
     const rect = this.canvas.getBoundingClientRect();
-    const filter = this.brep ? this.display.shapeFilterDropDownMenu.currentFilter.filter((f) => f !== null) : ["face" as const];
+    const filter = this.exact.size ? this.display.shapeFilterDropDownMenu.currentFilter.filter((f) => f !== null) : ["face" as const];
     const hit = this.viewer.idPicker?.pickAt(clientX - rect.left, clientY - rect.top, filter.length ? { topoFilter: filter } : {});
     if (!hit?.point) return null;
     const point = hit.point.toArray();
-    if (!this.brep) return { point, normal: null, component: null };
-    if (filter.includes("solid")) {
-      return hit.info.solidPath ? { point, normal: null, component: { instance: instanceOf(hit.info.solidPath), topo: "solid", index: 0 } } : null;
-    }
     const m = COMPONENT_PATH.exec(hit.info.path);
+    const shape = hit.info.solidPath ?? m?.[1];
+    if (!shape || !this.exact.has(shape)) return { point, normal: null, component: null };
+    if (filter.includes("solid")) return { point, normal: null, component: { instance: instanceOf(shape), topo: "solid", index: 0 } };
     if (!m) return null;
     return { point, normal: null, component: { instance: instanceOf(m[1]!), topo: TOPO[m[2] as keyof typeof TOPO], index: Number(m[3]) } };
   }

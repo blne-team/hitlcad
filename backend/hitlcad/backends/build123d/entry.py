@@ -62,11 +62,14 @@ def _part(
         raise ModelError(f"{what} declares connectors it does not return: {', '.join(missing)}")
     frames = {c: [matrix(v) for v in runtime.as_list(connectors[c])] for c in declared}
     (out / "parts").mkdir(exist_ok=True)
-    step, stl = f"parts/{name}.step", f"parts/{name}.stl"
+    step, stl, glb = f"parts/{name}.step", f"parts/{name}.stl", f"parts/{name}.glb"
     shape.label = name
     build123d.export_step(shape, str(out / step))
     build123d.export_stl(shape, str(out / stl), tolerance=tolerance["linear"], angular_tolerance=tolerance["angular"])
-    return {"name": name, "mesh": stl, "step": step, "connectors": frames, "catalog": catalog,
+    # After the STL, with its tolerances: the glTF reuses that triangulation, adding names and colours
+    build123d.export_gltf(shape, str(out / glb), binary=True, linear_deflection=tolerance["linear"],
+                          angular_deflection=tolerance["angular"])  # fmt: skip
+    return {"name": name, "mesh": stl, "step": step, "objects": glb, "connectors": frames, "catalog": catalog,
             "valid": bool(shape.is_valid)}  # fmt: skip
 
 

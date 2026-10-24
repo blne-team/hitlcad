@@ -18,6 +18,7 @@ from hitlcad.core.address import INTERFACE_PREFIX, End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.events import DesignState
 from hitlcad.core.report import BuildReport, Result, Revision
+from hitlcad.designs.folder import DESIGN_FILE
 
 MARK = {"pass": "✓", "fail": "✗", "unverified": "?"}
 
@@ -26,6 +27,7 @@ MARK = {"pass": "✓", "fail": "✗", "unverified": "?"}
 class Context:
     state: DesignState
     design: DesignSpec | None  # design.json as it is now; None when it does not load
+    design_error: str | None  # why design.json does not load
     revision: Revision | None  # the latest successful build of the configuration explored
     stale: list[str] = field(default_factory=list)  # files changed since that build
     used_by: list[str] = field(default_factory=list)  # names of designs using this one
@@ -112,6 +114,10 @@ class DesignGraph:
             lines.append("  a build is running")
         if s.error:
             lines.append(f"  problem: {s.error}")
+        if self.ctx.design_error:
+            lines.append(
+                f"  ✗ {DESIGN_FILE} does not load, so this is rev {rev.id if rev else '?'}'s: {self.ctx.design_error}"
+            )
         if self.ctx.stale:
             lines.append(f"  stale: changed since rev {rev.id if rev else '?'}: {', '.join(self.ctx.stale)}")
         latest = s.current_revision
@@ -467,7 +473,9 @@ def revision_summary(rev: Revision, scope: list[str] | None = None, limit: int =
             lines.append(f"Log tail:\n{r.log_tail}")
     results = r.results
     if scope:
-        graph = DesignGraph(Context(state=DesignState(id=""), design=rev.spec.design, revision=rev, limit=limit))
+        graph = DesignGraph(
+            Context(state=DesignState(id=""), design=rev.spec.design, design_error=None, revision=rev, limit=limit)
+        )
         results = graph._about(*scope)
         lines.append(f"Scoped to {', '.join(scope)}: {len(results)} of {len(r.results)} results")
     order = {"fail": 0, "unverified": 1, "pass": 2}

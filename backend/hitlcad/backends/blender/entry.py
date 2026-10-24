@@ -17,8 +17,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import runtime  # noqa: E402
 from runtime import ModelError  # noqa: E402
 
+
+def _load_sdk():
+    """`hitlcad.sdk` for model code, as build123d code imports it. It imports nothing, so it loads on its own
+    here; hitlcad's other modules (and its site-packages, built for another Python) stay out of Blender's."""
+    import importlib.util
+    import types
+
+    package = types.ModuleType("hitlcad")
+    package.__path__ = []
+    sys.modules["hitlcad"] = package
+    path = Path(__file__).resolve().parents[2] / "sdk" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("hitlcad.sdk", path)
+    sys.modules["hitlcad.sdk"] = package.sdk = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package.sdk)
+
+
+_load_sdk()
+
 GEOMETRY_TYPES = {"MESH", "CURVE", "SURFACE", "META", "FONT"}
-MM_ROOT = "hitlcad_mm"  # the empty that scales a part's millimetres to glTF's metres
 
 
 def _reset_scene():
@@ -63,17 +80,32 @@ def _select_only(objs):
 
 
 def _export_objects(objs, path):
-    """The part's objects under their names, so a click can say which object it hit, with their materials,
-    whose base colours the view, 3MF and model.blend show. glTF is metres: a root scaled by 1/1000 makes the
-    scene's millimetres come out right. Runs after the STL export, because it reparents the objects."""
-    root = bpy.data.objects.new(MM_ROOT, None)
-    bpy.context.scene.collection.objects.link(root)
-    root.scale = (0.001, 0.001, 0.001)
-    for o in objs:
-        if o.parent is None:
-            o.parent = root
-    _select_only([root, *objs])
-    bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_apply=True)
+    """The part's objects as built, under their names, so a click can say which object it hit, and with their
+    materials, whose base colours the view, 3MF and model.blend show; in glTF's metres. Copies are exported,
+    their modifiers applied and their placement scaled into the mesh: scaling the objects themselves would
+    also scale what their modifiers see (a boolean's other object stays in millimetres)."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    names = [o.name for o in objs]
+    copies = []
+    try:
+        for o, name in zip(objs, names, strict=True):
+            mesh = bpy.data.meshes.new_from_object(o.evaluated_get(depsgraph), preserve_all_data_layers=True,
+                                                   depsgraph=depsgraph)  # fmt: skip
+            mesh.transform(mathutils.Matrix.Scale(0.001, 4) @ o.matrix_world)
+            for i, slot in enumerate(o.material_slots):  # the materials it shows, its object's own ones included
+                mesh.materials[i] = slot.material
+            o.name = f"{name} (built)"
+            copies.append(bpy.data.objects.new(name, mesh))
+            bpy.context.scene.collection.objects.link(copies[-1])
+        _select_only(copies)
+        bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_apply=False)
+    finally:
+        for copy in copies:
+            mesh = copy.data
+            bpy.data.objects.remove(copy)
+            bpy.data.meshes.remove(mesh)
+        for o, name in zip(objs, names, strict=True):
+            o.name = name
 
 
 def _part(file, name, value, declared, out):
@@ -90,7 +122,9 @@ def _part(file, name, value, declared, out):
     stl = f"parts/{name}.stl"
     _select_only(objs)
     bpy.ops.wm.stl_export(filepath=str(out / stl), export_selected_objects=True, apply_modifiers=True)
-    return {"name": name, "mesh": stl, "connectors": frames}, objs
+    glb = f"parts/{name}.glb"
+    _export_objects(objs, str(out / glb))
+    return {"name": name, "mesh": stl, "objects": glb, "connectors": frames}
 
 
 def parts(rt, job):
@@ -106,10 +140,7 @@ def parts(rt, job):
                                  f"declares {', '.join(expected)} in it")  # fmt: skip
             out = Path(job["out"])
             built = [_part(file, name, result[name], expected[name], out) for name in expected]
-            for part, objs in built:  # after every STL: the glTF export reparents objects
-                part["objects"] = f"parts/{part['name']}.glb"
-                _export_objects(objs, str(out / part["objects"]))
-            files.append({"file": file, "reads": reads.as_json(), "parts": [p for p, _ in built]})
+            files.append({"file": file, "reads": reads.as_json(), "parts": built})
         except Exception as e:
             files.append({"file": file, "error": rt.describe(e)})
     return {"files": files}
@@ -121,20 +152,23 @@ def _collection(name, parent):
     return collection
 
 
-def _import_part(part, collection):
-    """A built part's objects into `collection`, in the part's frame: from its glTF, under their names and with
-    their materials, or from its STL when its backend has no objects (one object, named by the file)."""
+def _import_part(path, collection):
+    """A built part's objects into `collection`, in the part's frame in millimetres, under their names and with
+    their materials. Its glTF is metres, as glTF is, whichever backend wrote it; empties that only group the
+    objects (a build123d compound's) are dissolved."""
     before = set(bpy.data.objects)
-    if part["objects"]:
-        bpy.ops.import_scene.gltf(filepath=part["objects"], import_scene_as_collection=False)
-    else:
-        bpy.ops.wm.stl_import(filepath=part["mesh"])
+    bpy.ops.import_scene.gltf(filepath=path, import_scene_as_collection=False)
     new = [o for o in bpy.data.objects if o not in before]
-    for root in [o for o in new if o.parent is None and o.name.startswith(MM_ROOT)]:
-        for child in root.children:
-            child.parent = None  # keeps its transform within the root: the part's frame, in millimetres
-        new.remove(root)
-        bpy.data.objects.remove(root)
+    for top in [o for o in new if o.parent is None]:
+        top.matrix_world = mathutils.Matrix.Scale(1000, 4) @ top.matrix_world
+    bpy.context.view_layer.update()
+    for empty in [o for o in new if o.type == "EMPTY" and o.children]:
+        for child in empty.children:
+            world = child.matrix_world.copy()
+            child.parent = None
+            child.matrix_world = world
+        new.remove(empty)
+        bpy.data.objects.remove(empty)
     for o in new:
         for c in o.users_collection:
             c.objects.unlink(o)
@@ -164,9 +198,9 @@ def assembly(rt, job):
 
     def design(node, path, placed):
         sources = {}
-        for name, part in node["parts"].items():
+        for name, objects in node["parts"].items():
             sources[name] = _collection(path + name, library)
-            _import_part(part, sources[name])
+            _import_part(objects, sources[name])
         for name, child in node["components"].items():
             sources[name] = design(child, f"{path}{name}/", _collection(path + name, library))
         for instance in node["instances"]:

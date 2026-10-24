@@ -49,7 +49,7 @@ class BlenderWorkbenchRenderer:
         if result.returncode != 0 or not meta_file.is_file():
             (out_dir / "render.log").write_text(result.output, encoding="utf-8")
             return None
-        views = json.loads(meta_file.read_text())["views"]
+        views = json.loads(meta_file.read_text(encoding="utf-8"))["views"]
         sheet = compose_sheet([(v["name"], work / v["file"]) for v in views], self.size, metrics)
         target = out_dir / PREVIEW_FILE
         sheet.save(target, optimize=True)

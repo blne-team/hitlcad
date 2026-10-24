@@ -74,7 +74,7 @@ async def test_model_files_for_the_file_viewer(api: httpx.AsyncClient, tmp_path:
     view = await api.get("/api/files/cad", params={"path": str(stl)})
     assert view.status_code == 200 and view.json()["shapes"]["bb"]["zmax"] == pytest.approx(15)
     picked = await api.post("/api/files/describe", json={"path": str(stl), "point": [5, 0, 0]})
-    assert picked.json()["label"].startswith("Point on body 1 of 1")
+    assert picked.json()["label"].startswith("Point on cube at")
     assert (await api.get("/api/files/cad", params={"path": str(tmp_path / "a.txt")})).status_code == 404
 
 

@@ -29,7 +29,7 @@ test("STL picks are points on the mesh, with no pick filter to offer", async ({ 
   await viewerReady(page);
   await expect(page.locator(".tcv_shape_filter")).toBeHidden();
   await clickModel(page, 0.5, 0.42);
-  await expect(items(page).first()).toContainText("Point on body 1 of 1");
+  await expect(items(page).first()).toContainText("Point on mesh at");
 });
 
 test("the viewer and its menus fit the panel at any width", async ({ page }) => {

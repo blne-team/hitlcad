@@ -74,7 +74,7 @@ def main():
         scene.render.filepath = os.path.join(os.getcwd(), f"view_{name}.png")
         bpy.ops.render.render(write_still=True)
         meta["views"].append({"name": name, "file": f"view_{name}.png"})
-    with open("views.json", "w") as f:
+    with open("views.json", "w", encoding="utf-8") as f:
         json.dump(meta, f)
 
 

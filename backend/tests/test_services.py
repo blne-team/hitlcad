@@ -27,7 +27,7 @@ def face_index(shape, test) -> int:
 async def test_a_new_design_is_scaffolded_and_waits_for_parts(core: HitlCad, tmp_path: Path) -> None:
     state, created = core.designs.open(tmp_path / "new", "build123d", "New")
     assert created == ["design.json", "interfaces.py", "assembly.py", "parts/.gitkeep"]
-    assert json.loads((tmp_path / "new" / "design.json").read_text())["hitlcad"] == 2
+    assert json.loads((tmp_path / "new" / "design.json").read_text(encoding="utf-8"))["hitlcad"] == 2
     with pytest.raises(ValueError, match="declares no parts yet"):
         await core.builds.build(state.id)
     assert await core.builds.rebuild(state.id) is None
@@ -38,7 +38,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     state, _ = core.designs.open(folder)
     rev = await core.builds.build(state.id)
     built = core.feedback.built(state.id, rev)
-    lid = built.parts["lid"].shape
+    lid = built.parts["lid"].features.exact()
     top = face_index(lid, lambda f: f.is_planar and f.normal_at().Z > 0.99)
     hole = face_index(lid, lambda f: f.geom_type.name == "CYLINDER")
     (item,) = await core.feedback.describe_picks(state.id, None, [Pick(point=(0, 0, 24), component=ComponentRef(
@@ -52,7 +52,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     assert carried.revision == rebuilt.id and carried.point[2] == pytest.approx(26)
     new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].features, carried.component)
     assert new_top.is_planar and new_top.normal_at().Z > 0.99
-    saved = json.loads((folder / "design.json").read_text())
+    saved = json.loads((folder / "design.json").read_text(encoding="utf-8"))
     assert next(p["value"] for p in saved["parameters"] if p["name"] == "lid_t") == 6
 
 
@@ -76,9 +76,12 @@ async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad,
     )
     assert "lid.screws" in graph.explore("lid.screws") and "screw[2]" in graph.explore("screw[2]")
     (folder / "interfaces.py").write_text(
-        (folder / "interfaces.py").read_text() + "\n\ndef extra(p, i):\n    return 1\n"
+        (folder / "interfaces.py").read_text(encoding="utf-8") + "\n\ndef extra(p, i):\n    return 1\n",
+        encoding="utf-8",
     )
     assert "stale: changed since rev 1: interfaces.py" in core.explore.graph(state.id).explore()
+    (folder / "design.json").write_text("{", encoding="utf-8")  # broken mid-edit: the graph says so, not rev 1
+    assert "✗ design.json does not load, so this is rev 1's:" in core.explore.graph(state.id).explore()
     assert graph.structure()["nodes"][0] == {
         "id": "base",
         "kind": "made",
@@ -134,7 +137,7 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
 def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp_path: Path) -> None:
     written = init_project(tmp_path / "project", "http://x", "python", core.registry.all(), hooks=False, codex=False)
     assert ".claude/skills/hitlcad/" in written and ".agents/skills/hitlcad-build123d/" in written
-    skill = (tmp_path / "project" / ".claude/skills/hitlcad/SKILL.md").read_text()
+    skill = (tmp_path / "project" / ".claude/skills/hitlcad/SKILL.md").read_text(encoding="utf-8")
     for generated in (
         '"kind": "gear"',
         '"type": "cylindrical"',
@@ -145,5 +148,5 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
     ):
         assert generated in skill
     assert "$" not in skill.replace("$(", "")
-    guide = (tmp_path / "project" / ".claude/skills/hitlcad-build123d/SKILL.md").read_text()
+    guide = (tmp_path / "project" / ".claude/skills/hitlcad-build123d/SKILL.md").read_text(encoding="utf-8")
     assert "def build(p, i)" in guide and "frames(" in guide

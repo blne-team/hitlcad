@@ -1,25 +1,31 @@
-"""Loose model files as three-cad-viewer input (its instanced format), in mm, Z up: the file viewer. A
-build's own view is written by `build.assemble` from its parts.
+"""The 3D view (three-cad-viewer's instanced format, mm, Z up), and model files as parts.
 
-STEP keeps its B-rep topology: part `/asm/block` carries `faces_i`, `edges_i` and `vertices_i`, which are
-`faces()[i]`, `edges()[i]` and `vertices()[i]` of that part in build123d, so `component` maps a pick in
-the viewer straight back to the model. Meshes become one part per mesh with a single face, and their
-crease and boundary lines as edges, in the colour their file gives them.
+A build's view (`build.assemble.write_view`) and a loose model file's (the file viewer) are written the
+same way: each part tessellated once through its `Features` and drawn per instance at its place. A
+B-rep part is one shape whose `faces_i`, `edges_i` and `vertices_i` are `faces()[i]`, `edges()[i]` and
+`vertices()[i]` of the part, so a pick maps straight back to the model; a mesh part is one shape per
+colour, each one face with its crease and boundary lines as edges. A loose model file opens as parts the
+way a build's are: a STEP file's parts with their B-rep, a mesh file as one part of named objects.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from hitlcad.core import frames as fr
 
 if TYPE_CHECKING:
     import trimesh
     from build123d import Shape
 
-    from hitlcad.core.types import ComponentRef
+    from hitlcad.analysis.features import Features
 
 VIEWABLE = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".step", ".stp"}
 BREP = {".step", ".stp"}
@@ -27,27 +33,10 @@ CREASE_DEG = 30.0  # mesh edges sharper than this are drawn as lines and shaded 
 MESH_COLOR = "#e8b024"  # ocp-tessellate's default part colour, so meshes and STEP files look alike
 OTHER_SURFACE, OTHER_CURVE = 10, 8  # GeomAbs ordinals the viewer shows as "Other"
 TOPO_LISTS = {"face": "faces", "edge": "edges", "vertex": "vertices"}
+IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 
 
-def write_view(source: Path, target: Path) -> None:
-    """Tessellate a loose model file (STEP or any mesh) into `target` for the file viewer."""
-    data = (
-        brep_view(load_step(source), source.stem)
-        if source.suffix.lower() in BREP
-        else mesh_view(load_mesh(source), source.stem)
-    )
-    tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":")))
-    tmp.replace(target)
-
-
-def cached_view(source: Path, cache_dir: Path) -> Path:
-    """The view of a loose model file, cached by its content."""
-    target = cache_dir / f"{hashlib.sha256(source.read_bytes()).hexdigest()[:24]}.json"
-    if not target.is_file():
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        write_view(source, target)
-    return target
+# ---------------------------------------------------------------------------------------------- files
 
 
 def load_step(path: Path) -> Shape:
@@ -58,7 +47,6 @@ def load_step(path: Path) -> Shape:
 
 def load_mesh(path: Path) -> trimesh.Scene:
     """Any mesh file as a scene in mm, Z up. glTF is metres, Y up by definition; the rest are taken as CAD units."""
-    import numpy as np
     import trimesh
 
     scene = trimesh.load(path, force="scene")
@@ -68,30 +56,91 @@ def load_mesh(path: Path) -> trimesh.Scene:
     return scene
 
 
-# ---------------------------------------------------------------------------------------------- B-rep
+@dataclass(frozen=True)
+class ObjectMesh:
+    """One mesh of a named object, in one material and colour (sRGB hex; None when its file gives none)."""
+
+    name: str
+    material: str | None
+    color: str | None
+    mesh: trimesh.Trimesh
 
 
-def _group(shape: Shape, name: str) -> tuple[Any, list[dict[str, Any]]]:
-    from ocp_tessellate.convert import to_ocpgroup
+def object_meshes(scene: trimesh.Scene) -> list[ObjectMesh]:
+    """A scene's meshes, placed, by object. glTF splits an object with several materials into one mesh per
+    material, under a node named after the object."""
+    import trimesh
 
-    return to_ocpgroup(shape, names=[name])
+    out = []
+    for node in scene.graph.nodes_geometry:
+        transform, geometry = scene.graph[node]
+        mesh = scene.geometry[geometry]
+        if not isinstance(mesh, trimesh.Trimesh) or not len(mesh.faces):
+            continue
+        name = scene.graph.transforms.parents[node] if mesh.metadata.get("from_gltf_primitive") else node
+        material = getattr(mesh.visual, "material", None)
+        out.append(ObjectMesh(str(name), getattr(material, "name", None), _color(mesh),
+                              mesh.copy().apply_transform(transform)))  # fmt: skip
+    return out
 
 
-def brep_view(shape: Shape, name: str) -> dict[str, Any]:
-    from ocp_tessellate.convert import tessellate_group
-    from ocp_tessellate.utils import numpy_to_buffer_json
+def _color(mesh: trimesh.Trimesh) -> str | None:
+    """A mesh's colour as sRGB hex: its glTF material's base colour (linear in glTF, and white when the file
+    leaves it out), or the colour its faces or vertices carry (3MF, PLY); None when its file gives it none."""
+    from trimesh.visual.color import linear_to_srgb
+    from trimesh.visual.material import PBRMaterial
 
-    group, instances = _group(shape, name)
-    meshed, shapes, _ = tessellate_group(group, instances)
-    return numpy_to_buffer_json({"instances": meshed, "shapes": shapes})
+    material = getattr(mesh.visual, "material", None)
+    if isinstance(material, PBRMaterial):
+        factor = material.baseColorFactor
+        rgb = np.ones(3) if factor is None else linear_to_srgb(factor[:3] / 255)
+    elif mesh.visual.kind in ("face", "vertex"):
+        rgb = mesh.visual.main_color[:3] / 255
+    else:
+        return None
+    return "#" + "".join(f"{v:02x}" for v in np.round(np.asarray(rgb) * 255).astype(int))
 
 
-def parts(shape: Shape, name: str) -> dict[str, Shape]:
-    """Each part the viewer shows, by its path (e.g. '/asm/block'), placed in model space."""
+def geometry(objects: list[ObjectMesh]) -> trimesh.Trimesh:
+    """Objects' meshes as one triangle mesh: their vertices merged (glTF repeats them where normals differ),
+    and the triangles that merging collapses dropped, as the analyses' meshes are."""
+    import trimesh
+
+    whole = trimesh.util.concatenate([trimesh.Trimesh(o.mesh.vertices, o.mesh.faces, process=False) for o in objects])
+    mesh = trimesh.Trimesh(whole.vertices, whole.faces)
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.remove_unreferenced_vertices()
+    return mesh
+
+
+def open_model(path: Path) -> list[tuple[str, Features]]:
+    """A loose model file as its parts, placed, by viewer id: a STEP file's parts (e.g. '/asm/block'), or a
+    mesh file as one part of its objects."""
+    from hitlcad.analysis.features import BrepFeatures, MeshFeatures
+
+    if path.suffix.lower() in BREP:  # a STEP file names parts, not objects within them
+        return [(view_id, BrepFeatures(view_id.rsplit("/", 1)[-1], shape, lambda s=shape: _tessellated(s), list))
+                for view_id, shape in _step_parts(load_step(path), path.stem).items()]  # fmt: skip
+    objects = object_meshes(load_mesh(path))
+    if not objects:
+        raise ValueError("no triangle meshes in the file")
+    return [(f"/{path.stem}/{path.stem}", MeshFeatures(path.stem, lambda: geometry(objects), lambda: objects))]
+
+
+def _tessellated(shape: Shape) -> trimesh.Trimesh:
+    import trimesh
+
+    vertices, triangles = shape.tessellate(0.01)
+    return trimesh.Trimesh([(v.X, v.Y, v.Z) for v in vertices], triangles)
+
+
+def _step_parts(shape: Shape, name: str) -> dict[str, Shape]:
+    """Each part of a STEP file, by its viewer id (e.g. '/asm/block'), placed in model space."""
     from build123d import Shape
     from ocp_tessellate.cad_objects import OcpGroup
+    from ocp_tessellate.convert import to_ocpgroup
 
-    group, instances = _group(shape, name)
+    group, instances = to_ocpgroup(shape, names=[name])
     found: dict[str, Shape] = {}
 
     def walk(node: Any, path: str, loc: Any) -> None:
@@ -109,66 +158,107 @@ def parts(shape: Shape, name: str) -> dict[str, Shape]:
     return found
 
 
-def component(shape: Shape, name: str, ref: ComponentRef) -> Shape:
-    """The build123d face, edge, vertex or whole part a viewer pick refers to, placed in model space."""
-    part = parts(shape, name).get(ref.part)
-    if part is None:
-        raise LookupError(f"no part {ref.part}")
-    if ref.topo == "solid":
-        return part
-    items = getattr(part, TOPO_LISTS[ref.topo])()
-    if ref.index >= len(items):
-        raise LookupError(f"{ref.part} has {len(items)} {ref.topo}s, not {ref.index + 1}")
-    return items[ref.index]
+# ---------------------------------------------------------------------------------------------- the view
 
 
-# ---------------------------------------------------------------------------------------------- meshes
+class View:
+    """A 3D view being written: each part tessellated once and drawn per instance."""
+
+    def __init__(self) -> None:
+        self.shapes: list[dict[str, Any]] = []
+        self._refs: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+
+    def part(self, features: Features, view_id: str, name: str, transform: fr.Frame) -> dict[str, Any]:
+        """An instance of a part: one shape, or a group of one per colour, at `transform`."""
+        if id(features) not in self._refs:
+            self._refs[id(features)] = []
+            for shape, template in features.view():
+                self.shapes.append(shape)
+                self._refs[id(features)].append((len(self.shapes) - 1, template))
+        drawn = self._refs[id(features)]
+        if len(drawn) > 1:
+            leaves = [{**t, "id": f"{view_id}/{t['name']}", "shape": {"ref": ref}} for ref, t in drawn]
+            return group(view_id, name, leaves, transform)
+        ((ref, template),) = drawn
+        # A shape's loc places it in its part (ocp-tessellate's B-rep shapes sit at their solids' placement);
+        # the instance places the part.
+        return {**template, "id": view_id, "name": name, "shape": {"ref": ref},
+                "loc": _loc(transform @ _frame(template["loc"]))}  # fmt: skip
+
+    def write(self, tree: dict[str, Any], bounds: np.ndarray, target: Path) -> None:
+        from ocp_tessellate.utils import numpy_to_buffer_json
+
+        (lo, hi) = bounds
+        tree["bb"] = {
+            f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")
+        }
+        data = numpy_to_buffer_json({"instances": self.shapes, "shapes": tree})
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(target)
 
 
-def meshes(scene: trimesh.Scene) -> Iterator[tuple[str, trimesh.Trimesh]]:
-    """Each triangle mesh of a scene, placed, by its node."""
+def group(view_id: str, name: str, parts: list[dict[str, Any]], transform: fr.Frame = fr.IDENTITY) -> dict[str, Any]:
+    return {"version": 3, "parts": parts, "loc": _loc(transform), "name": name, "id": view_id, "normal_len": 0}
+
+
+def leaves(node: dict[str, Any]) -> list[dict[str, Any]]:
+    if "parts" in node:
+        return [leaf for child in node["parts"] for leaf in leaves(child)]
+    return [node]
+
+
+def write_view(source: Path, target: Path) -> None:
+    """A loose model file's view, for the file viewer."""
+    view, parts = View(), open_model(source)
+    tree = group(
+        f"/{source.stem}", source.stem, [view.part(f, vid, vid.rsplit("/", 1)[-1], fr.IDENTITY) for vid, f in parts]
+    )
+    corners = np.vstack([f.bounds() for _, f in parts])
+    view.write(tree, np.array([corners.min(axis=0), corners.max(axis=0)]), target)
+
+
+def cached_view(source: Path, cache_dir: Path) -> Path:
+    """The view of a loose model file, cached by its content."""
+    target = cache_dir / f"{hashlib.sha256(source.read_bytes()).hexdigest()[:24]}.json"
+    if not target.is_file():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        write_view(source, target)
+    return target
+
+
+def quaternion(m: fr.Frame) -> tuple[float, float, float, float]:
+    """(x, y, z, w) of a rotation matrix, by Shepperd's method: stable for every rotation, half turns included."""
+    r = m[:3, :3]
+    trace = r[0, 0] + r[1, 1] + r[2, 2]
+    if trace > 0:
+        s = math.sqrt(trace + 1) * 2
+        return ((r[2, 1] - r[1, 2]) / s, (r[0, 2] - r[2, 0]) / s, (r[1, 0] - r[0, 1]) / s, s / 4)
+    if r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
+        s = math.sqrt(1 + r[0, 0] - r[1, 1] - r[2, 2]) * 2
+        return (s / 4, (r[0, 1] + r[1, 0]) / s, (r[0, 2] + r[2, 0]) / s, (r[2, 1] - r[1, 2]) / s)
+    if r[1, 1] > r[2, 2]:
+        s = math.sqrt(1 + r[1, 1] - r[0, 0] - r[2, 2]) * 2
+        return ((r[0, 1] + r[1, 0]) / s, s / 4, (r[1, 2] + r[2, 1]) / s, (r[0, 2] - r[2, 0]) / s)
+    s = math.sqrt(1 + r[2, 2] - r[0, 0] - r[1, 1]) * 2
+    return ((r[0, 2] + r[2, 0]) / s, (r[1, 2] + r[2, 1]) / s, s / 4, (r[1, 0] - r[0, 1]) / s)
+
+
+def _loc(m: fr.Frame) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    return (tuple(float(v) for v in m[:3, 3]), tuple(float(v) for v in quaternion(m)))  # type: ignore[return-value]
+
+
+def _frame(loc: Any) -> fr.Frame:
+    """The matrix of a view `loc`: a position and an (x, y, z, w) quaternion."""
     import trimesh
 
-    for node in scene.graph.nodes_geometry:
-        transform, geometry = scene.graph[node]
-        mesh = scene.geometry[geometry]
-        if isinstance(mesh, trimesh.Trimesh) and len(mesh.faces):
-            yield str(node), mesh.copy().apply_transform(transform)
+    position, (x, y, z, w) = loc
+    m = trimesh.transformations.quaternion_matrix((w, x, y, z))
+    m[:3, 3] = position
+    return m
 
 
-def object_of(scene: trimesh.Scene, node: str) -> str:
-    """The object a mesh node belongs to: glTF splits an object with several materials into one mesh per
-    material, under a node named after the object."""
-    split = scene.geometry[scene.graph[node][1]].metadata.get("from_gltf_primitive")
-    return scene.graph.transforms.parents[node] if split else node
-
-
-def objects(scene: trimesh.Scene) -> list[tuple[str, trimesh.Trimesh]]:
-    """Each object of a scene as one mesh (its geometry), placed, by its name."""
-    import trimesh
-
-    found: dict[str, list[trimesh.Trimesh]] = {}
-    for node, mesh in meshes(scene):
-        found.setdefault(object_of(scene, node), []).append(trimesh.Trimesh(mesh.vertices, mesh.faces, process=False))
-    return [(name, trimesh.util.concatenate(parts)) for name, parts in found.items()]
-
-
-def color(mesh: trimesh.Trimesh) -> str | None:
-    """A mesh's colour as sRGB hex: its glTF material's base colour (linear in glTF, and white when the file
-    leaves it out), or the colour its faces or vertices carry (3MF, PLY); None when its file gives it none."""
-    import numpy as np
-    from trimesh.visual.color import linear_to_srgb
-    from trimesh.visual.material import PBRMaterial
-
-    material = getattr(mesh.visual, "material", None)
-    if isinstance(material, PBRMaterial):
-        factor = material.baseColorFactor
-        rgb = np.ones(3) if factor is None else linear_to_srgb(factor[:3] / 255)
-    elif mesh.visual.kind in ("face", "vertex"):
-        rgb = mesh.visual.main_color[:3] / 255
-    else:
-        return None
-    return "#" + "".join(f"{v:02x}" for v in np.round(np.asarray(rgb) * 255).astype(int))
+# ---------------------------------------------------------------------------------------------- mesh shapes
 
 
 def _mesh_shape(mesh: trimesh.Trimesh) -> dict[str, Any]:
@@ -201,38 +291,10 @@ def _mesh_shape(mesh: trimesh.Trimesh) -> dict[str, Any]:
     }
 
 
-IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-
-
-def mesh_entry(
-    mesh: trimesh.Trimesh, view_id: str, name: str, color: str | None
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """A mesh tessellated for the viewer, and its entry in the view's tree (shape ref 0)."""
+def mesh_entry(mesh: trimesh.Trimesh, name: str, color: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A mesh tessellated for the viewer, and its entry template."""
     return _mesh_shape(mesh), {
-        "id": view_id, "type": "shapes", "subtype": "solid", "name": name, "shape": {"ref": 0}, "state": [1, 1],
-        "color": color or MESH_COLOR, "alpha": 1.0, "material": None, "normalize_uvs": True, "texture": None,
-        "loc": IDENTITY, "renderback": False, "accuracy": None, "bb": None,
+        "type": "shapes", "subtype": "solid", "name": name, "state": [1, 1], "color": color or MESH_COLOR,
+        "alpha": 1.0, "material": None, "normalize_uvs": True, "texture": None, "loc": IDENTITY, "renderback": False,
+        "accuracy": None, "bb": None,
     }  # fmt: skip
-
-
-def mesh_view_parts(scene: trimesh.Scene, name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Each mesh of a scene tessellated for the viewer, and its entry in the view's tree."""
-    instances, parts = [], []
-    for i, (node, mesh) in enumerate(meshes(scene)):
-        node = node.replace("/", "_")
-        shape, entry = mesh_entry(mesh, f"/{name}/{node}", node, color(mesh))
-        instances.append(shape)
-        parts.append({**entry, "shape": {"ref": i}})
-    return instances, parts
-
-
-def mesh_view(scene: trimesh.Scene, name: str) -> dict[str, Any]:
-    from ocp_tessellate.utils import numpy_to_buffer_json
-
-    instances, parts = mesh_view_parts(scene, name)
-    if not parts:
-        raise ValueError("no triangle meshes in the file")
-    lo, hi = scene.bounds
-    bb = {f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")}
-    shapes = {"version": 3, "loc": IDENTITY, "name": name, "id": f"/{name}", "normal_len": 0, "bb": bb, "parts": parts}
-    return numpy_to_buffer_json({"instances": instances, "shapes": shapes})

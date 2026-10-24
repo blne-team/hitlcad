@@ -127,6 +127,9 @@ that makes a part's connector frame face a target frame, as a `rigid` mate check
   subtract with `mode=Mode.SUBTRACT`. Algebra mode is fine too: `Box(10, 10, 5) - Cylinder(2, 5)`.
 - Threads, text and lofts are slow or fragile; prefer simplified geometry unless required.
 
-The build exports each part in its own frame (`build/parts/<part>.step` and `.stl`), the assembly
-(`build/model.step`, `mesh.stl`) and the 3D view; connector features, fits and holes are measured on
-the B-rep.
+A shape's `color` (`part.color = Color("orange")`) and the `label` of each solid in a compound carry
+into the 3D view, the 3MF files and a mixed design's `model.blend`.
+
+The build exports each part in its own frame (`build/parts/<part>.step`, `.stl`, and `.glb` with its
+labels and colours), the assembly (`build/model.step`, `mesh.stl`) and the 3D view; connector features,
+fits and holes are measured on the B-rep.

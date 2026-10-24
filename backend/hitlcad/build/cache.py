@@ -59,10 +59,10 @@ class PartCache:
         index = self._index(scope, file)
         if not index.is_file():
             return None
-        for raw in json.loads(index.read_text()):
+        for raw in json.loads(index.read_text(encoding="utf-8")):
             key = self.key(file, declared, inputs, Reads.model_validate(raw))
             if key and (self.root / key / OUTCOME).is_file():
-                return key, FileOutcome.model_validate_json((self.root / key / OUTCOME).read_text())
+                return key, FileOutcome.model_validate_json((self.root / key / OUTCOME).read_text(encoding="utf-8"))
         return None
 
     def store(
@@ -79,15 +79,15 @@ class PartCache:
                 (staging / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(work / rel, staging / rel)
         staging.mkdir(parents=True, exist_ok=True)
-        (staging / OUTCOME).write_text(outcome.model_dump_json())
+        (staging / OUTCOME).write_text(outcome.model_dump_json(), encoding="utf-8")
         shutil.rmtree(target, ignore_errors=True)
         staging.rename(target)
         index = self._index(scope, outcome.file)
-        seen = json.loads(index.read_text()) if index.is_file() else []
+        seen = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else []
         reads = outcome.reads.model_dump()
         if reads not in seen:
             index.parent.mkdir(parents=True, exist_ok=True)
-            index.write_text(json.dumps([*seen, reads]))
+            index.write_text(json.dumps([*seen, reads]), encoding="utf-8")
 
     def restore(self, key: str, outcome: FileOutcome, out: Path) -> None:
         for part in outcome.parts:

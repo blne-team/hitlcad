@@ -148,8 +148,8 @@ class BuildService:
             self.designs.sync(design_id)
             try:
                 changed = DesignFolder(Path(path)).spec(self.settings.tolerances).key != self._built.get(design_id)
-            except (OSError, ValueError):  # invalid files: the watcher builds once they are saved
-                continue
+            except (OSError, ValueError):  # invalid files: the build reports them in the panel
+                changed = True
             if changed:
                 self.schedule_build(design_id)
 

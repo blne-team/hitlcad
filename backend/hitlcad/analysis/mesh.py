@@ -11,14 +11,42 @@ from hitlcad.core.report import MeshMetrics
 
 
 def load_mesh(path: Path) -> trimesh.Trimesh:
-    """A mesh file, its vertices merged and its zero-area triangles (a mesher's apexes and seams) dropped."""
+    """A mesh file, its vertices merged and its zero-area triangles (a mesher's apexes and seams) dropped, as
+    the solid it is (`solid`)."""
     mesh = trimesh.load(path, force="mesh", process=True)
     if not isinstance(mesh, trimesh.Trimesh):
         raise ValueError(f"{path.name} did not load as a triangle mesh")
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
     mesh.merge_vertices()
-    return mesh
+    return solid(mesh)
+
+
+def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Closed shells that overlap as the one solid they make: a part modelled as several objects (a Blender
+    figure's head, eyes and spots) would otherwise measure their buried surfaces as walls and their shared
+    volume twice. Shells facing inwards are hollows, cut from it. Shells that do not touch stay apart."""
+    import manifold3d
+
+    shells = mesh.split(only_watertight=False)
+    if len(shells) < 2 or not all(s.is_watertight for s in shells) or not _overlapping([s.bounds for s in shells]):
+        return mesh
+
+    def body(shell: trimesh.Trimesh) -> manifold3d.Manifold:
+        faces = shell.faces if shell.volume > 0 else shell.faces[:, ::-1]
+        return manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(shell.vertices, dtype=np.float32),
+                                                   tri_verts=np.asarray(faces, dtype=np.uint32)))  # fmt: skip
+
+    add = manifold3d.Manifold.batch_boolean([body(s) for s in shells if s.volume > 0], manifold3d.OpType.Add)
+    hollows = [body(s) for s in shells if s.volume < 0]
+    whole = add - manifold3d.Manifold.batch_boolean(hollows, manifold3d.OpType.Add) if hollows else add
+    out = whole.to_mesh()
+    return trimesh.Trimesh(out.vert_properties[:, :3], out.tri_verts)
+
+
+def _overlapping(bounds: list[np.ndarray]) -> bool:
+    """Whether any two bounding boxes overlap."""
+    return any(np.all(a[0] < b[1]) and np.all(b[0] < a[1]) for i, a in enumerate(bounds) for b in bounds[i + 1 :])
 
 
 def measure(mesh: trimesh.Trimesh) -> MeshMetrics:

@@ -72,7 +72,11 @@ def install(root: Path, backends: Iterable[CADBackend]) -> list[str]:
         for name, skill in skills.items():
             target = folder / name
             current = (
-                {p.relative_to(target).as_posix(): p.read_text() for p in target.rglob("*") if p.is_file()}
+                {
+                    p.relative_to(target).as_posix(): p.read_text(encoding="utf-8")
+                    for p in target.rglob("*")
+                    if p.is_file()
+                }
                 if target.is_dir()
                 else {}
             )
@@ -81,6 +85,6 @@ def install(root: Path, backends: Iterable[CADBackend]) -> list[str]:
             shutil.rmtree(target, ignore_errors=True)
             for rel, text in skill.items():
                 (target / rel).parent.mkdir(parents=True, exist_ok=True)
-                (target / rel).write_text(text)
+                (target / rel).write_text(text, encoding="utf-8")
             changed.append(f"{base}/{name}/")
     return changed

@@ -6,6 +6,7 @@ and the human see why.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,11 @@ WALL_EXIT_DEG = 60
 
 def _fmt(p: Any) -> str:
     return "(" + ", ".join(f"{c:.1f}" for c in p) + ")"
+
+
+# Even sampling places fewer points than asked on some parts, which measures their walls as well; trimesh
+# would warn about it on every build.
+logging.getLogger("trimesh.sample").setLevel(logging.ERROR)
 
 
 def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> tuple[np.ndarray, np.ndarray]:
@@ -114,9 +120,11 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
     footprint = (x1 - x0) * (y1 - y0)
     share = contact / footprint if footprint > 0 else 0.0
     ok = share >= rules.min_bed_contact_share
+    lowest = mesh.vertices[np.argmin(mesh.vertices[:, 2])]
     return ProcessFinding(name="fdm_bed_contact", passed=ok,
                           detail=f"{contact:.0f} mm² on the bed, {share:.0%} of the footprint"
-                                 + ("" if ok else "; it may detach: add a flat base or a brim"))  # fmt: skip
+                                 + ("" if ok else f"; it may detach: the part stands on its lowest point "
+                                    f"{_fmt(lowest)}: give it a flat base there, or a brim"))  # fmt: skip
 
 
 # --------------------------------------------------------------------------- resin

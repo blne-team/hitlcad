@@ -43,7 +43,8 @@ def adapters(tmp_path_factory: pytest.TempPathFactory) -> tuple[BrepFeatures, Me
             Cylinder(1, 6, mode=Mode.SUBTRACT)
     stl = Path(tmp_path_factory.mktemp("part")) / "part.stl"
     export_stl(part.part, str(stl), tolerance=0.01, angular_tolerance=0.1)
-    return BrepFeatures(part.part), MeshFeatures(load_mesh(stl), "part")
+    mesh = load_mesh(stl)
+    return BrepFeatures("part", part.part, lambda: mesh, list), MeshFeatures("part", lambda: mesh, list)
 
 
 ROUND = [

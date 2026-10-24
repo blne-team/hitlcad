@@ -11,8 +11,11 @@ part file runs in a fresh, empty scene.
 design.json assigns to the file, each part in its own frame (the way it is made; its lowest point at
 Z=0). `connectors` maps each declared connector to a 4 × 4 `mathutils.Matrix` (or an empty, whose
 world matrix is used), or a list of them for a pattern. A frame's origin sits where the mating
-connector's origin will be, Z out of the part. Meshes are not B-rep: hitlcad checks connector frames
-and placements, and reports hole and shaft sizes and fits as unverified.
+connector's origin will be, Z out of the part. Connectors are measured on the mesh as on a B-rep: a
+`hole` or `shaft` by rays from its axis, a `face` by its flat facets, each to within the mesh's facets
+(reported as ± on the measurement, and allowed for in fits). Give round features that mate enough
+segments for their fit (`vertices=64` on a Ø4 peg is within 0.01 mm); use `frame` only for a datum with
+no feature.
 
 ```python
 import bpy
@@ -28,6 +31,14 @@ def build(p, i):
 ## assembly.py
 
 `def build(p, i)` returns `{part or component name: [Matrix, …]}`: one placement per instance.
+`from hitlcad.sdk import mate_to`: `mate_to(frame_on_part, frame_on_target)` returns the placement that
+makes a part's connector frame face a target frame, as a `rigid` mate checks, on `Matrix` frames.
+
+`interfaces.py` and `lib/` run in Blender's Python too: `mathutils` and numpy are there, and frames
+shared between parts can be values (`Matrix` or 4 × 4 lists).
+
+Figurines and other organic parts print on support: give them `{"process": "fdm", "supports": true}`
+or `{"process": "resin"}`, so their walls and (for resin) sealed hollows are still checked.
 
 Rules:
 - Keep code self-contained: `bpy`, `bmesh`, `mathutils`, the standard library and numpy, plus `lib/`.
@@ -40,7 +51,10 @@ Rules:
   and remove doubles (`bmesh.ops.remove_doubles`).
 - Seed any randomness from a parameter: `random.seed(p["seed"])`.
 - Name every object for what it is (`obj.name = "ear_left"`): when the human clicks the model, you
-  are told the object they hit.
+  are told the object they hit. A part's objects may overlap (eyes set into a head): they are
+  measured as the one solid they make, not as walls where they meet.
+- Split a sculpted shape into parts where the cut meets the surface squarely (through a collar, not
+  along its edge): a flat cut that grazes a curved surface leaves a feather edge too thin to print.
 - Keep triangle counts reasonable (< 500k).
 
 Skeleton:

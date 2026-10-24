@@ -1,13 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useDarkScheme } from "../hooks/useScheme";
 import type { Pick } from "../api/types";
-import { type CadBounds, type CadMarker, type CadMotion, CadView } from "../lib/cadView";
+import { type CadBounds, type CadMarker, type CadMotion, CadView, exactShapes } from "../lib/cadView";
 
 interface Props {
   /** A view JSON from the server (/api/files/cad or a revision's view.json). */
   data: unknown;
-  /** STEP-based: clicks resolve to faces, edges, vertices or parts. */
-  brep: boolean;
   /** Clicks place pins: a measure tool that is on is turned off. */
   placing?: boolean;
   markers: CadMarker[];
@@ -35,7 +33,7 @@ export function CadCanvas(props: Props) {
     const now = latest.current;
     let cad: CadView;
     try {
-      cad = new CadView(stage.current, props.data, now.dark, props.brep, (pick, additive) => latest.current.onPick(pick, additive));
+      cad = new CadView(stage.current, props.data, now.dark, (pick, additive) => latest.current.onPick(pick, additive));
       cad.setMarkers(now.markers);
       cad.setGhost(now.ghost ?? null);
       cad.setMotion(now.motion ?? null);
@@ -49,7 +47,7 @@ export function CadCanvas(props: Props) {
       view.current = null;
       cad.dispose();
     };
-  }, [props.data, props.brep]);
+  }, [props.data]);
 
   useEffect(() => view.current?.setDark(dark), [dark]);
   useEffect(() => {
@@ -59,5 +57,6 @@ export function CadCanvas(props: Props) {
   useEffect(() => view.current?.setGhost(props.ghost ?? null), [props.ghost]);
   useEffect(() => view.current?.setMotion(props.motion ?? null), [props.motion]);
 
-  return <div ref={stage} className="cad-stage" data-brep={props.brep} />;
+  // Without an exact shape there are no faces, edges or vertices to filter picks by
+  return <div ref={stage} className="cad-stage" data-exact={exactShapes(props.data).size > 0} />;
 }

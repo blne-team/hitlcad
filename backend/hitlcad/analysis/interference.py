@@ -8,6 +8,7 @@ import numpy as np
 
 from hitlcad.analysis.base import Context, result
 from hitlcad.analysis.coverage import Link, links, top
+from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.model import Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result
@@ -72,7 +73,7 @@ class Interference:
                 checked += 1
                 try:
                     shared = overlap(ctx, a, fr.IDENTITY, b, fr.IDENTITY)
-                except ValueError as e:  # an open mesh
+                except Unmeasurable as e:  # an open mesh
                     out.append(result(self.name, f"{a.path}+{b.path}", None, f"not measurable: {e}", [a.path, b.path]))
                     continue
                 if shared <= ctx.settings.overlap_mm3:

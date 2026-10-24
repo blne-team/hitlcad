@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import sys
 from collections.abc import AsyncIterator
 from importlib.metadata import version
@@ -31,6 +32,7 @@ from hitlcad.designs import agents, project
 from hitlcad.service.designs import NotFoundError
 
 T = TypeVar("T")
+log = logging.getLogger(__name__)
 
 
 async def _until_gone(socket: WebSocket, queue: asyncio.Queue[T]) -> AsyncIterator[T]:
@@ -317,7 +319,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         source = model_file(path)
         try:
             view = await asyncio.to_thread(cadview.cached_view, source, settings.data_dir / "cache" / "cad")
-        except Exception as e:
+        except Exception as e:  # any file: its reader's error, whatever its kind, is what the panel shows
+            log.exception("could not convert %s", source)
             raise HTTPException(422, f"could not convert {source.name}: {e}") from None
         return FileResponse(view, media_type="application/json")
 
@@ -328,7 +331,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
             return await asyncio.to_thread(
                 selection.describe_file_pick, source, body.point, body.normal, body.component
             )
-        except Exception as e:
+        except (LookupError, ValueError) as e:  # no such part, or a mesh asked for a face
             raise HTTPException(422, f"could not describe the selection: {e}") from None
 
     app.router.routes.extend(mcp_app.routes)  # serves exactly /mcp; lifespan above runs its manager

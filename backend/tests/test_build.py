@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import json
 import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,8 @@ import numpy as np
 import pytest
 import trimesh
 
+from hitlcad.analysis import cadview
 from hitlcad.app import HitlCad
-from hitlcad.build import assemble
 from hitlcad.core.report import BuildReport
 from hitlcad.designs.folder import DesignFolder
 
@@ -34,15 +35,15 @@ def failing(report: BuildReport) -> list[str]:
 
 
 def edit(path: Path, old: str, new: str) -> None:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert old in text, old
-    path.write_text(text.replace(old, new))
+    path.write_text(text.replace(old, new), encoding="utf-8")
 
 
 def edit_json(path: Path, change: Any) -> None:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     change(data)
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path) -> None:
@@ -62,7 +63,7 @@ async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path)
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
     assert len(urdf.findall("link")) == 10 and all(j.get("type") == "fixed" for j in urdf.findall("joint"))
     assert ET.parse(out / "sdf" / "model.sdf").getroot().find("model") is not None
-    view = json.loads((out / "view.json").read_text())
+    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
     leaves = [p["id"] for p in view["shapes"]["parts"]]
     assert "/Enclosure/insert[3]" in leaves and len(view["instances"]) == 4  # tessellated once per part
 
@@ -247,9 +248,10 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
                     {"type": "cylindrical", "a": "plate.socket", "b": "knob.stem", "fit": {"clearance": [0, 0.3]}}
                 ],
             },
-            "parts/plate.py": "from build123d import Box, Cylinder, Location, Align\n\n\ndef build(p, i):\n"
+            "parts/plate.py": "from build123d import Box, Color, Cylinder, Location, Align\n\n\ndef build(p, i):\n"
             "    plate = Box(40, 40, 6, align=(Align.CENTER, Align.CENTER, Align.MIN)) - "
             "Cylinder(2, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))\n"
+            "    plate.color = Color(0, 0.5, 0)\n"
             "    return {'plate': (plate, {'socket': Location((0, 0, 6))})}\n",
             # A sphere with a Ø3.8 stem below it, into the plate's Ø4 hole.
             "parts/knob.py": "import bpy\nfrom mathutils import Matrix\n\n\ndef build(p, i):\n"
@@ -270,8 +272,16 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
     assert mate.status == "pass" and "on the meshes" in mate.detail, mate.detail
     assert {p.name: p.backend for p in report.parts} == {"plate": "build123d", "knob": "blender"}
     assert not (tmp_path / "out" / "model.step").exists()  # an assembly with a mesh part has no B-rep STEP
-    assert (tmp_path / "out" / "parts" / "knob.glb").is_file()
-    assert (tmp_path / "out" / "model.blend").is_file()  # the B-rep plate comes into it from its STL
+    # A B-rep part's colour reaches the view, as a mesh part's does
+    view = json.loads((tmp_path / "out" / "view.json").read_text(encoding="utf-8"))
+    plate = next(leaf for leaf in cadview.leaves(view["shapes"]) if leaf["id"].endswith("/plate"))
+    red, green, blue = (int(plate["color"][i : i + 2], 16) for i in (1, 3, 5))
+    assert green > 0 and red == blue == 0, plate["color"]
+    # Blender assembles both backends' parts from their glTF, each where mesh.stl has it
+    run = subprocess.run([core.settings.blender_binary, "-b", str(tmp_path / "out" / "model.blend"), "--factory-startup",
+                          "-noaudio", "--python-expr", BLEND_CHECK], capture_output=True, text=True, check=True)  # fmt: skip
+    blend = json.loads(next(line for line in run.stdout.splitlines() if line.startswith("BLEND "))[6:])
+    np.testing.assert_allclose(blend["bounds"], trimesh.load(tmp_path / "out" / "mesh.stl").bounds, atol=1e-3)
 
 
 COLOURED_PARTS = """import bpy
@@ -308,6 +318,59 @@ def build(p, i):
             "knob": [Matrix.Translation((-5, 0, 20)), Matrix.Translation((6, 2, 20)) @ Matrix.Rotation(pi / 2, 4, "X")]}
 """
 
+PEG_PARTS = """import bpy
+from mathutils import Matrix
+
+
+def build(p, i):
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(0, 0, 10))
+    block = bpy.context.active_object
+    bpy.ops.mesh.primitive_cylinder_add(radius=2, depth=12, location=(0, 0, 20))
+    socket = block.modifiers.new("socket", "BOOLEAN")  # a Ø4 socket, 6 deep from the top
+    socket.operation, socket.object, socket.solver = "DIFFERENCE", bpy.context.active_object, "EXACT"
+    bpy.ops.mesh.primitive_cylinder_add(radius=p["pin_r"], depth=6, location=(0, 0, 3), vertices=64)
+    return {"base": (block, {"socket": Matrix.Translation((0, 0, 20))}),
+            "pin": (bpy.context.active_object, {"tip": Matrix.Identity(4)})}
+"""
+
+PEG_ASSEMBLY = """from mathutils import Matrix
+
+from hitlcad.sdk import mate_to
+
+
+def build(p, i):
+    return {"base": [Matrix.Identity(4)], "pin": [mate_to(Matrix.Identity(4), Matrix.Translation((0, 0, 20)))]}
+"""
+
+
+@pytest.mark.parametrize(("pin_r", "fits"), [(1.9, True), (2.2, False)])
+async def test_blender_parts_are_measured_and_placed_with_the_sdk(
+    core: HitlCad, tmp_path: Path, pin_r: float, fits: bool
+) -> None:
+    folder = write_design(tmp_path / "peg", {
+        "design.json": {"hitlcad": 2, "name": "Peg", "backend": "blender", "ground": "base",
+                        "parameters": [{"name": "pin_r", "value": pin_r, "min": 1, "max": 3}],
+                        "parts": {"base": {"role": "block", "file": "parts/peg.py", "material": "PLA",
+                                           "connectors": {"socket": {"kind": "hole"}}},
+                                  "pin": {"role": "pin", "file": "parts/peg.py", "material": "PLA",
+                                          "connectors": {"tip": {"kind": "shaft"}}}},
+                        "mates": [{"type": "cylindrical", "a": "base.socket", "b": "pin.tip",
+                                   "fit": {"clearance": [0, 0.3]}}]},
+        "parts/peg.py": PEG_PARTS,
+        "assembly.py": PEG_ASSEMBLY,
+    })  # fmt: skip
+    report = await build(core, folder, tmp_path / "out")
+    assert report.status == "succeeded", report.error
+    socket, tip = (r for r in results(report, "connector"))
+    assert socket.values["diameter"] == pytest.approx(4, abs=0.02) and socket.values["length"] == pytest.approx(
+        6, abs=0.05
+    )
+    assert tip.values["diameter"] == pytest.approx(2 * pin_r, abs=0.02) and "on the mesh" in tip.detail
+    (mate,) = results(report, "mate")
+    assert (mate.status == "pass") is fits, mate.detail
+    assert all(r.status == "pass" for r in results(report, "interference")) is fits
+
+
 # Opens a .blend and prints its collection instances and the world bounds of the geometry they show.
 BLEND_CHECK = """import json
 import bpy
@@ -333,7 +396,6 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     core: HitlCad, tmp_path: Path
 ) -> None:
     import locale
-    import subprocess
     import zipfile
 
     encoding = locale.getpreferredencoding(False)
@@ -350,7 +412,7 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     red, white, blue = "#ff0000", "#ffffff", "#0000ff"
 
     # The view: a part in one colour is one shape at its instance; in two, a group of a shape per colour.
-    view = json.loads((out / "view.json").read_text())
+    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
     nodes = {node["id"]: node for node in view["shapes"]["parts"]}
     assert {leaf["id"]: leaf["color"] for leaf in nodes["/Toy/base"]["parts"]} == {
         "/Toy/base/red": red,
@@ -424,9 +486,9 @@ def build(p, i):
     out = tmp_path / "out"
     report = await build(core, folder, out)
     assert report.status == "succeeded", report.error
-    view = json.loads((out / "view.json").read_text())
+    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
     (leaf,) = view["shapes"]["parts"]
     buffer = view["instances"][leaf["shape"]["ref"]]["vertices"]
     vertices = np.frombuffer(base64.b64decode(buffer["buffer"]), dtype=buffer["dtype"]).reshape(-1, 3)
-    placed = trimesh.transform_points(vertices, assemble._frame(leaf["loc"]))
+    placed = trimesh.transform_points(vertices, cadview._frame(leaf["loc"]))
     np.testing.assert_allclose([placed.min(0), placed.max(0)], trimesh.load(out / "mesh.stl").bounds, atol=1e-3)

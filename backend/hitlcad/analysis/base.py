@@ -34,10 +34,10 @@ class ResultCache:
     def get_or(self, key: str, compute: Callable[[], Any]) -> Any:
         path = self.root / key[:2] / f"{key}.json"
         if path.is_file():
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         value = compute()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value))
+        path.write_text(json.dumps(value), encoding="utf-8")
         return value
 
 

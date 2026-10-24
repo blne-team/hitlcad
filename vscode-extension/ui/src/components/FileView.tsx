@@ -3,17 +3,14 @@ import { api, fileCadUrl } from "../api/client";
 import type { Pick, SelectionItem } from "../api/types";
 import { useSelection } from "../hooks/useSelection";
 import { useViewJson } from "../hooks/useViewJson";
-import type { CadBounds } from "../lib/cadView";
+import { type CadBounds, exactShapes } from "../lib/cadView";
 import { notifyHost, selectionMarker, selectionText } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { SelectionBox } from "./SelectionBox";
 
-const BREP = /\.(step|stp)$/i;
-
 /** Viewer for any model file on the server's machine, which the server converts for three-cad-viewer. */
 export function FileView({ path }: { path: string }) {
   const name = path.split(/[\\/]/).pop() || path;
-  const brep = BREP.test(path);
   const { data, error: fetchError } = useViewJson(fileCadUrl(path));
   const [viewError, setViewError] = useState<string | null>(null);
   const loadError = fetchError ?? viewError;
@@ -58,13 +55,13 @@ export function FileView({ path }: { path: string }) {
       </header>
       <div className="viewport">
         {data !== null && !loadError && (
-          <CadCanvas data={data} brep={brep} markers={markers} onPick={sel.select} onReady={setBounds} onError={setViewError} />
+          <CadCanvas data={data} markers={markers} onPick={sel.select} onReady={setBounds} onError={setViewError} />
         )}
         {data === null && !loadError && <div className="viewport-message">Converting {name}…</div>}
         {loadError && <p className="viewport-message fail">Could not show {name}: {loadError}</p>}
         {data !== null && !loadError && !sel.items.length && (
           <p className="viewport-hint select-hint">
-            {brep ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more.
+            {exactShapes(data).size ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more.
           </p>
         )}
         <SelectionBox items={sel.items} text={sel.text} busy={sel.busy} error={sel.error} onClear={sel.clear} />

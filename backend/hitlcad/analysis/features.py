@@ -1,9 +1,11 @@
 """What hitlcad asks of a part's shape, in its own frame, whatever the part is made of.
 
-Everything that reads a part's geometry asks its `Features`; nothing else looks at what a part is made
-of. Two adapters answer: `BrepFeatures` on its B-rep faces, exactly, and `MeshFeatures` on its triangle
-mesh, to within the mesh's facets, which each measurement reports as its uncertainty. A frame with no
-matching feature fails, so a frame cannot drift away from the geometry it describes. What a
+Everything that reads a part's geometry asks its `Features`, a built part's and a loose model file's
+alike; nothing else looks at what a part is made of. Two adapters answer: `BrepFeatures` on its B-rep
+faces, exactly, and `MeshFeatures` on its triangle mesh, to within the mesh's facets, which each
+measurement reports as its uncertainty. Both know the part's mesh (what bodies, walls and overlaps are
+measured on) and its named objects in their colours (what the view, 3MF and pick names show). A frame
+with no matching feature fails, so a frame cannot drift away from the geometry it describes. What a
 representation cannot answer at all (a mesh has no fillet radii and no faces, edges or vertices to
 number) raises `Unmeasurable`, saying why.
 """
@@ -19,10 +21,14 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
+from hitlcad.analysis import cadview
+from hitlcad.analysis.cadview import ObjectMesh
 from hitlcad.core import frames as fr
 from hitlcad.core.structure import Measured, Tolerances
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import trimesh
 
 FULL_CIRCLE = 0.95  # of 2π: a cylindrical cut that goes this far round is a hole, not a fillet or slot end
@@ -49,8 +55,62 @@ class InsideCorner:
     at: tuple[float, float, float]
 
 
+@dataclass(frozen=True)
+class Piece:
+    """What of a part has one colour: one shape in the view, one object in 3MF."""
+
+    name: str
+    color: str | None
+    mesh: trimesh.Trimesh
+
+
 class Features(ABC):
+    """A part's geometry, in its own frame. `mesh` and `objects` load what it is measured on and what it
+    shows, when first asked."""
+
     representation: ClassVar[str]
+
+    def __init__(self, name: str, mesh: Callable[[], trimesh.Trimesh], objects: Callable[[], list[ObjectMesh]]) -> None:
+        self.name = name
+        self._load_mesh, self._load_objects = mesh, objects
+
+    @cached_property
+    def mesh(self) -> trimesh.Trimesh:
+        return self._load_mesh()
+
+    @cached_property
+    def objects(self) -> list[ObjectMesh]:
+        """Its named objects' meshes, in their colours."""
+        return self._load_objects()
+
+    @cached_property
+    def pieces(self) -> list[Piece]:
+        """The part by colour, each piece named by its materials."""
+        by_color: dict[str | None, list[ObjectMesh]] = {}
+        for o in self.objects:
+            by_color.setdefault(o.color, []).append(o)
+        names = {
+            color: "+".join(dict.fromkeys(o.material for o in meshes if o.material))
+            for color, meshes in by_color.items()
+        }
+        return [Piece(names[color] or self.name, color, cadview.geometry(meshes)) for color, meshes in by_color.items()]
+
+    def named_at(self, point: Any) -> str | None:
+        """The object nearest a point in the part's frame, where the part has more than one."""
+        names = list(dict.fromkeys(o.name for o in self.objects))
+        if len(names) < 2:
+            return None
+        gaps = [float(np.min(np.linalg.norm(o.mesh.vertices - np.asarray(point), axis=1))) for o in self.objects]
+        return self.objects[int(np.argmin(gaps))].name
+
+    @abstractmethod
+    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """Tessellated for the 3D view: a shape and its entry template per thing the view draws, each entry's
+        `loc` placing its shape in the part's frame."""
+
+    @abstractmethod
+    def bounds(self) -> np.ndarray:
+        """(min, max) corners in the part's frame."""
 
     @abstractmethod
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
@@ -92,11 +152,40 @@ def _vec(v: Any) -> list[float]:
     return [v.X, v.Y, v.Z]
 
 
+def flat(shape: Any) -> Any:
+    """A shape as one object: a compound of its solids with no children, so viewers and face numbering
+    treat it as one part."""
+    from build123d import Compound
+
+    solids = shape.solids()
+    return Compound(list(solids)) if len(solids) != 1 else solids[0]
+
+
 class BrepFeatures(Features):
     representation = "B-rep"
 
-    def __init__(self, shape: Any) -> None:
+    def __init__(
+        self, name: str, shape: Any, mesh: Callable[[], trimesh.Trimesh], objects: Callable[[], list[ObjectMesh]]
+    ) -> None:
+        super().__init__(name, mesh, objects)
         self.shape = shape
+
+    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """One shape with every face, edge and vertex as picks number them, marked `exact` so the panel's
+        clicks name them. A viewer shape has one colour: a part made in several shows the colour of most of it."""
+        from ocp_tessellate.convert import tessellate_group, to_ocpgroup
+
+        group, instances = to_ocpgroup(flat(self.shape), names=[self.name])
+        meshed, shapes, _ = tessellate_group(group, instances)
+        (leaf,) = cadview.leaves(shapes)
+        colored = [p for p in self.pieces if p.color]
+        if colored:
+            leaf["color"] = max(colored, key=lambda p: p.mesh.area).color
+        return [(meshed[0], {**leaf, "exact": True})]
+
+    def bounds(self) -> np.ndarray:
+        box = self.shape.bounding_box()
+        return np.array([_vec(box.min), _vec(box.max)])
 
     def bodies(self) -> int:
         return len(self.shape.solids())
@@ -253,9 +342,12 @@ class MeshFeatures(Features):
 
     representation = "mesh"
 
-    def __init__(self, mesh: trimesh.Trimesh, name: str) -> None:
-        self.mesh = mesh
-        self.name = name
+    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """One shape per colour, each with its crease and boundary lines as edges."""
+        return [cadview.mesh_entry(p.mesh, p.name.replace("/", "_"), p.color) for p in self.pieces]
+
+    def bounds(self) -> np.ndarray:
+        return self.mesh.bounds
 
     def holes(self) -> list[Hole]:
         raise Unmeasurable(f"holes are counted on B-rep faces; {self.name} is a mesh")

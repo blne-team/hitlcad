@@ -39,7 +39,9 @@ class DesignService:
         self.bus = EventBus()
         self.folders_file = folders_file
         self.folders_changed = asyncio.Event()
-        self._folders: dict[str, str] = json.loads(folders_file.read_text()) if folders_file.is_file() else {}
+        self._folders: dict[str, str] = (
+            json.loads(folders_file.read_text(encoding="utf-8")) if folders_file.is_file() else {}
+        )
         self._cache: dict[str, DesignState] = {}
 
     # ------------------------------------------------------------------ state & events
@@ -98,7 +100,7 @@ class DesignService:
             self.emit(design_id, DesignOpened(path=str(folder.path), name=design.name, backend=design.backend))
             self._folders[str(folder.path)] = design_id
             self.folders_file.parent.mkdir(parents=True, exist_ok=True)
-            self.folders_file.write_text(json.dumps(self._folders, indent=2))
+            self.folders_file.write_text(json.dumps(self._folders, indent=2), encoding="utf-8")
             self.folders_changed.set()
         self.sync(design_id, design)
         return self.get(design_id), created

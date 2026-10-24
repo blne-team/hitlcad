@@ -4,7 +4,7 @@ import type { Pick, Revision } from "../api/types";
 import { useDesign } from "../hooks/useDesign";
 import { useSelection } from "../hooks/useSelection";
 import { useViewJson } from "../hooks/useViewJson";
-import type { CadMarker, CadMotion } from "../lib/cadView";
+import { type CadMarker, type CadMotion, exactShapes } from "../lib/cadView";
 import { baseRevision, currentRevision, useDesignUi } from "../lib/designUi";
 import { deliveryStatus } from "../lib/delivery";
 import { selectionMarker, selectionText } from "../lib/selection";
@@ -19,13 +19,10 @@ function shortPath(path: string, keep = 3): string {
   return parts.length <= keep ? path : `…/${parts.slice(-keep).join("/")}`;
 }
 
-/** The revision's 3D view and whether every part is B-rep (so clicks name an instance's faces, edges and vertices). */
-function viewOf(designId: string, revision: Revision | null): { url: string | null; brep: boolean } {
+/** The revision's 3D view. */
+function viewOf(designId: string, revision: Revision | null): { url: string | null } {
   const view = revision?.report.artifacts.find((a) => a.role === "view");
-  return {
-    url: revision && view ? fileUrl(designId, revision.id, view.path) : null,
-    brep: Boolean(revision?.report.artifacts.some((a) => a.role === "exchange")),
-  };
+  return { url: revision && view ? fileUrl(designId, revision.id, view.path) : null };
 }
 
 /** The 3D editor tab of one design folder: the model, selection and pins. Its tabs are the Design view (InspectorView). */
@@ -167,7 +164,7 @@ export function DesignView({ id }: { id: string }) {
 
         <div className="viewport">
           {data !== null && !modelError && (
-            <CadCanvas data={data} brep={current.brep} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} onPick={onPick} onError={setViewError} />
+            <CadCanvas data={data} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} onPick={onPick} onError={setViewError} />
           )}
           {!current.url && (
             <div className="viewport-message">
@@ -188,7 +185,7 @@ export function DesignView({ id }: { id: string }) {
           {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
           {!ui.placing && data !== null && !sel.items.length && (
             <p className="viewport-hint select-hint">
-              {current.brep ? "Click a face, edge or vertex to select it; with the filter on Solid, a whole part." : "Click the model to select a point."} Shift-click adds more.
+              {exactShapes(data).size ? "Click a face, edge or vertex to select it; with the filter on Solid, a whole part." : "Click the model to select a point."} Shift-click adds more.
             </p>
           )}
           <SelectionBox items={sel.items} text={sel.text} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null} />

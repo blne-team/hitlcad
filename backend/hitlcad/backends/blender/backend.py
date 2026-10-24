@@ -19,9 +19,9 @@ class BlenderBackend(SubprocessBackend):
     summary = (
         "Polygon-mesh modelling with Blender's bpy/bmesh, modifiers and geometry nodes. Best for "
         "organic, sculptural, decorative or freeform shapes: figurines, vases, ornaments, "
-        "stylised products, terrain, twisted or smoothed forms. Output is a mesh (no STEP); "
-        "dimensional precision is lower than B-rep. Connector frames are checked; features measured on "
-        "B-rep (hole and shaft sizes, fits) are reported unverified."
+        "stylised products, terrain, twisted or smoothed forms. Output is a mesh (no STEP): its "
+        "connectors' holes, shafts and faces, and so fits, are measured on the mesh to within its facets; "
+        "inside corner radii (CNC milling, sheet metal) cannot be."
     )
     brep = False
     entry = Path(__file__).with_name("entry.py")

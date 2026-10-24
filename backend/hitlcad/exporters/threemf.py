@@ -1,6 +1,6 @@
 """3MF for printing: each made part in its own frame (the way it is made), and the placed assembly.
 
-A part is an object made of one mesh per colour (`build.assemble.pieces`), each mesh coloured by a base
+A part is an object made of one mesh per colour (its features' `pieces`), each mesh coloured by a base
 material and named by its materials, so a multi-colour slicer gets a part per colour to assign a filament
 to. In `model.3mf` every instance is an object named by its path, sharing its part's meshes.
 """
@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from lib3mf import Lib3MF
 
-from hitlcad.build.assemble import pieces
 from hitlcad.core import frames as fr
 
 if TYPE_CHECKING:
@@ -56,7 +55,7 @@ class _Model:
     def place(self, part: PartGeometry, name: str, transform: fr.Frame) -> None:
         """An object `name` made of the part's meshes, placed by `transform`."""
         if id(part) not in self.meshes:
-            self.meshes[id(part)] = [self._mesh(piece.name, piece.mesh, piece.color) for piece in pieces(part)]
+            self.meshes[id(part)] = [self._mesh(p.name, p.mesh, p.color) for p in part.features.pieces]
         placed = self.model.AddComponentsObject()
         placed.SetName(name)
         for mesh in self.meshes[id(part)]:
