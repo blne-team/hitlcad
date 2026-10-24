@@ -10,6 +10,7 @@ from build123d import (
     Axis,
     Box,
     BuildPart,
+    Cylinder,
     Locations,
     Mode,
     Pos,
@@ -20,7 +21,13 @@ from build123d import (
 
 from hitlcad.analysis.model import AnalysisSettings, Body, Leaf, PartGeometry
 from hitlcad.core import frames as fr
-from hitlcad.core.checks import CncMillingProcess, InjectionMoldingProcess, SheetMetalProcess
+from hitlcad.core.checks import (
+    CncMillingProcess,
+    FdmProcess,
+    InjectionMoldingProcess,
+    ResinProcess,
+    SheetMetalProcess,
+)
 from hitlcad.core.report import Reads
 from hitlcad.core.structure import PartSpec, Tolerances
 
@@ -78,3 +85,21 @@ def test_molding_wants_draft_and_even_walls(tmp_path: Path) -> None:
     assert passed(box, "molding_draft") is False  # straight walls drag on the mold
     lumpy = Box(60, 40, 2, align=ON) + Box(10, 10, 20, align=ON)
     assert passed(rules.checks(body(lumpy, tmp_path, "lumpy")), "molding_walls") is False
+
+
+def test_fdm_overhangs_fail_unless_the_part_prints_on_support(tmp_path: Path) -> None:
+    tee = Box(10, 10, 20, align=ON) + Pos(0, 0, 20) * Box(40, 10, 5, align=ON)  # arms out flat: 90° overhangs
+    shape = body(tee, tmp_path, "tee")
+    assert passed(FdmProcess(process="fdm").checks(shape), "fdm_overhangs") is False
+    supported = FdmProcess(process="fdm", supports=True).checks(shape)
+    assert passed(supported, "fdm_overhangs") is True
+    assert "prints on support" in next(f.detail for f in supported if f.name == "fdm_overhangs")
+
+
+def test_resin_wants_hollows_drained_and_walls_that_survive(tmp_path: Path) -> None:
+    rules = ResinProcess(process="resin", min_wall_mm=0.6)
+    hollow = Box(30, 30, 30, align=ON) - Pos(0, 0, 3) * Box(24, 24, 24, align=ON)
+    assert passed(rules.checks(body(hollow, tmp_path, "hollow")), "resin_drains") is False
+    drained = hollow - Cylinder(2, 6, align=ON)  # a drain hole through the floor into the hollow
+    assert passed(rules.checks(body(drained, tmp_path, "drained")), "resin_drains") is True
+    assert passed(rules.checks(body(Box(30, 30, 0.4, align=ON), tmp_path, "film")), "resin_wall_thickness") is False

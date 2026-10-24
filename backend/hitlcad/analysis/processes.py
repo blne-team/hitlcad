@@ -18,6 +18,7 @@ from hitlcad.core.checks import (
     FdmProcess,
     InjectionMoldingProcess,
     ProcessFinding,
+    ResinProcess,
     SheetMetalProcess,
 )
 
@@ -62,25 +63,28 @@ def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
     mesh = body.mesh
     if mesh.is_empty:
         return []
-    return [_fdm_walls(body, rules), _fdm_overhangs(body, rules), _fdm_bed(body, rules)]
+    walls = _walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))
+    return [walls, _fdm_overhangs(body, rules), _fdm_bed(body, rules)]
 
 
-def _fdm_walls(body: Body, rules: FdmProcess) -> ProcessFinding:
+def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | None = None) -> ProcessFinding:
+    """No wall thinner than `minimum`; under `cannot` (a size and what it is), the wall does not form at all."""
     points, thickness = wall_thickness(body.mesh, body.settings.wall_samples)
     measured = np.isfinite(thickness)
     if not measured.any():
-        return ProcessFinding(name="fdm_wall_thickness", passed=None, detail="not measurable: the mesh is not closed")
+        return ProcessFinding(name=name, passed=None, detail="not measurable: the mesh is not closed")
     thinnest = int(np.argmin(np.where(measured, thickness, np.inf)))
     value = float(thickness[thinnest])
-    if value >= rules.min_wall_mm:
-        return ProcessFinding(name="fdm_wall_thickness", passed=True,
-                              detail=f"thinnest wall {value:.2f} mm (minimum {rules.min_wall_mm:g} mm)")  # fmt: skip
-    thin_share = float(np.mean(thickness[measured] < rules.min_wall_mm))
-    worse = f", thinner than the {rules.nozzle_mm:g} mm nozzle: it will not print" if value < rules.nozzle_mm else ""
+    if value >= minimum:
+        return ProcessFinding(name=name, passed=True, detail=f"thinnest wall {value:.2f} mm (minimum {minimum:g} mm)")
+    thin_share = float(np.mean(thickness[measured] < minimum))
+    worse = (
+        f", thinner than the {cannot[0]:g} mm {cannot[1]}: it will not print" if cannot and value < cannot[0] else ""
+    )
     share = f"{thin_share:.0%}" if thin_share >= 0.01 else "under 1%"
-    return ProcessFinding(name="fdm_wall_thickness", passed=False,
+    return ProcessFinding(name=name, passed=False,
                           detail=f"thinnest wall {value:.2f} mm at {_fmt(points[thinnest])}{worse}; {share} of the "
-                                 f"surface is under the {rules.min_wall_mm:g} mm minimum")  # fmt: skip
+                                 f"surface is under the {minimum:g} mm minimum")  # fmt: skip
 
 
 def _fdm_overhangs(body: Body, rules: FdmProcess) -> ProcessFinding:
@@ -92,6 +96,10 @@ def _fdm_overhangs(body: Body, rules: FdmProcess) -> ProcessFinding:
         return ProcessFinding(name="fdm_overhangs", passed=True,
                               detail=f"no overhang steeper than {rules.max_overhang_deg:g}° from vertical")  # fmt: skip
     lowest = mesh.triangles_center[needs_support][np.argmin(mesh.triangles_center[needs_support][:, 2])]
+    if rules.supports:
+        return ProcessFinding(name="fdm_overhangs", passed=True,
+                              detail=f"{area:.0f} mm² overhangs more than {rules.max_overhang_deg:g}° from vertical and "
+                                     f"prints on support (lowest at {_fmt(lowest)})")  # fmt: skip
     return ProcessFinding(name="fdm_overhangs", passed=False,
                           detail=f"{area:.0f} mm² overhangs more than {rules.max_overhang_deg:g}° from vertical and "
                                  f"needs support (lowest at {_fmt(lowest)}); chamfer it, turn the part in its own "
@@ -109,6 +117,28 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
     return ProcessFinding(name="fdm_bed_contact", passed=ok,
                           detail=f"{contact:.0f} mm² on the bed, {share:.0%} of the footprint"
                                  + ("" if ok else "; it may detach: add a flat base or a brim"))  # fmt: skip
+
+
+# --------------------------------------------------------------------------- resin
+
+
+def resin_checks(body: Body, rules: ResinProcess) -> list[ProcessFinding]:
+    if body.mesh.is_empty:
+        return []
+    return [_walls(body, "resin_wall_thickness", rules.min_wall_mm), _resin_drains(body)]
+
+
+def _resin_drains(body: Body) -> ProcessFinding:
+    """A hollow sealed inside the part fills with resin that never drains or cures: each needs a drain hole.
+    Such a hollow is a shell of the mesh facing inwards, so its volume is negative."""
+    cavities = [shell for shell in body.mesh.split(only_watertight=False) if shell.is_watertight and shell.volume < 0]
+    if not cavities:
+        return ProcessFinding(name="resin_drains", passed=True, detail="no sealed hollow inside the part")
+    largest = max(cavities, key=lambda shell: -shell.volume)
+    return ProcessFinding(name="resin_drains", passed=False,
+                          detail=f"{len(cavities)} sealed hollow{'s' if len(cavities) > 1 else ''} inside the part "
+                                 f"(largest {-largest.volume:.0f} mm³ at {_fmt(largest.centroid)}) trap uncured resin: "
+                                 "open each with a drain hole")  # fmt: skip
 
 
 # --------------------------------------------------------------------------- B-rep helpers

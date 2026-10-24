@@ -289,8 +289,10 @@ class _Process(Model):
 
 class FdmProcess(_Process):
     """FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-    Z): wall thickness, overhangs and bed contact. `hole_allowance_mm` / `shaft_allowance_mm`: how much
-    printed holes come out smaller and shafts larger than modelled, for fit checks."""
+    Z): wall thickness, overhangs and bed contact. With `supports`, overhangs print on support and are
+    reported, not failed: for shapes that cannot avoid them, like figurines. `hole_allowance_mm` /
+    `shaft_allowance_mm`: how much printed holes come out smaller and shafts larger than modelled, for fit
+    checks."""
 
     process: Literal["fdm"]
     nozzle_mm: float = Field(default=0.4, gt=0)
@@ -300,6 +302,7 @@ class FdmProcess(_Process):
     )
     min_bed_contact_share: float = Field(default=0.10, ge=0, le=1, description="Of the footprint's bounding box")
     ignored_overhang_mm2: float = Field(default=1.0, ge=0, description="Overhangs smaller than this print by bridging")
+    supports: bool = Field(default=False, description="Printed with support under its overhangs")
     hole_allowance_mm: float = Field(default=0.0, ge=0)
     shaft_allowance_mm: float = Field(default=0.0, ge=0)
     example = {"process": "fdm", "hole_allowance_mm": 0.15}
@@ -308,6 +311,25 @@ class FdmProcess(_Process):
         from hitlcad.analysis.processes import fdm_checks
 
         return fdm_checks(body, self)
+
+    def allowance(self, feature: Literal["hole", "shaft"]) -> float:
+        return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
+
+
+class ResinProcess(_Process):
+    """Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and no hollow sealed
+    inside the part, which traps uncured resin. `hole_allowance_mm` / `shaft_allowance_mm` as for FDM."""
+
+    process: Literal["resin"]
+    min_wall_mm: float = Field(default=0.6, gt=0, description="Thinnest wall that prints and survives washing")
+    hole_allowance_mm: float = Field(default=0.0, ge=0)
+    shaft_allowance_mm: float = Field(default=0.0, ge=0)
+    example = {"process": "resin", "min_wall_mm": 0.6}
+
+    def checks(self, body: Body) -> list[ProcessFinding]:
+        from hitlcad.analysis.processes import resin_checks
+
+        return resin_checks(body, self)
 
     def allowance(self, feature: Literal["hole", "shaft"]) -> float:
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
@@ -360,6 +382,7 @@ class InjectionMoldingProcess(_Process):
 
 
 Manufacturing = Annotated[
-    FdmProcess | CncMillingProcess | SheetMetalProcess | InjectionMoldingProcess, Field(discriminator="process")
+    FdmProcess | ResinProcess | CncMillingProcess | SheetMetalProcess | InjectionMoldingProcess,
+    Field(discriminator="process"),
 ]
 MANUFACTURING_PROCESSES: tuple[type[_Process], ...] = members(Manufacturing)
