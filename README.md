@@ -1,13 +1,34 @@
-# hitlcad
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <img src="docs/images/logo-light.svg" alt="hitlcad" width="360">
+  </picture>
+</p>
 
-Design physical things by talking to Claude Code or Codex in VS Code. Your agent writes the CAD
-as Python. hitlcad builds it every time a file is saved, measures what came out, and shows you
-the model in 3D next to the code. When something needs changing, you click on it.
+hitlcad is human-in-the-loop CAD. Your coding agent, Claude Code or Codex in VS Code, writes the
+CAD as Python. hitlcad builds it every time a file is saved, measures what came out, and shows you
+the model in 3D next to the code. You stay in the loop by pointing at the model instead of
+describing it: click a face and the agent knows exactly which one, or pin a note to it and the agent
+changes the files to match.
 
 <!-- Hero: the whole VS Code window (agent chat, a part file, the 3D editor, the Design view),
      saved as docs/images/vscode.png, goes here. -->
 
 ![Selecting a face and pinning a note in the 3D editor](docs/images/point-and-pin.gif)
+
+## How you stay in the loop
+
+1. You look at the build in the 3D editor and click **Place pins**, then click the spot on the model
+   that should change and write what you want there: *narrow the nozzle to a 20 mm outlet*.
+2. Your next message to the agent carries the pin, named by the part and face it sits on, so
+   "address my pins" is enough. You don't copy anything over.
+3. The agent edits the part's code. Saving rebuilds it and checks the whole assembly again.
+4. The pin moves with its part onto the new build. The agent resolves it once it's done, and you
+   see the change where you pinned it. Reopen it if it isn't right.
+
+Selecting works the same way without a note: click a face, edge or part, and "make this bore
+0.5 mm larger" refers to exactly that. [What the agent receives](#what-a-session-looks-like) is
+shown below.
 
 ## What a session looks like
 
@@ -43,7 +64,7 @@ That is the text your agent reads after the build, so it fixes the impeller and 
 you've looked. Pick M3 × 12 screws for a motor with 6 mm deep holes and you get
 `bottoms out: 8.50 mm into a 6.00 mm deep motor.screw_holes[0]`, once per screw.
 
-Once it builds clean, you look at it. In the clip above, you click the duct's mounting bore and
+Once it builds clean, you look at it. In the clip at the top, you click the duct's mounting bore and
 pin a note to the nozzle. Your next message to the agent carries this along:
 
 ```
