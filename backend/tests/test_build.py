@@ -10,9 +10,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
+import trimesh
 
 from hitlcad.app import HitlCad
+from hitlcad.build import assemble
 from hitlcad.core.report import BuildReport
 from hitlcad.designs.folder import DesignFolder
 
@@ -281,3 +284,35 @@ async def test_the_readme_examples_build_and_verify(core: HitlCad, tmp_path: Pat
     assert report.status == "succeeded", report.error
     assert failing(report) == []
 
+
+async def test_the_view_places_parts_whose_shape_was_moved_into_their_own_frame(core: HitlCad, tmp_path: Path) -> None:
+    import base64
+
+    # Modelled where it sits in the product, then moved into its own frame; the assembly moves it back.
+    part = """from build123d import *
+
+
+def build(p, i):
+    return {"block": (Box(20, 10, 4).moved(Location((100, 50, 0))).moved(Location((-100, -50, 0), (0, 0, 90))), {})}
+"""
+    assembly = """from build123d import *
+
+
+def build(p, i):
+    return {"block": [Location((100, 50, 0)) * Rot(0, 0, -90)]}
+"""
+    folder = write_design(tmp_path / "moved", {
+        "design.json": {"hitlcad": 2, "name": "Moved", "backend": "build123d", "ground": "block",
+                        "parts": {"block": {"role": "a block", "file": "parts/block.py", "material": "PLA"}}},
+        "parts/block.py": part,
+        "assembly.py": assembly,
+    })  # fmt: skip
+    out = tmp_path / "out"
+    report = await build(core, folder, out)
+    assert report.status == "succeeded", report.error
+    view = json.loads((out / "view.json").read_text())
+    (leaf,) = view["shapes"]["parts"]
+    buffer = view["instances"][leaf["shape"]["ref"]]["vertices"]
+    vertices = np.frombuffer(base64.b64decode(buffer["buffer"]), dtype=buffer["dtype"]).reshape(-1, 3)
+    placed = trimesh.transform_points(vertices, assemble._frame(leaf["loc"]))
+    np.testing.assert_allclose([placed.min(0), placed.max(0)], trimesh.load(out / "mesh.stl").bounds, atol=1e-3)

@@ -85,6 +85,14 @@ def _loc(m: fr.Frame) -> tuple[tuple[float, float, float], tuple[float, float, f
     return (tuple(float(v) for v in m[:3, 3]), tuple(float(v) for v in quaternion(m)))  # type: ignore[return-value]
 
 
+def _frame(loc: Any) -> fr.Frame:
+    """The matrix of a view `loc`: a position and an (x, y, z, w) quaternion."""
+    position, (x, y, z, w) = loc
+    m = trimesh.transformations.quaternion_matrix((w, x, y, z))
+    m[:3, 3] = position
+    return m
+
+
 def _tessellate(part: PartGeometry) -> tuple[dict[str, Any], dict[str, Any]]:
     """One part's tessellation and the view entry template for it."""
     if part.shape is not None:
@@ -119,7 +127,15 @@ def write_view(built: BuiltDesign, target: Path) -> None:
             meshes.append(mesh)
             refs[id(part)] = (len(meshes) - 1, template)
         ref, template = refs[id(part)]
-        return {**template, "id": path, "name": name, "shape": {"ref": ref}, "loc": _loc(transform)}
+        # ocp-tessellate meshes a part relative to its solids' own placement and returns that placement as
+        # the template's loc: the instance places the part, and the part's loc places its mesh within it.
+        return {
+            **template,
+            "id": path,
+            "name": name,
+            "shape": {"ref": ref},
+            "loc": _loc(transform @ _frame(template["loc"])),
+        }
 
     def group(design: BuiltDesign, path: str, name: str, transform: fr.Frame) -> dict[str, Any]:
         parts = []
