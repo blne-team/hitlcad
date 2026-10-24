@@ -15,5 +15,6 @@ build-out/
 # Local environment
 .env
 
-# Claude Code settings for this machine only
-.claude/settings.local.json
+# Local agent and tool state, not part of the project
+.claude/
+.codegraph/
