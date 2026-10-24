@@ -24,29 +24,25 @@ export function useDesign(id: string): LiveDesign {
 
   const refresh = useCallback(() => {
     if (fetching.current) {
-      again.current = true;
+      again.current = true; // fetched once more when the fetch under way ends
       return;
     }
     fetching.current = true;
-    api
-      .design(id)
-      .then((s) => {
-        setState(s);
-        setError(null);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => {
-        fetching.current = false;
-        if (again.current) {
-          again.current = false;
-          refresh();
+    void (async () => {
+      do {
+        again.current = false;
+        try {
+          setState(await api.design(id));
+          setError(null);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
         }
-      });
+      } while (again.current);
+      fetching.current = false;
+    })();
   }, [id]);
 
   useEffect(() => {
-    setState(null);
-    setConnected(null);
     refresh();
     const unsubscribe = subscribe(
       id,

@@ -22,6 +22,11 @@
   --fail: #b8321c;
   --focus: #2a63d4;
   --viewport: #dde2e6;
+  /* the studio the model sits in, and the glass the editor's panels float on over it */
+  --studio: radial-gradient(ellipse 90% 80% at 50% 38%, #f7f9fa 0%, #e3e8ec 55%, #cfd6dc 100%);
+  --glass: rgb(250 251 252 / 78%);
+  --glass-rule: rgb(27 33 39 / 12%);
+  --glass-shadow: 0 2px 12px rgb(27 33 39 / 14%);
 
   --sans: "Barlow", "Helvetica Neue", Arial, sans-serif;
   --narrow: "Barlow Semi Condensed", "Barlow", "Arial Narrow", sans-serif;
@@ -57,6 +62,10 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --fail: #ec7158;
   --focus: #7aa2f7;
   --viewport: #0e1215;
+  --studio: radial-gradient(ellipse 90% 80% at 50% 38%, #2c343b 0%, #1a2025 55%, #0f1316 100%);
+  --glass: rgb(26 32 37 / 76%);
+  --glass-rule: rgb(227 231 234 / 10%);
+  --glass-shadow: 0 2px 14px rgb(0 0 0 / 40%);
 }
 
 * {
@@ -273,42 +282,45 @@ code {
   margin-left: 6px;
 }
 
-/* ------------------------------------------------------------------ design view */
+/* ------------------------------------------------------------------ 3D editor and file viewer: the model fills the
+   tab, and everything else floats over it on glass */
 
 .design {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  min-height: 0;
+  position: relative;
   height: 100%;
+  min-height: 0;
 }
 .design-empty {
   display: grid;
   place-items: center;
 }
 
-.stage {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
+.viewport {
+  position: absolute;
+  inset: 0;
+  background: var(--studio);
+  overflow: hidden;
 }
 
-.stage-head {
-  display: flex;
-  flex-wrap: wrap; /* the toolbar moves to a second row before it squeezes the title */
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--rule);
-  background: var(--surface);
+.float {
+  position: absolute;
+  z-index: 6;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
+  border-radius: var(--radius-m);
+  box-shadow: var(--glass-shadow);
 }
+
 .stage-title {
+  top: 10px;
+  left: 10px;
+  max-width: calc(100% - 460px);
+  min-width: 160px;
+  padding: 6px 12px 7px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 140px;
-  flex: 1 1 140px;
+  gap: 2px;
 }
 .stage-meta {
   display: flex;
@@ -316,20 +328,22 @@ code {
   align-items: center;
   gap: 2px 10px;
   min-width: 0;
+  font-size: var(--step--1);
 }
 .stage-title h1 {
-  font-size: var(--step-2);
+  font-size: var(--step-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.toolbar {
+.stage-actions {
+  top: 10px;
+  right: 10px;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 6px;
   align-items: center;
+  padding: 4px;
 }
 .rev-switch {
   display: flex;
@@ -337,7 +351,6 @@ code {
   border: 1px solid var(--rule);
   border-radius: var(--radius-s);
   background: var(--raised);
-  margin-right: 6px;
 }
 .rev-label {
   font-family: var(--narrow);
@@ -364,12 +377,68 @@ code {
   color: var(--signal-ink);
   border-color: var(--signal);
 }
+.full-screen {
+  font-size: var(--step-1);
+}
 
-.viewport {
-  position: relative;
-  flex: 1;
+/* the review panel and the selection, down the right-hand side */
+.side {
+  position: absolute;
+  top: 60px;
+  right: 10px;
+  bottom: 52px;
+  width: min(400px, calc(100% - 20px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  z-index: 6;
+  pointer-events: none;
+}
+.side > * {
+  pointer-events: auto;
+}
+.review {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  background: var(--viewport);
+  max-height: 100%;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
+  border-radius: var(--radius-m);
+  box-shadow: var(--glass-shadow);
+}
+.review.open {
+  align-self: stretch;
+  flex: 1 1 auto;
+}
+.review-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+}
+.review.open .review-tabs {
+  border-bottom: 1px solid var(--glass-rule);
+}
+.review-tab {
+  border: none;
+  background: none;
+  border-radius: var(--radius-s);
+  padding: 4px 10px;
+  font-family: var(--narrow);
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.review-tab.on {
+  background: var(--raised);
+  color: var(--ink);
+}
+.review-body {
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .viewport-message {
@@ -382,10 +451,11 @@ code {
   text-align: center;
   padding: 24px;
 }
-/* three-cad-viewer's toolbar and shape filter run along the top: hitlcad's overlays sit at the bottom */
+/* above the viewer's toolbar, which floats along the bottom */
 .viewport-hint {
   position: absolute;
-  bottom: 12px;
+  bottom: 60px;
+  z-index: 5;
   left: 50%;
   transform: translateX(-50%);
   background: var(--signal);
@@ -673,18 +743,11 @@ details summary {
 
 /* status line */
 .statusline {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 5px 16px;
-  border-top: 1px solid var(--rule);
-  background: var(--surface);
+  gap: 8px;
   font-size: var(--step--1);
   min-width: 0;
-}
-.statusline .spacer {
-  flex: 1;
 }
 .dot {
   width: 8px;
@@ -746,12 +809,14 @@ details summary {
 }
 
 @media (max-width: 900px) {
-  .stage-head {
-    padding: 8px 12px;
-    row-gap: 6px;
+  .stage-title {
+    max-width: calc(100% - 20px);
   }
-  .toolbar {
-    flex-wrap: wrap;
+  .stage-actions {
+    top: 70px;
+  }
+  .side {
+    top: 120px;
   }
   .rev-label {
     min-width: 0;
@@ -765,14 +830,13 @@ details summary {
   color: #ffffff;
 }
 .selection-box {
-  position: absolute;
-  bottom: 48px;
-  right: 12px;
-  width: min(380px, calc(100% - 24px));
-  max-height: calc(100% - 80px);
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  background: color-mix(in srgb, var(--raised) 94%, transparent);
-  border: 1px solid var(--rule-strong);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--glass-rule);
   border-left: 3px solid #2f6df6;
   border-radius: var(--radius-s);
   padding: 8px 10px;
@@ -817,22 +881,65 @@ details summary {
   font-weight: 600;
   font-size: 0.7rem;
 }
-.file-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-.file-view .stage-head h1 {
-  font-size: var(--step-1);
-}
-.file-view .design-path {
-  max-width: 60vw;
-}
-
 .cad-stage {
   position: absolute;
   inset: 0;
+}
+/* three-cad-viewer in the studio: its toolbar a pill floating along the bottom, its tree and tools below the
+   title, its colours ours */
+.cad-stage .tcv_cad_viewer,
+.cad-stage .tcv_cad_view {
+  background: transparent;
+}
+.cad-stage [data-theme] {
+  --tcv-bg-color: var(--raised);
+  --tcv-bg-overlay-color: var(--glass);
+  --tcv-bg-overlay-rest-color: transparent;
+  --tcv-font-color: var(--ink);
+}
+.cad-stage .tcv_cad_toolbar {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto !important;
+  max-width: calc(100% - 20px);
+  z-index: 6;
+  padding: 2px 8px;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
+  border-radius: 999px;
+  box-shadow: var(--glass-shadow);
+}
+/* the viewer's readouts in the bottom-left corner (the grid's size, what the pointer is over) sit above the
+   toolbar instead of under it; they are readouts, so they never take a click */
+.cad-stage .tcv_tick_size {
+  bottom: 76px;
+  pointer-events: none;
+}
+.cad-stage .tcv_status_line {
+  bottom: 58px;
+}
+.cad-stage .tcv_cad_navigation {
+  margin-top: 84px;
+  margin-left: 6px;
+}
+.cad-stage .tcv_filter_menu {
+  position: absolute;
+  inset: auto 10px 10px auto;
+}
+.cad-stage .tcv_shape_filter {
+  position: relative;
+}
+/* the toolbar and the filter sit at the bottom: their menus open upwards */
+.cad-stage .tcv_cad_toolbar .tcv_dropdown-content,
+.cad-stage .tcv_shape_filter .tcv_filter_dropdown {
+  position: absolute;
+  bottom: 100%;
+}
+.cad-stage .tcv_shape_filter .tcv_filter_dropdown {
+  right: 0;
 }
 /* Meshes have no vertices, edges, faces or parts to pick: a click is a point, so the viewer's pick filter does nothing. */
 .cad-stage[data-exact="false"] .tcv_shape_filter {
@@ -844,15 +951,6 @@ details summary {
   white-space: nowrap;
 }
 
-@media (max-width: 900px) {
-  .selection-box {
-    bottom: 50px;
-    left: 12px;
-    right: 12px;
-    width: auto;
-    max-height: 40%;
-  }
-}
 
 /* ------------------------------------------------------------------ compare */
 
@@ -1008,17 +1106,18 @@ details summary {
 .motion-control {
   position: absolute;
   left: 50%;
-  top: 52px; /* below the viewer's toolbar, clear of the hints and the selection at the bottom */
+  top: 60px; /* below the title and actions */
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0.6rem;
-  background: var(--raised);
-  border: 1px solid var(--rule-strong);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
   border-radius: var(--radius-m);
-  box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
-  z-index: 3;
+  box-shadow: var(--glass-shadow);
+  z-index: 6;
 }
 .motion-control input[type="range"] {
   width: 180px;

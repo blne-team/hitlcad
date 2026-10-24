@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useDarkScheme } from "../hooks/useScheme";
 import type { Pick } from "../api/types";
 import { type CadBounds, type CadMarker, type CadMotion, CadView, exactShapes } from "../lib/cadView";
@@ -26,7 +26,9 @@ export function CadCanvas(props: Props) {
   const dark = useDarkScheme();
   // The viewer lives outside React: read the latest props through a ref so it is rebuilt only for a new model.
   const latest = useRef({ ...props, dark });
-  latest.current = { ...props, dark };
+  useLayoutEffect(() => {
+    latest.current = { ...props, dark };
+  });
 
   useEffect(() => {
     if (!stage.current) return;

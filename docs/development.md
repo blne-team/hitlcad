@@ -15,6 +15,7 @@ uv sync --extra dev
 uv run pytest                          # all tests; -m "not geometry" skips real-kernel tests
 uv run ruff check backend && uv run ruff format backend
 (cd vscode-extension && npm test)      # extension unit tests
+(cd vscode-extension && npm run lint)  # ESLint: TypeScript's rules, React's rules of hooks
 (cd vscode-extension && npm run compile)  # extension and panel UI (ui/ → out/ui/)
 uv run hitlcad build examples/handhold-fan --out build-out   # build and verify a design folder
 ```
@@ -25,7 +26,7 @@ forward deliberately when upgrading.
 
 ## Tests and CI
 
-`.github/workflows/ci.yml` runs on every push and pull request: ruff; the full backend suite,
+`.github/workflows/ci.yml` runs on every push and pull request: ruff and ESLint; the full backend suite,
 including real build123d and Blender builds of the test designs and of every design in
 `examples/`, on Python 3.11, 3.12 and 3.13; the extension's tests, its panel UI's typecheck and
 build, and its packaging; and the end-to-end tests (`e2e/`). Playwright drives the real server and

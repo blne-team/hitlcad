@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { api } from "../api/client";
 import type { DesignState, ParamSpec, ParamValue, Revision } from "../api/types";
 import { humanize } from "../lib/format";
@@ -10,19 +10,16 @@ interface Props {
   setConfiguration: (name: string | null) => void;
 }
 
-/** The configurations of the design on screen, and its parameters (the default configuration) to tune. */
+/** The configurations of the design on screen, and its parameters (the default configuration) to tune. Keyed by
+ * the revision: what was typed is a draft over the revision on screen, kept while the design's state refreshes. */
 export function ParametersPanel({ design, revision, configuration, setConfiguration }: Props) {
   const specs = revision?.spec.design.parameters ?? [];
   const configurations = revision?.spec.design.configurations ?? {};
-  const original = useMemo(() => Object.fromEntries(specs.map((p) => [p.name, p.value])), [specs]);
+  const original = Object.fromEntries(specs.map((p) => [p.name, p.value]));
   const [values, setValues] = useState<Record<string, ParamValue>>(original);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setValues(original);
-    setError(null);
-  }, [original]);
 
   if (!revision) return <p className="muted pad">Parameters appear after the first build.</p>;
   if (specs.length === 0) return <p className="muted pad">This revision has no tunable parameters.</p>;

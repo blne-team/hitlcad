@@ -207,3 +207,22 @@ test("every viewer toolbar button and tab works without errors", async ({ page }
   for (const name of ["clip", "zebra", "material", "tree"]) await page.locator(`.tcv_tab_${name}`).click();
   expect(errors).toEqual([]);
 });
+
+test("every viewer control can be clicked at any editor width: nothing floats over it", async ({ page }) => {
+  for (const width of [1280, 800, 640]) {
+    await page.setViewportSize({ width, height: 700 });
+    await openPanel(page, { name: "design", id });
+    await viewerReady(page);
+    const covered = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".cad-stage input.tcv_btn, .tcv_shape_filter, .stage-actions button, .review-tab")]
+        .filter((e) => e.offsetParent !== null)
+        .flatMap((e) => {
+          const b = e.getBoundingClientRect();
+          const top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+          return top && (top === e || e.contains(top)) ? [] : [`${e.className} under ${top?.className}`];
+        }),
+    );
+    expect(covered, `${width}px`).toEqual([]);
+  }
+});
+

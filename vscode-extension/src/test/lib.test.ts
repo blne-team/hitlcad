@@ -89,6 +89,7 @@ test("parses only well-formed hitlcad page messages", () => {
   assert.deepEqual(parseUiMessage({ type: "hitlcad.ui", patch: { compare: true } }), { kind: "patch", patch: { compare: true }, reveal: false });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.selection", text: "In x I selected" }), { kind: "selection", text: "In x I selected" });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.copy" }), { kind: "copy" });
+  assert.deepEqual(parseUiMessage({ type: "hitlcad.fullscreen" }), { kind: "fullscreen" });
   for (const bad of [null, "hitlcad.ui", [], { type: "hitlcad.ui", patch: [1] }, { type: "hitlcad.ui", patch: null }, { type: "hitlcad.selection", text: 3 }, { type: "other" }]) {
     assert.equal(parseUiMessage(bad), null);
   }

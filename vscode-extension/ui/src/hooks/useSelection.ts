@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Pick, SelectionItem } from "../api/types";
 
 type Describe = (picks: Pick[]) => Promise<SelectionItem[]>;
@@ -12,7 +12,9 @@ export function useSelection(describe: Describe, text: (items: SelectionItem[]) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const latest = useRef(items);
-  latest.current = items;
+  useLayoutEffect(() => {
+    latest.current = items;
+  });
   // What the human has clicked so far, ahead of the server's descriptions: a shift-click made while
   // the previous click is still being described must add to it, not to the last described list.
   const picks = useRef<Pick[]>([]);

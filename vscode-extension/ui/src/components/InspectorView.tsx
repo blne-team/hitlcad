@@ -13,7 +13,7 @@ import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
 
 /** What a tab renders from: the design, the revision on screen and the shared UI state. */
-interface TabContext {
+export interface TabContext {
   id: string;
   state: DesignState;
   revision: Revision | null;
@@ -22,7 +22,7 @@ interface TabContext {
   refresh: () => void;
 }
 
-interface Tab {
+export interface Tab {
   id: InspectorTab;
   label: string;
   badge?: (ctx: TabContext) => number;
@@ -30,7 +30,7 @@ interface Tab {
 }
 
 /** The Design view's tabs, in order. A new panel is one entry here (and its id in InspectorTab). */
-const TABS: Tab[] = [
+export const TABS: Tab[] = [
   {
     id: "pins",
     label: "Pins",
@@ -69,7 +69,7 @@ const TABS: Tab[] = [
     id: "parameters",
     label: "Parameters",
     render: ({ state, revision, ui, setUi }) => (
-      <ParametersPanel design={state} revision={revision} configuration={ui.configuration} setConfiguration={(c) => setUi({ configuration: c, revision: null })} />
+      <ParametersPanel key={revision?.id ?? "none"} design={state} revision={revision} configuration={ui.configuration} setConfiguration={(c) => setUi({ configuration: c, revision: null })} />
     ),
   },
   {

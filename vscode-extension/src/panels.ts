@@ -39,12 +39,10 @@ export class DesignPanels implements vscode.Disposable {
       ...panelOptions(this.extensionUri),
       retainContextWhenHidden: true,
     });
-    let relay: vscode.Disposable | undefined;
     panel.onDidChangeViewState(() => {
       if (panel.active) this.setActive(design);
     });
     panel.onDidDispose(() => {
-      relay?.dispose();
       if (this.panels.get(key)?.panel === panel) this.panels.delete(key);
       if (this.lastActive?.id === design.id) this.setActive([...this.panels.values()].pop()?.design ?? null);
     });
@@ -52,7 +50,8 @@ export class DesignPanels implements vscode.Disposable {
     this.setActive(design);
     const html = await panelPage(panel.webview, this.extensionUri, { name: "design", id: design.id }, title);
     if (this.panels.get(key)?.panel !== panel) return; // closed or replaced meanwhile
-    relay = this.hub.attach(panel.webview, design.id);
+    const relay = this.hub.attach(panel.webview, design.id);
+    panel.onDidDispose(() => relay.dispose());
     panel.webview.html = html;
   }
 

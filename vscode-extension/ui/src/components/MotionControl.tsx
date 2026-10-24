@@ -9,12 +9,12 @@ interface Props {
   onMotion: (motion: CadMotion | null) => void;
 }
 
-/** Move a mate's moving side through the range the build swept for collisions, in the 3D view. */
+/** Move a mate's moving side through the range the build swept for collisions, in the 3D view. Keyed by the
+ * revision: another revision's ranges start as built. */
 export function MotionControl({ motions, onMotion }: Props) {
   const [chosen, setChosen] = useState(0);
   const range = motions[Math.min(chosen, motions.length - 1)];
   const [value, setValue] = useState(range?.current ?? 0);
-  useEffect(() => setValue(range?.current ?? 0), [range]);
   const motion = useMemo<CadMotion | null>(
     () =>
       range && value !== range.current
@@ -29,7 +29,11 @@ export function MotionControl({ motions, onMotion }: Props) {
   return (
     <section className="motion-control" aria-label="Motion">
       {motions.length > 1 ? (
-        <select aria-label="Mate" value={chosen} onChange={(e) => setChosen(Number(e.target.value))}>
+        <select aria-label="Mate" value={chosen} onChange={(e) => {
+            const next = Number(e.target.value);
+            setChosen(next);
+            setValue(motions[next]?.current ?? 0);
+          }}>
           {motions.map((m, i) => (
             <option key={`${m.pair}-${m.kind}`} value={i}>
               {m.pair} ({m.kind})

@@ -7,9 +7,11 @@ import { useViewJson } from "../hooks/useViewJson";
 import { type CadMarker, type CadMotion, exactShapes } from "../lib/cadView";
 import { baseRevision, currentRevision, useDesignUi } from "../lib/designUi";
 import { deliveryStatus } from "../lib/delivery";
+import { toExtension } from "../lib/host";
 import { selectionMarker, selectionText } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { MotionControl } from "./MotionControl";
+import { ReviewPanel } from "./ReviewPanel";
 import { SelectionBox } from "./SelectionBox";
 import { StatusLine } from "./StatusLine";
 
@@ -30,7 +32,8 @@ export function DesignView({ id }: { id: string }) {
   const live = useDesign(id);
   const { state } = live;
   const [ui, setUi] = useDesignUi();
-  const [viewError, setViewError] = useState<string | null>(null);
+  // A view error belongs to the view it came from: another revision's view starts without one
+  const [viewError, setViewError] = useState<{ url: string | null; message: string } | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
   const [motion, setMotion] = useState<CadMotion | null>(null);
 
@@ -42,8 +45,7 @@ export function DesignView({ id }: { id: string }) {
   const current = viewOf(id, revision);
   const { data, error: fetchError } = useViewJson(current.url);
   const ghost = useViewJson(ui.compare ? viewOf(id, base).url : null).data;
-  useEffect(() => setViewError(null), [current.url]);
-  const modelError = fetchError ?? viewError;
+  const modelError = fetchError ?? (viewError?.url === current.url ? viewError.message : null);
 
   const describe = useCallback(async (picks: Pick[]) => (await api.setSelection(id, revisionId, picks)).items, [id, revisionId]);
   const designName = state?.name || "this design";
@@ -99,100 +101,107 @@ export function DesignView({ id }: { id: string }) {
 
   return (
     <div className="design">
-      <section className="stage">
-        <header className="stage-head">
-          <div className="stage-title">
-            <h1 title={state.name}>{state.name}</h1>
-            <div className="stage-meta">
-              <span className="design-path" title={state.path}>
-                {shortPath(state.path)}
-              </span>
-              <span className="muted tiny">{state.backend}</span>
-              {ui.configuration && <span className="config-chip">{ui.configuration}</span>}
-              {size && (
-                <span className="model-size" aria-label="Model size">
-                  {size.map((v) => v.toFixed(1)).join(" × ")} mm
-                </span>
-              )}
-            </div>
+      <div className="viewport">
+        {data !== null && !modelError && (
+          <CadCanvas data={data} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} onPick={onPick} onError={(message) => setViewError({ url: current.url, message })} />
+        )}
+        {!current.url && (
+          <div className="viewport-message">
+            {revision?.report.status === "failed" ? (
+              <p>Revision {revision.id} failed to build. The error is under Results.</p>
+            ) : state.building ? (
+              <p>Building…</p>
+            ) : (
+              <p>No build yet. Ask your agent to declare the parts in design.json and write their code; every save builds.</p>
+            )}
           </div>
-          <div className="toolbar" role="toolbar" aria-label="Design">
-            <div className="rev-switch">
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Previous revision"
-                disabled={idx <= 0}
-                onClick={() => setUi({ revision: own[idx - 1]?.id ?? null })}
-              >
-                ‹
-              </button>
-              <span className="rev-label">
-                {revision ? `Revision ${revision.id} of ${revisions.length}` : "No revisions yet"}
-              </span>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Next revision"
-                disabled={idx < 0 || idx >= own.length - 1}
-                onClick={() => setUi({ revision: own[idx + 1]?.id ?? null })}
-              >
-                ›
-              </button>
-            </div>
-            <button
-              type="button"
-              className={`toggle pin-toggle${ui.placing ? " on" : ""}`}
-              aria-pressed={ui.placing}
-              disabled={data === null}
-              onClick={() => setUi({ placing: !ui.placing })}
-            >
-              {ui.placing ? "Placing pins" : "Place pins"}
-            </button>
-            <button
-              type="button"
-              className={`toggle compare-toggle${ui.compare ? " on" : ""}`}
-              aria-pressed={ui.compare}
-              disabled={revisions.length < 2}
-              title="Show an earlier revision as a ghost and list what changed"
-              onClick={() => setUi(ui.compare ? { compare: false } : { compare: true, tab: "changes" }, !ui.compare)}
-            >
-              Compare
-            </button>
-          </div>
-        </header>
+        )}
+        {modelError && <p className="viewport-message fail">{modelError}</p>}
+        {pinError && <p className="viewport-message fail">{pinError}</p>}
 
-        <div className="viewport">
-          {data !== null && !modelError && (
-            <CadCanvas data={data} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} onPick={onPick} onError={setViewError} />
-          )}
-          {!current.url && (
-            <div className="viewport-message">
-              {revision?.report.status === "failed" ? (
-                <p>Revision {revision.id} failed to build. The error is under Results.</p>
-              ) : state.building ? (
-                <p>Building…</p>
-              ) : (
-                <p>No build yet. Ask your agent to declare the parts in design.json and write their code; every save builds.</p>
-              )}
-            </div>
-          )}
-          {modelError && <p className="viewport-message fail">{modelError}</p>}
-          {pinError && <p className="viewport-message fail">{pinError}</p>}
-          {data !== null && !modelError && revision && revision.report.motions.length > 0 && (
-            <MotionControl motions={revision.report.motions} onMotion={setMotion} />
-          )}
-          {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
-          {!ui.placing && data !== null && !sel.items.length && (
-            <p className="viewport-hint select-hint">
-              {exactShapes(data).size ? "Click a face, edge or vertex to select it; with the filter on Solid, a whole part." : "Click the model to select a point."} Shift-click adds more.
-            </p>
-          )}
+        <header className="float stage-title">
+          <h1 title={state.name}>{state.name}</h1>
+          <div className="stage-meta">
+            <span className="design-path" title={state.path}>
+              {shortPath(state.path)}
+            </span>
+            <span className="muted tiny">{state.backend}</span>
+            {ui.configuration && <span className="config-chip">{ui.configuration}</span>}
+            {size && (
+              <span className="model-size" aria-label="Model size">
+                {size.map((v) => v.toFixed(1)).join(" × ")} mm
+              </span>
+            )}
+          </div>
+          <StatusLine design={state} connected={live.connected} />
+        </header>
+        <div className="float stage-actions" role="toolbar" aria-label="Design">
+          <div className="rev-switch">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Previous revision"
+              disabled={idx <= 0}
+              onClick={() => setUi({ revision: own[idx - 1]?.id ?? null })}
+            >
+              ‹
+            </button>
+            <span className="rev-label">{revision ? `Revision ${revision.id} of ${revisions.length}` : "No revisions yet"}</span>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Next revision"
+              disabled={idx < 0 || idx >= own.length - 1}
+              onClick={() => setUi({ revision: own[idx + 1]?.id ?? null })}
+            >
+              ›
+            </button>
+          </div>
+          <button
+            type="button"
+            className={`toggle pin-toggle${ui.placing ? " on" : ""}`}
+            aria-pressed={ui.placing}
+            disabled={data === null}
+            onClick={() => setUi({ placing: !ui.placing })}
+          >
+            {ui.placing ? "Placing pins" : "Place pins"}
+          </button>
+          <button
+            type="button"
+            className={`toggle compare-toggle${ui.compare ? " on" : ""}`}
+            aria-pressed={ui.compare}
+            disabled={revisions.length < 2}
+            title="Show an earlier revision as a ghost and list what changed"
+            onClick={() => setUi(ui.compare ? { compare: false } : { compare: true, tab: "changes" }, !ui.compare)}
+          >
+            Compare
+          </button>
+          <button
+            type="button"
+            className="icon-button full-screen"
+            aria-label="Full screen"
+            title="Full screen: hide VS Code's bars (Zen mode); again to bring them back"
+            onClick={() => toExtension({ type: "hitlcad.fullscreen" })}
+          >
+            ⤢
+          </button>
+        </div>
+
+        {data !== null && !modelError && revision && revision.report.motions.length > 0 && (
+          <MotionControl key={revision.id} motions={revision.report.motions} onMotion={setMotion} />
+        )}
+        {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
+        {!ui.placing && data !== null && !sel.items.length && (
+          <p className="viewport-hint select-hint">
+            {exactShapes(data).size ? "Click a face, edge or vertex to select it; with the filter on Solid, a whole part." : "Click the model to select a point."} Shift-click adds more.
+          </p>
+        )}
+
+        <div className="side">
+          <ReviewPanel ctx={{ id, state, revision, ui, setUi, refresh: live.refresh }} />
           <SelectionBox items={sel.items} text={sel.text} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null} />
         </div>
-      </section>
-
-      <StatusLine design={state} connected={live.connected} />
+      </div>
     </div>
   );
 }

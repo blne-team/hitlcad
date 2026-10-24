@@ -9,7 +9,9 @@ type UiMessage =
   | { kind: "patch"; patch: UiState; reveal: boolean }
   | { kind: "selection"; text: string }
   /** Copy the selections and open pins of the whole workspace, to paste into a chat. */
-  | { kind: "copy" };
+  | { kind: "copy" }
+  /** Toggle VS Code's Zen mode: the model on the whole screen. */
+  | { kind: "fullscreen" };
 
 const isPlainObject = (v: unknown): v is UiState => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -20,6 +22,7 @@ export function parseUiMessage(m: unknown): UiMessage | null {
   if (m.type === "hitlcad.ui" && isPlainObject(m.patch)) return { kind: "patch", patch: m.patch, reveal: m.reveal === true };
   if (m.type === "hitlcad.selection" && typeof m.text === "string") return { kind: "selection", text: m.text };
   if (m.type === "hitlcad.copy") return { kind: "copy" };
+  if (m.type === "hitlcad.fullscreen") return { kind: "fullscreen" };
   return null;
 }
 

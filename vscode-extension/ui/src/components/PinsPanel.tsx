@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api/client";
 import type { Pin } from "../api/types";
 import { copyForChat } from "../lib/selection";
@@ -61,7 +61,7 @@ export function PinsPanel({ designId, pins, revision, activePin, setActivePin, o
         <ol className="pins">
           {open.map((p, i) => (
             <PinRow
-              key={p.id}
+              key={`${p.id}:${p.note}`} // a note changed elsewhere replaces the draft here
               pin={p}
               index={i}
               elsewhere={p.revision !== null && p.revision !== revision ? revision : null}
@@ -114,7 +114,6 @@ interface RowProps {
 
 function PinRow({ pin, index, elsewhere, active, onFocus, onNote, onResolve, onRemove }: RowProps) {
   const [draft, setDraft] = useState(pin.note);
-  useEffect(() => setDraft(pin.note), [pin.note]);
   const save = () => {
     if (draft.trim() !== pin.note) onNote(draft.trim());
   };
