@@ -418,16 +418,18 @@ class DesignGraph:
         instances = self._instances()
 
         def status(results: list[Result]) -> str:
+            """The worst: a failing error, a failing warning, unverified, pass; none without results."""
+            if any(r.status == "fail" and r.severity == "error" for r in results):
+                return "fail"
+            if any(r.status == "fail" for r in results):
+                return "warning"
             statuses = {r.status for r in results}
-            return (
-                "fail"
-                if "fail" in statuses
-                else "unverified"
-                if "unverified" in statuses
-                else "pass"
-                if statuses
-                else "none"
-            )
+            return "unverified" if "unverified" in statuses else "pass" if statuses else "none"
+
+        def own(address: str, analysis: str) -> list[Result]:
+            """An edge's own results, and any collision through its range of motion."""
+            return [r for r in self.results if r.subject == address
+                    and (r.analysis == analysis or r.analysis == "motion" and r.status == "fail")]  # fmt: skip
 
         nodes = [{"id": n, "kind": "catalog" if p.catalog else "made", "label": n, "role": p.role,
                   "count": len(instances.get(n, [])), "status": status(self._about(n, *instances.get(n, [])))}
@@ -437,15 +439,15 @@ class DesignGraph:
         edges = []
         for m in d.mates:
             edges.append({"id": m.address, "kind": "mate", "type": m.type, "source": _owner(m.a), "target": _owner(m.b),
-                          "status": status([r for r in self.results if r.subject == m.address])})  # fmt: skip
+                          "status": status(own(m.address, "mate"))})  # fmt: skip
         for x in d.relations:
             edges.append({"id": x.address, "kind": "relation", "type": x.type, "source": _owner(x.a), "target": _owner(x.b),
-                          "status": status([r for r in self.results if r.subject == x.address])})  # fmt: skip
+                          "status": status(own(x.address, "relation"))})  # fmt: skip
         for fs in d.fasteners:
             for hole in [*fs.through, fs.into]:
                 edges.append({"id": f"{fs.address}|{hole}", "kind": "fastener", "type": "fastener",
                               "source": _owner(fs.fastener), "target": _owner(hole),
-                              "status": status([r for r in self.results if r.subject == fs.address])})  # fmt: skip
+                              "status": status(own(fs.address, "fastener"))})  # fmt: skip
         return {"nodes": nodes, "edges": edges, "ground": d.ground}
 
 

@@ -6,10 +6,14 @@ import { humanize } from "../lib/format";
 interface Props {
   design: DesignState;
   revision: Revision | null;
+  configuration: string | null;
+  setConfiguration: (name: string | null) => void;
 }
 
-export function ParametersPanel({ design, revision }: Props) {
-  const specs = revision?.spec.parameters ?? [];
+/** The configurations of the design on screen, and its parameters (the default configuration) to tune. */
+export function ParametersPanel({ design, revision, configuration, setConfiguration }: Props) {
+  const specs = revision?.spec.design.parameters ?? [];
+  const configurations = revision?.spec.design.configurations ?? {};
   const original = useMemo(() => Object.fromEntries(specs.map((p) => [p.name, p.value])), [specs]);
   const [values, setValues] = useState<Record<string, ParamValue>>(original);
   const [busy, setBusy] = useState(false);
@@ -39,10 +43,32 @@ export function ParametersPanel({ design, revision }: Props) {
     }
   };
 
+  const show = async (name: string | null) => {
+    setConfiguration(name);
+    if (design.revisions.some((r) => (r.spec.configuration ?? null) === name)) return;
+    try {
+      await api.build(design.id, name); // a configuration never built: build it
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="params">
+      {Object.keys(configurations).length > 0 && (
+        <div className="configurations" role="radiogroup" aria-label="Configuration">
+          {[null, ...Object.keys(configurations)].map((name) => (
+            <button key={name ?? ""} type="button" role="radio" aria-checked={configuration === name}
+              className={`toggle${configuration === name ? " on" : ""}`} disabled={working} onClick={() => void show(name)}
+              title={name ? Object.entries(configurations[name]!).map(([k, v]) => `${k} = ${String(v)}`).join(", ") : "The parameters as written"}>
+              {name ?? "default"}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="muted">
-        Values from revision {revision.id}. Rebuilding writes them to design.json, so your agent sees them in the file.
+        Parameters as design.json writes them{configuration ? `; configuration ${configuration} sets ${Object.keys(configurations[configuration] ?? {}).join(", ")} over them` : ""}.
+        Rebuilding writes them to design.json, so your agent sees them in the file.
       </p>
       {specs.map((p) => (
         <ParamRow key={p.name} spec={p} value={values[p.name] ?? p.value} changed={p.name in changed}

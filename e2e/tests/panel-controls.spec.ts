@@ -1,15 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import { api, clickModel, openPanel, sentToExtension, viewerReady, WORK } from "../helpers";
+import { api, clickModel, openPanel, sentToExtension, viewerReady, WORK, writeDesign } from "../helpers";
 
 /** Every control of the 3D editor tab and the Design view does what it says, on a design of its own. */
 
 const MODEL = `from build123d import *
 
 
-def build(p):
-    return Box(p["width"], 20, p["height"], align=(Align.CENTER, Align.CENTER, Align.MIN))
+def build(p, i):
+    return {"box": (Box(p["width"], 20, p["height"], align=(Align.CENTER, Align.CENTER, Align.MIN)), {})}
+`;
+const ASSEMBLY = `from build123d import Pos
+
+
+def build(p, i):
+    return {"box": [Pos()]}
 `;
 
 interface State {
@@ -25,13 +31,12 @@ const state = () => api<State>("GET", `/api/designs/${id}`);
 test.beforeAll(async () => {
   folder = path.join(WORK, "project", "designs", "controls");
   ({ id } = await api<{ id: string }>("POST", "/api/designs", { path: folder, create: { name: "Controls", backend: "build123d" } }));
-  const file = path.join(folder, "design.json");
   const parameters = [
     { name: "width", label: "Width", value: 30, min: 1, max: 100 },
     { name: "height", label: "Height", value: 10, min: 1, max: 100 },
   ];
-  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), parameters }, null, 2));
-  fs.writeFileSync(path.join(folder, "model.py"), MODEL);
+  writeDesign(folder, { parameters, ground: "box", parts: { box: { role: "a box", file: "parts/box.py", material: "PLA" } } },
+    { "parts/box.py": MODEL, "assembly.py": ASSEMBLY });
   await api("POST", `/api/designs/${id}/build`);
   await api("POST", `/api/designs/${id}/parameters`, { values: { height: 15 } });
 });
@@ -43,7 +48,9 @@ test("the Design view's tabs each show their panel", async ({ page }) => {
   for (const [name, shows] of [
     ["Parameters", page.getByRole("button", { name: "Rebuild with these values" })],
     ["Changes", page.locator(".changes-pick select")],
-    ["Checks", page.locator("h3", { hasText: "Files" })],
+    ["Results", page.locator("h3", { hasText: "Files" })],
+    ["Structure", page.locator(".structure svg")],
+    ["BOM", page.locator(".bom-table")],
     ["Brief", page.locator(".tab-body")],
     ["Pins", page.locator(".pins-panel")],
   ] as const) {
@@ -55,7 +62,7 @@ test("the Design view's tabs each show their panel", async ({ page }) => {
 
 test("pins: write a note, resolve, reopen, remove", async ({ page }) => {
   for (const pin of (await state()).pins) await api("DELETE", `/api/designs/${id}/pins/${pin.id}`);
-  const onPart = { part: "/Group/model", topo: "solid" };
+  const onPart = { instance: "box", topo: "solid" };
   await api("POST", `/api/designs/${id}/pins`, { point: [0, 0, 15], component: onPart });
   await api("POST", `/api/designs/${id}/pins`, { point: [0, -10, 5], component: onPart });
   await openPanel(page, { name: "inspector", id });
@@ -117,9 +124,9 @@ test("changes: compare the revision on screen with any earlier one", async ({ pa
   await expect(page.locator(".changes .metrics").first()).not.toContainText("Height");
 });
 
-test("checks: every listed file is served", async ({ page, request }) => {
+test("results: every listed file is served", async ({ page, request }) => {
   await openPanel(page, { name: "inspector", id });
-  await tab(page, "Checks");
+  await tab(page, "Results");
   const links = await page.locator(".files a").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).href));
   expect(links.length).toBeGreaterThan(0);
   for (const href of links) expect((await request.get(href)).status(), href).toBe(200);

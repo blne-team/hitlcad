@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Revision } from "../api/types";
 import { toExtension } from "./host";
 
-export type InspectorTab = "pins" | "parameters" | "changes" | "report" | "brief";
+export type InspectorTab = "pins" | "structure" | "parameters" | "changes" | "report" | "bom" | "brief";
 
 /**
  * UI state a design's 3D editor and its Design view share. They are separate webviews: each sends
@@ -17,9 +17,11 @@ export interface DesignUi {
   placing: boolean;
   activePin: string | null;
   tab: InspectorTab;
+  /** The configuration on screen; null is the parameters as written. */
+  configuration: string | null;
 }
 
-const INITIAL: DesignUi = { revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins" };
+const INITIAL: DesignUi = { revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;
 
@@ -46,10 +48,11 @@ export function useDesignUi(): [DesignUi, Update] {
   return [ui, update];
 }
 
-/** The revision `ui.revision` names, else the latest successful one, else the latest. */
-export function currentRevision(revisions: Revision[], chosen: number | null): Revision | null {
+/** The revision `ui.revision` names, else the latest successful one of the configuration, else its latest. */
+export function currentRevision(revisions: Revision[], chosen: number | null, configuration: string | null = null): Revision | null {
   if (chosen !== null) return revisions.find((r) => r.id === chosen) ?? null;
-  return [...revisions].reverse().find((r) => r.report.status === "succeeded") ?? revisions[revisions.length - 1] ?? null;
+  const own = revisions.filter((r) => (r.spec.configuration ?? null) === configuration);
+  return [...own].reverse().find((r) => r.report.status === "succeeded") ?? own[own.length - 1] ?? null;
 }
 
 /** The revision to compare `current` against: the chosen base, else the last successful one before it. */

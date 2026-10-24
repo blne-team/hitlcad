@@ -35,6 +35,16 @@ export async function api<T>(method: string, route: string, body?: unknown): Pro
   return (text ? JSON.parse(text) : null) as T;
 }
 
+/** Write a design's files as an agent would: design.json (merged into what create_design scaffolded) and its code. */
+export function writeDesign(folder: string, design: Record<string, unknown>, files: Record<string, string>) {
+  const file = path.join(folder, "design.json");
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...design }, null, 2));
+  for (const [rel, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(folder, rel)), { recursive: true });
+    fs.writeFileSync(path.join(folder, rel), text);
+  }
+}
+
 /** The harness page of a webview showing `view`. */
 export const panelUrl = (view: PanelView) => `/panel?view=${encodeURIComponent(JSON.stringify(view))}`;
 

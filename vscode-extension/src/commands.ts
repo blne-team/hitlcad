@@ -69,7 +69,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
     fs.mkdirSync(dir, { recursive: true });
     const design = await api.openDesign(dir, { name: suggestedName, backend: picked.name });
     void vscode.window.showInformationMessage(
-      `hitlcad: ${design.name} is ready. Describe the part to Claude Code or Codex in their chat; every save rebuilds the panel.`,
+      `hitlcad: ${design.name} is ready. Describe the product to Claude Code or Codex in their chat: they declare its parts in design.json first, and every save rebuilds the panel.`,
     );
     return toRef(design);
   };
@@ -94,9 +94,9 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
   };
 
   const openEditorAndPanel = async (design: DesignRef) => {
-    const model = path.join(design.path, "model.py");
-    if (fs.existsSync(model)) {
-      await vscode.window.showTextDocument(vscode.Uri.file(model), { viewColumn: vscode.ViewColumn.One, preview: false });
+    const structure = path.join(design.path, "design.json"); // the structure: parts, connectors, mates
+    if (fs.existsSync(structure)) {
+      await vscode.window.showTextDocument(vscode.Uri.file(structure), { viewColumn: vscode.ViewColumn.One, preview: false });
     }
     await panels.show(design, vscode.ViewColumn.Beside);
   };

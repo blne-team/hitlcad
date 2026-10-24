@@ -889,3 +889,137 @@ details summary {
 .code.diff .d-skip {
   color: var(--ink-3);
 }
+
+/* ------------------------------------------------------------------ results, structure, BOM */
+
+.result-group {
+  border-top: 1px solid var(--rule);
+  padding: 0.35rem 0;
+}
+.result-group > summary {
+  cursor: pointer;
+  font-family: var(--narrow);
+}
+.checks .sev-info .check-mark,
+.checks .sev-info .check-name {
+  color: var(--ink-3);
+}
+.source-file {
+  margin-left: 0.6rem;
+}
+
+.configurations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+.config-chip {
+  font-family: var(--narrow);
+  font-size: var(--step--1);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  padding: 0 0.35rem;
+  color: var(--ink-2);
+}
+
+.structure-canvas {
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--raised);
+  max-height: 60vh;
+}
+.structure svg {
+  display: block;
+  font-family: var(--narrow);
+}
+.structure .node {
+  cursor: pointer;
+}
+.structure .node rect {
+  fill: var(--surface);
+  stroke: var(--rule-strong);
+  stroke-width: 1.5;
+}
+.structure .node-catalog rect {
+  stroke-dasharray: 4 3;
+}
+.structure .node-component rect {
+  stroke-width: 2.5;
+}
+.structure .node.ground rect {
+  fill: var(--ground);
+}
+.structure .node-label {
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--ink);
+}
+.structure .node-role {
+  font-size: 11px;
+  fill: var(--ink-3);
+}
+.structure .edge path {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.4;
+}
+.structure .edge-relation path {
+  stroke-dasharray: 2 3;
+}
+.structure .edge-fastener path {
+  stroke-dasharray: 6 3;
+}
+.structure .edge text {
+  font-size: 10px;
+  fill: var(--ink-2);
+}
+.structure .edge-head {
+  fill: var(--ink-3);
+}
+.structure .st-pass rect,
+.structure .st-pass path {
+  stroke: var(--ok);
+}
+.structure .st-fail rect,
+.structure .st-fail path {
+  stroke: var(--fail);
+}
+.structure .st-unverified rect,
+.structure .st-unverified path,
+.structure .st-warning rect,
+.structure .st-warning path {
+  stroke: var(--warn);
+}
+.structure .st-unverified path {
+  stroke-dasharray: 3 3;
+}
+
+.bom-table thead th {
+  text-align: left;
+  font-family: var(--narrow);
+  color: var(--ink-3);
+}
+.bom-table .bom-component th {
+  font-weight: 700;
+}
+
+.motion-control {
+  position: absolute;
+  left: 50%;
+  top: 52px; /* below the viewer's toolbar, clear of the hints and the selection at the bottom */
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-m);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
+  z-index: 3;
+}
+.motion-control input[type="range"] {
+  width: 180px;
+}

@@ -6,7 +6,7 @@ import { messageHtml, panelOptions, panelPage } from "./webview";
 export const INSPECTOR_VIEW = "hitlcad.inspector";
 
 /**
- * The "Design" view: pins, parameters, changes, checks and brief of the design whose 3D editor
+ * The "Design" view: pins, structure, parameters, changes, results, bill of materials and brief of the design whose 3D editor
  * tab is active. A VS Code view, so it can be dragged to the bottom panel or either sidebar.
  */
 export class DesignInspector implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -54,7 +54,7 @@ export class DesignInspector implements vscode.WebviewViewProvider, vscode.Dispo
     const design = this.design;
     view.description = design?.name ?? "";
     if (!design) {
-      view.webview.html = messageHtml("Open a design to see its pins, parameters, changes and checks here.");
+      view.webview.html = messageHtml("Open a design to see its pins, structure, parameters, changes and results here.");
       return;
     }
     const html = await panelPage(view.webview, this.extensionUri, { name: "inspector", id: design.id }, `hitlcad: ${design.name}`);

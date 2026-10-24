@@ -103,6 +103,22 @@ class InstanceInfo(Model):
     transform: Matrix
 
 
+class MotionRange(Model):
+    """A mate's range of motion, for the panel to move its moving side through."""
+
+    mate: str
+    pair: str = Field(description="Which frames of a pattern, e.g. 'base.hinge ↔ lid.pin'")
+    kind: Literal["angle", "travel"]
+    start: float
+    end: float
+    continuous: bool
+    current: float = Field(description="Where it sits as assembled")
+    origin: tuple[float, float, float]
+    axis: tuple[float, float, float]
+    sign: float = Field(description="+1: the moving side turns with the motion about the axis; -1: against it")
+    moving: list[str] = Field(description="The instances that move")
+
+
 class InterfaceValue(Model):
     name: str
     value: Any
@@ -151,6 +167,7 @@ class BuildReport(Model):
     instances: list[InstanceInfo] = Field(default_factory=list)
     components: dict[str, BuildReport] = Field(default_factory=dict, description="Each component's own build")
     results: list[Result] = Field(default_factory=list)
+    motions: list[MotionRange] = Field(default_factory=list)
     bom: list[BomLine] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
 

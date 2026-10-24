@@ -28,6 +28,15 @@ export interface CadBounds {
   max: Vec3;
 }
 
+/** Instances moved along a mate's free motion: turned `amount` degrees about the axis, or slid `amount` mm along it. */
+export interface CadMotion {
+  instances: string[];
+  origin: Vec3;
+  axis: Vec3;
+  kind: "angle" | "travel";
+  amount: number;
+}
+
 const TREE_WIDTH = 240;
 const CLICK_SLOP_PX = 4; // a press that moves further is an orbit, not a click
 const COMPONENT_PATH = /^(.*)\/(faces|edges|vertices)\/\2_(\d+)$/;
@@ -39,6 +48,9 @@ const GHOST_COLOR = "#4c6ef5";
 
 const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, directIntensity: 1.1, metalness: 0.3, roughness: 0.65, defaultOpacity: 0.5, normalLen: 0 };
 const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, grid: [true, false, false], collapse: 1 };
+
+/** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
+export const instanceOf = (viewerPath: string): string => viewerPath.replace(/^\/+/, "").split("/").slice(1).join("/");
 
 const decode = (data: unknown): Shapes => {
   if (!isInstancedFormat(data)) throw new Error("the server sent a model the viewer cannot read");
@@ -64,6 +76,8 @@ export class CadView {
   private readonly markers: Three.Group;
   private readonly extent: number;
   private ghost: Three.Group | null = null;
+  private readonly rootId: string;
+  private readonly moved = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
   private press: { x: number; y: number } | null = null;
   private canvasSize: { width: number; height: number };
 
@@ -75,6 +89,7 @@ export class CadView {
     private readonly onPick: (pick: Pick, additive: boolean) => void,
   ) {
     const shapes = decode(data);
+    this.rootId = shapes.id;
     const bb = shapes.bb;
     this.bounds = bb ? { min: [bb.xmin, bb.ymin, bb.zmin], max: [bb.xmax, bb.ymax, bb.zmax] } : null;
     this.extent = bb ? Math.hypot(bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin) : 100;
@@ -130,6 +145,38 @@ export class CadView {
     let selected = 0;
     for (const m of markers) {
       this.markers.add(m.kind === "pin" ? this.pin(m, ++pins) : this.selection(m, ++selected));
+    }
+    this.redraw();
+  }
+
+  /**
+   * Move instances along a mate's free motion (their viewer groups, `${root}/${instance}`), or put everything
+   * back (`null`). The build places parts as assembled; this only previews the motion the build swept.
+   */
+  setMotion(motion: CadMotion | null): void {
+    for (const [group, base] of this.moved) {
+      group.position.copy(base.position);
+      group.quaternion.copy(base.quaternion);
+    }
+    this.moved.clear();
+    if (motion && motion.amount !== 0) {
+      const T = this.three;
+      const axis = new T.Vector3(...motion.axis).normalize();
+      const origin = new T.Vector3(...motion.origin);
+      const step =
+        motion.kind === "angle"
+          ? new T.Matrix4()
+              .makeTranslation(origin.x, origin.y, origin.z)
+              .multiply(new T.Matrix4().makeRotationAxis(axis, (motion.amount * Math.PI) / 180))
+              .multiply(new T.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z))
+          : new T.Matrix4().makeTranslation(axis.x * motion.amount, axis.y * motion.amount, axis.z * motion.amount);
+      for (const instance of motion.instances) {
+        const group = this.viewer.nestedGroup.groups[`${this.rootId}/${instance}`];
+        if (!group) continue;
+        this.moved.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone() });
+        const placed = step.clone().multiply(new T.Matrix4().compose(group.position, group.quaternion, group.scale));
+        placed.decompose(group.position, group.quaternion, new T.Vector3());
+      }
     }
     this.redraw();
   }
@@ -206,11 +253,11 @@ export class CadView {
     const point = hit.point.toArray();
     if (!this.brep) return { point, normal: null, component: null };
     if (filter.includes("solid")) {
-      return hit.info.solidPath ? { point, normal: null, component: { part: hit.info.solidPath, topo: "solid", index: 0 } } : null;
+      return hit.info.solidPath ? { point, normal: null, component: { instance: instanceOf(hit.info.solidPath), topo: "solid", index: 0 } } : null;
     }
     const m = COMPONENT_PATH.exec(hit.info.path);
     if (!m) return null;
-    return { point, normal: null, component: { part: m[1]!, topo: TOPO[m[2] as keyof typeof TOPO], index: Number(m[3]) } };
+    return { point, normal: null, component: { instance: instanceOf(m[1]!), topo: TOPO[m[2] as keyof typeof TOPO], index: Number(m[3]) } };
   }
 
   // ------------------------------------------------------------------ overlays (the viewer's three.js)

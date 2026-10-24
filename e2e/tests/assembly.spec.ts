@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, clickModel, fixtures, nothingBlocked, openPanel, viewerReady } from "../helpers";
 
-test("an assembly shows its parts by name, in the viewer, the report and build/", async ({ page }) => {
+test("an assembly shows its instances by name, in the viewer, the report, the structure and build/", async ({ page }) => {
   const { assemblyId, assemblyFolder } = fixtures();
   await openPanel(page, { name: "design", id: assemblyId });
   await viewerReady(page);
@@ -19,7 +19,7 @@ test("an assembly shows its parts by name, in the viewer, the report and build/"
   await page.locator(".tcv_shape_filter").getByText("Solid", { exact: true }).click();
   await clickModel(page, 0.5, 0.42);
   await expect(page.locator(".selection-box li")).toHaveCount(1);
-  await expect(page.locator(".selection-box li").first()).toContainText(/^1Whole part, volume .* \(part (lid|base)\) at/);
+  await expect(page.locator(".selection-box li").first()).toContainText(/^1Whole part, volume .* \(instance (lid|base)\) at/);
   const { selection } = await api<{ selection: { kind: string; component: { topo: string; index: number } }[] }>("GET", `/api/designs/${assemblyId}`);
   expect(selection.map((s) => [s.kind, s.component.topo, s.component.index])).toEqual([["solid", "solid", 0]]);
 
@@ -32,7 +32,10 @@ test("an assembly shows its parts by name, in the viewer, the report and build/"
   await page.locator(".pin-toggle").click();
 
   await openPanel(page, { name: "inspector", id: assemblyId });
-  await page.locator(".tab", { hasText: "Checks" }).click();
+  await page.locator(".tab", { hasText: "Structure" }).click();
+  await expect(page.locator(".structure .node", { hasText: "lid" })).toBeVisible();
+  await expect(page.locator(".structure .edge-mate")).toHaveClass(/st-pass/);
+  await page.locator(".tab", { hasText: "Results" }).click();
   await expect(page.locator("h3", { hasText: "Parts, 2" })).toBeVisible();
   await expect(page.locator(".metrics th", { hasText: "lid" })).toBeVisible();
   const preview = page.locator("figure.preview img"); // the server's render, loaded across origins
@@ -40,7 +43,7 @@ test("an assembly shows its parts by name, in the viewer, the report and build/"
   await expect.poll(() => preview.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await nothingBlocked(page);
 
-  for (const file of ["part-base.step", "part-base.stl", "part-lid.step", "part-lid.stl"]) {
+  for (const file of ["parts/base.step", "parts/base.stl", "parts/lid.step", "parts/lid.stl", "model.step"]) {
     expect(fs.existsSync(path.join(assemblyFolder, "build", file)), file).toBe(true);
   }
 });

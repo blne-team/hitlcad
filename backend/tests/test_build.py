@@ -151,6 +151,9 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     report = await build(core, folder, tmp_path / "a")
     (motion,) = results(report, "motion")
     assert motion.status == "fail" and "lid hits base" in motion.detail
+    (sweep,) = report.motions  # what the panel moves: the lid, about the hinge axis, -100 … 0°
+    assert (sweep.kind, sweep.start, sweep.end, sweep.moving) == ("angle", -100, 0, ["lid"])
+    assert sweep.axis == pytest.approx((1, 0, 0)) and sweep.current == pytest.approx(0, abs=1e-6)
     edit_json(folder / "design.json", lambda d: d["parameters"][6].update(value=0))  # no stop post
     clear = await build(core, folder, tmp_path / "b")
     (motion,) = results(clear, "motion")
@@ -172,6 +175,10 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     motion = results(report, "motion")  # a planetary is a closed loop: not analysed, never wrongly failed
     assert motion and not [r for r in motion if r.status == "fail"]
     assert any(r.status == "unverified" and "closed loop" in r.detail for r in motion)
+    (stack,) = [r for r in results(report, "requirement") if "axial gap" in r.subject]
+    assert stack.status == "pass" and stack.detail.startswith(
+        "0.500 mm nominal, 0.300 … 0.700 worst case (± 0.200), ± 0.141 RSS"
+    )
     ratio_5 = await build(core, folder, tmp_path / "ratio_5", "ratio_5")
     assert ratio_5.status == "succeeded" and len(results(ratio_5, "relation", "pass")) == 6
 

@@ -12,7 +12,7 @@ test("STEP picks name the exact face; shift adds, Esc clears", async ({ page }) 
 
   await clickModel(page, 0.5, 0.42);
   await expect(items(page)).toHaveCount(1);
-  await expect(items(page).first()).toContainText(/\((face|edge|vertex) \d+ of model\)/);
+  await expect(items(page).first()).toContainText(/\((face|edge|vertex) \d+ of block\)/);
 
   await clickModel(page, 0.42, 0.5, { shift: true });
   await expect(items(page)).toHaveCount(2);

@@ -1,13 +1,15 @@
 # hitlcad
 
-Parametric CAD for the coding agent you already use. Claude Code or Codex writes model code for
-**build123d** (exact B-rep, STEP) or **Blender** (meshes) in VS Code. hitlcad builds, measures
-and renders it, and shows each build in a 3D panel next to the code. Select faces, pin notes to
-the surface and tune parameters there, then keep talking to the agent in its own chat: it sees
-what you pointed at.
+Parametric CAD assemblies for the coding agent you already use. Claude Code or Codex declares a
+product's parts and how they connect, then writes the code that builds them in **build123d**
+(exact B-rep, STEP) or **Blender** (meshes), in VS Code. hitlcad builds it, verifies every
+connector, fit, gear mesh, fastener, collision, motion, process and requirement, and shows each
+build in a 3D panel next to the code. Select faces, pin notes to the surface and tune parameters
+there, then keep talking to the agent in its own chat: it sees what you pointed at.
 
 hitlcad has no chat or agent of its own. It adds MCP tools to your agent and a review panel to
-VS Code. See [docs/architecture.md](docs/architecture.md) for the design.
+VS Code. See [docs/architecture.md](docs/architecture.md) for the architecture and
+[docs/assembly-model.md](docs/assembly-model.md) for the model of a design.
 
 ## Install
 
@@ -63,7 +65,7 @@ cd e2e && npm ci && npx playwright install chromium && npm test
      `~/.codex/config.toml`, so Codex loads the hook. `hitlcad init --hooks --codex` allows both
      without asking.
    - `.vscode/settings.json` points VS Code's Python at the interpreter hitlcad builds with, so
-     `model.py` resolves `build123d`.
+     part files resolve `build123d`.
    - `CLAUDE.md` and `AGENTS.md` point the agents at hitlcad's skills and its rules.
    - `.claude/skills/` and `.agents/skills/` hold hitlcad's skills for Claude Code and Codex:
      `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract per
@@ -72,39 +74,48 @@ cd e2e && npm ci && npx playwright install chromium && npm test
 
    The extension starts `hitlcad serve` when needed.
 2. Run **hitlcad: New Design**, name it and pick a backend, or ask your agent to create one. A
-   design is a folder with `design.json` (backend, parameters, brief) and `model.py`
-   (`build(p)`).
-3. Describe the part to Claude Code or Codex in their panel. They edit the files with their
-   normal tools, so you review diffs as usual. **Every save rebuilds.** When a build finishes,
-   the design's panel opens beside the editor (`hitlcad.autoOpenPanel`). The files of the
-   latest successful build are in the design's `build/` folder: `model.step` (or
-   `model.blend`), `mesh.stl`, `preview.png`. That folder is git-ignored.
+   design is an assembly, in a folder (see [docs/assembly-model.md](docs/assembly-model.md)):
+   - `design.json`: the structure (parts, made or bought, with their connectors; the mates,
+     relations and fastener sets between them; components, which are other designs used as
+     sub-assemblies), parameters, configurations (variants), requirements and the brief;
+   - `interfaces.py`: the mating values two parts share, computed once;
+   - `parts/*.py`: the code that builds each part in its own frame, the way it is made;
+   - `assembly.py`: where each instance sits.
+3. Describe the product to Claude Code or Codex in their panel. They declare the structure
+   first and check it, then write the code part by part, with standard screws, inserts and
+   bearings from a catalog. They edit the files with their normal tools, so you review diffs as
+   usual. **Every save rebuilds** what changed: each part file is cached by exactly the
+   parameters, interface values and helpers it read. When a build finishes, the design's panel
+   opens beside the editor (`hitlcad.autoOpenPanel`). The files of the latest successful build
+   are in the design's git-ignored `build/` folder: the assembly (`model.step`, `mesh.stl`), each
+   part in its own frame (`parts/<part>.step`, `.stl`), `preview.png` and the outputs the
+   design asks for (bill of materials, 3MF, URDF, SDF).
 4. Review in the panel. The 3D view is [three-cad-viewer](https://github.com/bernhard-42/three-cad-viewer):
-   its toolbar has the part tree, clipping planes, distance and property measurement, zebra
-   stripes, explode and standard views. Pins, Parameters, Changes, Checks and Brief are in the
-   **hitlcad › Design** view, in the bottom panel by default; drag it to either sidebar like
-   any VS Code view. It follows the design tab you are looking at.
-   - **Select**: click a face, edge or vertex (build123d designs) or a point (Blender designs):
-     "make the selected hole 0.5 mm larger". Shift-click adds more. The viewer's filter (top
-     right, build123d designs) limits clicks to vertices, edges, faces or whole parts (Solid):
-     "make this part 2 mm thicker". While the viewer's distance or properties tool is on, clicks
-     measure instead; **Place pins** turns it off.
+   its toolbar has the instance tree, clipping planes, distance and property measurement, zebra
+   stripes, explode and standard views. Pins, Structure, Parameters, Changes, Results, BOM and
+   Brief are in the **hitlcad › Design** view, in the bottom panel by default; drag it to
+   either sidebar like any VS Code view. It follows the design tab you are looking at.
+   - **Select**: click a face, edge or vertex of an instance (B-rep parts) or a point (mesh
+     parts): "make the selected hole 0.5 mm larger". Picks are named by instance and connector,
+     e.g. `lid.screws[2]`. Shift-click adds more. The viewer's filter (top right) limits clicks
+     to vertices, edges, faces or whole instances (Solid). While the viewer's distance or
+     properties tool is on, clicks measure instead; **Place pins** turns it off.
+   - **Motion**: a mate with a range of motion (a hinge, a slide) gets a slider over the 3D view
+     that moves its moving side through the range the build checked for collisions.
    - **Place pins** with notes, then tell the agent "address my pins". It resolves them when
-     done.
-   - **Parameters**: changes are written to `design.json` and rebuilt.
+     done. Pins follow their instance and connector across rebuilds.
+   - **Structure**: parts and components as a graph, with the mates, relations and fastener
+     sets between them coloured by their results; click a part to select it. It also shows what
+     your agent reads about the design.
+   - **Parameters**: changes are written to `design.json` and rebuilt; switch configurations.
    - **Compare**: draw an earlier revision as a ghost; the **Changes** tab lists changed
-     parameters, size and volume, checks, and the `model.py` diff.
-   - **Assemblies**: a design of several parts returns `{"base": base, "lid": lid}` from
-     `build(p)`. Each part gets its own STEP/STL in `build/`, shows by name in the 3D view's tree
-     (and its exploded view), and overlaps between parts are reported; requirements can name a
-     part or the clearance between two parts.
-   - **Checks**: requirements, measurements, checks, renders, and STEP/STL downloads. Your
-     requirements live in `design.json` (`"requirements"`); the ones with a check, such as a size
-     range, a hole diameter, a mass limit or a minimum wall, are verified on every build and shown
-     as met, missed or for you to judge. A design that declares
-     `"manufacturing": {"process": "fdm"}` in `design.json` is also checked for FDM printing:
-     wall thickness against the nozzle and minimum wall, overhangs that need support, and bed
-     contact.
+     parameters, size and mass, results that changed and every file's diff.
+   - **Results**: what every build verified, by analysis: structure, parts, connector features,
+     mates and fits, relations, fastener sets, coverage, interference, motion, manufacturing
+     (FDM, CNC milling, sheet metal, injection molding, per made part in its own frame) and
+     requirements (size, mass, holes, walls, clearance, tolerance stacks), with renders and
+     downloads.
+   - **BOM**: made and bought parts with quantities, through components.
    - **Brief**: what the design is meant to be, as the agent wrote it.
 
 Your selection and open pins go to Claude Code or Codex with your next message: the project's
@@ -128,8 +139,11 @@ Environment variables (or `.env`), prefix `HITLCAD_`:
 | `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends (plugins via entry points) |
 | `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
 | `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
-| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Per-build deadline |
-| `HITLCAD_EXPORT_BUILDS` | `true` | Copy each successful build to the design's `build/` folder |
+| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
+| `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
+| `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
+| `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
+| `HITLCAD_VERIFY_MOTION_SAMPLES` | `24` | Positions sampled per range of motion |
 | `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
 | `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server |
 
@@ -149,7 +163,7 @@ uv run pytest                          # all tests; -m "not geometry" skips real
 uv run ruff check backend && uv run ruff format backend
 (cd vscode-extension && npm test)      # extension unit tests
 (cd vscode-extension && npm run compile)  # extension and panel UI (ui/ → out/ui/)
-uv run hitlcad build model.py --backend build123d --params params.json --out build-out
+uv run hitlcad build backend/tests/designs/gearbox --out build-out   # build and verify a design folder
 ```
 
 Dependencies resolve with a two-week supply-chain cooldown (`[tool.uv] exclude-newer` in

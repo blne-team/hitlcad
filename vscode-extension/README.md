@@ -1,6 +1,6 @@
 # hitlcad for VS Code
 
-Design parametric CAD parts by chatting with Claude Code or Codex in VS Code. Each design is a normal folder holding `design.json` and `model.py`. The agents edit `model.py` with their own tools. Every save rebuilds the model, and the hitlcad panel beside the editor shows the 3D result, the brief, the checks, pins and parameters for your review.
+Design parametric CAD assemblies by chatting with Claude Code or Codex in VS Code. Each design is a normal folder: `design.json` declares the parts, how they connect and what to buy; `interfaces.py`, `parts/` and `assembly.py` build and place them. The agents edit these files with their own tools. Every save rebuilds what changed and verifies every fit, fastener, joint and requirement, and the hitlcad panel beside the editor shows the 3D assembly, the results, the structure, the bill of materials, pins and parameters for your review.
 
 hitlcad is installed as a command-line tool. Its source code never needs to be in your workspace.
 
@@ -14,7 +14,7 @@ Unpack the hitlcad release (`hitlcad-<version>.tar.gz`) and run `./install.sh`, 
 2. Choose an empty folder, or let hitlcad create a subfolder. hitlcad adds:
    - `designs/` for your designs
    - `.mcp.json`, which connects Claude Code
-   - `.vscode/settings.json`, which points VS Code's Python at the interpreter hitlcad builds with, so `model.py` resolves `build123d`
+   - `.vscode/settings.json`, which points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d`
    - `CLAUDE.md` and `AGENTS.md`, which point the agents at hitlcad's skills
    - `.claude/skills/` and `.agents/skills/`, hitlcad's skills for Claude Code and Codex: how to work with designs, and the code contract of each backend
    - `.gitignore`
@@ -27,16 +27,17 @@ The extension starts the server (`hitlcad serve`) when it is needed. It stops it
 
 ## Workflow
 
-1. **hitlcad: New Design**. Give it a name ("Wall hook") and pick a backend: build123d for precise parts, Blender for organic shapes. The design folder appears under `designs/` with its `design.json`, and the hitlcad panel opens. There is no model yet: your agent writes `model.py` in the next step.
-2. **Ask your agent.** Open the Claude Code or Codex panel and describe what you want. For example: *"Design a wall hook for a 20 mm strap with two countersunk screw holes; write the brief first."* The agent edits `model.py` and `design.json` with its own tools and calls hitlcad's tools to build and inspect the result.
-3. **Save to rebuild.** Every save of `model.py` or `design.json` builds a new revision, and the design's panel opens beside the editor if it isn't showing (`hitlcad.autoOpenPanel`). **hitlcad: Rebuild Design** builds on demand. The latest successful build's files (`model.step`, `mesh.stl`, `preview.png`) are in the design's git-ignored `build/` folder.
-4. **Review in the panel.** The design's tab shows the 3D model; its Pins, Parameters, Changes, Checks and Brief are in the **hitlcad › Design** view (bottom panel by default; drag it to either sidebar like any VS Code view). The view follows the design tab you are looking at.
-   - Orbit the model and read the checks. The viewer's toolbar has the part tree, clipping planes, distance and property measurement, zebra stripes, explode and standard views.
+1. **hitlcad: New Design**. Give it a name ("Gearbox") and pick a backend: build123d for precise parts, Blender for organic shapes. The design folder appears under `designs/` with `design.json`, `interfaces.py`, `assembly.py` and `parts/`, and the hitlcad panel opens.
+2. **Ask your agent.** Open the Claude Code or Codex panel and describe what you want: *"A 4:1 planetary gearbox for a NEMA 17, printed in PLA, with a 608 bearing on the output."* The agent declares the structure in `design.json` first (parts, connectors, mates, the screws and bearings to buy), checks it, then writes the code part by part, calling hitlcad's tools to build, verify and measure.
+3. **Save to rebuild.** Every save builds a new revision; only part files whose inputs changed are rebuilt. The design's panel opens beside the editor if it isn't showing (`hitlcad.autoOpenPanel`). **hitlcad: Rebuild Design** builds on demand. The latest successful build's files (the assembly's `model.step` and `mesh.stl`, each part's STEP and STL in its own frame under `parts/`, the bill of materials, `preview.png`) are in the design's git-ignored `build/` folder.
+4. **Review in the panel.** The design's tab shows the 3D assembly; its Pins, Structure, Parameters, Changes, Results, BOM and Brief are in the **hitlcad › Design** view (bottom panel by default; drag it to either sidebar like any VS Code view). The view follows the design tab you are looking at.
+   - **Results**: what every build verified, by analysis: mates and fits, relations (gears), fastener sets (seating, clearance, thread engagement), collisions (also through each mate's range of motion), manufacturability per process, requirements.
+   - **Structure**: the parts and components, and the mates, relations and fastener sets between them, coloured by their results. Click a part to select it.
+   - **Parameters**: tune them with sliders (written to `design.json` and rebuilt), and switch between configurations, the design's variants.
+   - **Compare** with an earlier revision (ghost overlay; the **Changes** tab lists parameters, size, results that changed and every file's diff).
+   - **BOM**: the bill of materials, made and bought, with quantities.
    - Place pins with notes, then tell the agent *"address my pins"*. It resolves them when done.
-   - Change parameters with the sliders; the values are written to `design.json` and rebuilt.
-   - **Compare** with an earlier revision (ghost overlay; the **Changes** tab lists parameters, size, checks and the `model.py` diff).
-   - Read the brief the agent wrote.
-5. **Point at things.** Click a face, edge or vertex in the panel (a point on Blender designs), or a whole part with the filter at the top right on **Solid**; shift-click adds more, then say *"make the selected hole 0.5 mm larger"*. In projects made with **New Design Project** (or `hitlcad init`), your selection and open pins go to Claude Code or Codex with your next message, through the project's prompt hook; the panel shows *Sent to Claude Code at 14:02* or *Goes to your agent with your next message*. In Codex, trust the project and then its hook (`/hooks`) once. **Copy for chat** (**hitlcad: Copy Selections and Pins for Chat**) copies the selections and pins of every design in the workspace, plus model-file selections, to paste anywhere.
+5. **Point at things.** Click a face, edge or vertex in the panel (a point on Blender parts), or a whole part with the filter at the top right on **Solid**; shift-click adds more, then say *"make the selected hole 0.5 mm larger"*. Selections are named by instance and connector, e.g. `lid.screws[2]`. In projects made with **New Design Project** (or `hitlcad init`), your selection and open pins go to Claude Code or Codex with your next message, through the project's prompt hook; the panel shows *Sent to Claude Code at 14:02* or *Goes to your agent with your next message*. In Codex, trust the project and then its hook (`/hooks`) once. **Copy for chat** (**hitlcad: Copy Selections and Pins for Chat**) copies the selections and pins of every design in the workspace, plus model-file selections, to paste anywhere.
 
 ### Viewing any 3D file
 

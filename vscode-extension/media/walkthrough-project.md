@@ -2,7 +2,7 @@
 
 A design project is an ordinary folder for your CAD work. hitlcad adds:
 
-- `designs/`, where each design gets its own folder (`design.json` + `model.py`)
+- `designs/`, where each design gets its own folder
 - `.mcp.json`, which connects Claude Code to the hitlcad server
 - `CLAUDE.md` and `AGENTS.md`, which point Claude Code and Codex at hitlcad's skills
 - `.claude/skills/` and `.agents/skills/`, hitlcad's skills: how to work with designs, and the code contract of each backend

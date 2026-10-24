@@ -12,7 +12,7 @@ export function BriefPanel({ brief }: { brief: DesignBrief | null }) {
     return (
       <p className="muted pad">
         No brief yet. Ask your agent to write one into <code>design.json</code>: what the part is for, key dimensions
-        and assumptions. Requirements, verified on every build, are under Checks.
+        and assumptions. Requirements, verified on every build, are under Results.
       </p>
     );
   }
@@ -20,11 +20,6 @@ export function BriefPanel({ brief }: { brief: DesignBrief | null }) {
     <div className="brief">
       <h3>{brief.title}</h3>
       <p>{brief.summary}</p>
-      {brief.backend_rationale && (
-        <p className="muted">
-          {brief.backend}: {brief.backend_rationale}
-        </p>
-      )}
       {brief.key_dimensions.length > 0 && (
         <table className="metrics">
           <tbody>

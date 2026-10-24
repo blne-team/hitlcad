@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { api, clickModel, fixtures, openPanel, viewerReady } from "../helpers";
 
 interface Component {
-  part: string;
+  instance: string;
   topo: string;
   index: number;
 }
@@ -23,7 +23,7 @@ test("a selection reaches the server with its exact component", async ({ page })
   await clickModel(page, 0.5, 0.42);
   await expect(page.locator(".selection-box li")).toHaveCount(1);
   const [item] = (await state()).selection;
-  expect(item?.component).toMatchObject({ part: "/Group/model", topo: expect.stringMatching(/face|edge|vertex/) });
+  expect(item?.component).toMatchObject({ instance: "block", topo: expect.stringMatching(/face|edge|vertex/) });
 });
 
 test("a pin placed on the model records its component", async ({ page }) => {
@@ -33,8 +33,8 @@ test("a pin placed on the model records its component", async ({ page }) => {
   await clickModel(page, 0.5, 0.42);
   await expect.poll(async () => (await state()).pins.length).toBe(before + 1);
   const pin = (await state()).pins.at(-1)!;
-  expect(pin.component?.part).toBe("/Group/model");
-  expect(pin.label).toMatch(/of model\) at \(/);
+  expect(pin.component?.instance).toBe("block");
+  expect(pin.label).toMatch(/of block\) at \(/);
 });
 
 test("compare loads the earlier revision as a ghost", async ({ page }) => {

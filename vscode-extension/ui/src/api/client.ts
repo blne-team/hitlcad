@@ -1,5 +1,5 @@
 import { server } from "../lib/host";
-import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem } from "./types";
+import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -42,11 +42,15 @@ export const api = {
   removePin: (id: string, pinId: string) => request<void>(`/api/designs/${id}/pins/${pinId}`, { method: "DELETE" }),
   editParameters: (id: string, values: Record<string, ParamValue>) =>
     send<Revision>("POST", `/api/designs/${id}/parameters`, { values }),
+  build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
+  structure: (id: string, configuration: string | null) =>
+    request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),
   describeFile: (path: string, pick: Pick) => send<SelectionItem>("POST", "/api/files/describe", { path, ...pick }),
 };
 
-export const fileUrl = (designId: string, revision: number, name: string) =>
-  `${server}/api/designs/${designId}/revisions/${revision}/files/${encodeURIComponent(name)}`;
+/** A revision's file by its path in the revision, e.g. "parts/lid.step". */
+export const fileUrl = (designId: string, revision: number, path: string) =>
+  `${server}/api/designs/${designId}/revisions/${revision}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
 
 export const fileCadUrl = (path: string) => `${server}/api/files/cad?path=${encodeURIComponent(path)}`;
 

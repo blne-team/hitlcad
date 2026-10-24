@@ -195,8 +195,60 @@ class ClearanceCheck(_Bounded, _Check):
         return passed, f"{a.name} to {b.name}: {detail}"
 
 
+class StackCheck(_Bounded, _Check):
+    """A tolerance stack: the gap between two connector frames along the first one's Z, as built (nominal),
+    worst case (± the sum of the contributors' tolerances) and statistically (± their root sum of squares).
+    `tolerances` maps each contributing part to its ± tolerance in mm, as the process holds it; the check
+    needs both the worst case and the nominal within min and max, and reports the RSS beside them."""
+
+    kind: Literal["stack"]
+    between: tuple[str, str] = Field(description="Connector ends, e.g. ['housing.top', 'carrier.output']")
+    tolerances: dict[str, float] = Field(min_length=1, description="Contributing part -> ± tolerance, mm")
+    example = {
+        "kind": "stack",
+        "between": ["carrier.axis", "housing.top"],
+        "tolerances": {"carrier": 0.1, "housing": 0.15},
+        "min": 0.2,
+    }
+
+    def targets(self) -> list[str]:
+        return [*self.between, *self.tolerances]
+
+    def verify(self, build: BuildBodies) -> Verdict:
+        import math
+
+        from hitlcad.core import frames as fr
+
+        a, b = (build.built.frames(end) for end in self.between)
+        if len(a) != 1 or len(b) != 1:
+            return (
+                False,
+                f"a stack runs between two single frames; {self.between[0]} has {len(a)}, {self.between[1]} {len(b)}",
+            )
+        unknown = sorted(set(self.tolerances) - set(build.built.parts))
+        if unknown:
+            return False, f"tolerances name {', '.join(unknown)}, which are not parts of this design"
+        nominal = fr.along(fr.origin(b[0].frame), fr.origin(a[0].frame), fr.z_axis(a[0].frame))
+        worst = sum(abs(t) for t in self.tolerances.values())
+        rss = math.sqrt(sum(t * t for t in self.tolerances.values()))
+        low, high = nominal - worst, nominal + worst
+        ok = (self.min is None or low >= self.min) and (self.max is None or high <= self.max)
+        need = " and ".join(p for p in (f"≥ {self.min:g}" if self.min is not None else "",
+                                         f"≤ {self.max:g}" if self.max is not None else "") if p)  # fmt: skip
+        return ok, (f"{nominal:.3f} mm nominal, {low:.3f} … {high:.3f} worst case (± {worst:.3f}), ± {rss:.3f} RSS "
+                    f"over {len(self.tolerances)} parts (needs {need})")  # fmt: skip
+
+
 RequirementCheck = Annotated[
-    SizeCheck | FitsWithinCheck | VolumeCheck | MassCheck | HoleCheck | WallCheck | BodiesCheck | ClearanceCheck,
+    SizeCheck
+    | FitsWithinCheck
+    | VolumeCheck
+    | MassCheck
+    | HoleCheck
+    | WallCheck
+    | BodiesCheck
+    | ClearanceCheck
+    | StackCheck,
     Field(discriminator="kind"),
 ]
 REQUIREMENT_CHECKS: tuple[type[_Check], ...] = members(RequirementCheck)

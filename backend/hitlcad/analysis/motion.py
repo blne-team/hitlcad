@@ -11,94 +11,129 @@ hitlcad checks rather than solves, so it reports such a mate's motion as unverif
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
 from hitlcad.analysis.base import Context, label, result
 from hitlcad.analysis.coverage import Link, nested_links
 from hitlcad.analysis.interference import allowed, boxes_touch, overlap, placed_bounds
-from hitlcad.analysis.model import Leaf
+from hitlcad.analysis.model import BuiltDesign, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result
 from hitlcad.core.structure import _Mate, _Relation
 
 
-class Motion:
-    name = "motion"
+@dataclass
+class Plan:
+    """One mate's sweep: its free motions and ranges, which side moves, and the world it moves in."""
 
-    def run(self, ctx: Context) -> list[Result]:
-        built = ctx.built
-        leaves = {leaf.path: leaf for leaf in built.leaves()}
-        if not leaves or built.spec.ground is None:
-            return []
-        all_links, rigid_groups = nested_links(built, lambda design, name: design.spec.components[name].flexible)
-        clusters = _Clusters(leaves)
-        for group in rigid_groups:
-            clusters.union_all(group)
-        for link in all_links:
-            if link.rigid:
-                clusters.union(link.a.instance, link.b.instance)
-        try:
-            ground = clusters.find(built.leaves_of(built.spec.ground)[0].path)
-        except LookupError:
-            return []
-        moving_links = [k for k in all_links if isinstance(k.source, _Mate) and not k.rigid]
-        relations = [k for k in all_links if isinstance(k.source, _Relation)]
-        ok_pairs = allowed(all_links)
-        out = []
-        for link in moving_links:
-            mate: _Mate = link.source
-            ranges = self._ranges(mate, link)
-            if not ranges:
-                continue
-            out.append(self._sweep(ctx, link, ranges, moving_links, relations, clusters, ground, leaves, ok_pairs))
-        return out
+    link: Link
+    ranges: list[tuple[str, float, float, bool]]  # (free motion, start, end, continuous)
+    moving: set[str]  # clusters
+    sign: float
+    free: dict[str, float]
+    world: World
 
-    @staticmethod
-    def _ranges(mate: _Mate, link: Link) -> list[tuple[str, float, float, bool]]:
-        """(free motion, start, end, continuous) to sweep."""
-        limits = mate.limits_of()
-        out = []
-        for kind in mate.free_motion:
-            bounds = getattr(limits, kind) if limits else None
-            if bounds:
-                out.append((kind, bounds[0], bounds[1], False))
-            elif kind == "angle":
-                out.append((kind, 0.0, 360.0, True))
-        return out
 
-    def _sweep(self, ctx: Context, link: Link, ranges: list[tuple[str, float, float, bool]], moving_links: list[Link],
-               relations: list[Link], clusters: _Clusters, ground: str, leaves: dict[str, Leaf],
-               ok_pairs: dict[frozenset[str], str]) -> Result:  # fmt: skip
+@dataclass
+class World:
+    leaves: dict[str, Leaf]
+    clusters: _Clusters
+    ground: str
+    moving_links: list[Link]
+    relations: list[Link]
+    ok_pairs: dict[frozenset[str], str]
+
+    def leaves_of(self, clusters: set[str]) -> list[str]:
+        return [p for p in self.leaves if self.clusters.find(p) in clusters]
+
+
+def _ranges(mate: _Mate) -> list[tuple[str, float, float, bool]]:
+    limits = mate.limits_of()
+    out = []
+    for kind in mate.free_motion:
+        bounds = getattr(limits, kind) if limits else None
+        if bounds:
+            out.append((kind, bounds[0], bounds[1], False))
+        elif kind == "angle":
+            out.append((kind, 0.0, 360.0, True))
+    return out
+
+
+def plans(built: BuiltDesign, tol: Any) -> list[Plan | Result]:
+    """A plan for every mate with a range of motion, or the result saying why it does not move on its own."""
+    leaves = {leaf.path: leaf for leaf in built.leaves()}
+    if not leaves or built.spec.ground is None:
+        return []
+    all_links, rigid_groups = nested_links(built, lambda design, name: design.spec.components[name].flexible)
+    clusters = _Clusters(leaves)
+    for group in rigid_groups:
+        clusters.union_all(group)
+    for link in all_links:
+        if link.rigid:
+            clusters.union(link.a.instance, link.b.instance)
+    try:
+        ground = clusters.find(built.leaves_of(built.spec.ground)[0].path)
+    except LookupError:
+        return []
+    moving_links = [k for k in all_links if isinstance(k.source, _Mate) and not k.rigid]
+    world = World(leaves, clusters, ground, moving_links, [k for k in all_links if isinstance(k.source, _Relation)],
+                  allowed(all_links))  # fmt: skip
+    out: list[Plan | Result] = []
+    for link in moving_links:
         mate: _Mate = link.source
+        ranges = _ranges(mate)
+        if not ranges:
+            continue
         about = [link.a.instance, link.b.instance, mate.a, mate.b]
         if clusters.find(link.a.instance) == clusters.find(link.b.instance):
-            return result(self.name, mate.address, True, f"{label(link.a)} ↔ {label(link.b)}: held by rigid mates or "
-                          "fasteners as well, so it does not move", about, severity="info")  # fmt: skip
+            out.append(result(NAME, mate.address, True, f"{label(link.a)} ↔ {label(link.b)}: held by rigid mates or "
+                              "fasteners as well, so it does not move", about, severity="info"))  # fmt: skip
+            continue
         side_b = clusters.side(link.b.instance, moving_links, exclude=link, ground=ground)
         side_a = clusters.side(link.a.instance, moving_links, exclude=link, ground=ground)
         if side_b is None and side_a is None:
-            return result(self.name, mate.address, None, f"{label(link.a)} ↔ {label(link.b)}: in a closed loop of "
-                          "mates, it moves only with the rest of the loop; not analysed without a solver", about)  # fmt: skip
+            out.append(result(NAME, mate.address, None, f"{label(link.a)} ↔ {label(link.b)}: in a closed loop of "
+                              "mates, it moves only with the rest of the loop; not analysed without a solver", about))  # fmt: skip
+            continue
         moving, sign = (side_b, 1.0) if side_b is not None else (side_a, -1.0)
         assert moving is not None
-        free = mate.verify(link.a.frame, mate.facing(link.b.frame), "axial", ctx.tol).free
+        free = mate.verify(link.a.frame, mate.facing(link.b.frame), "axial", tol).free
+        out.append(Plan(link, ranges, moving, sign, free, world))
+    return out
+
+
+NAME = "motion"
+
+
+class Motion:
+    name = NAME
+
+    def run(self, ctx: Context) -> list[Result]:
+        return [p if isinstance(p, Result) else self._sweep(ctx, p) for p in plans(ctx.built, ctx.tol)]
+
+    def _sweep(self, ctx: Context, plan: Plan) -> Result:
+        link, w = plan.link, plan.world
+        mate: _Mate = link.source
+        about = [link.a.instance, link.b.instance, mate.a, mate.b]
         n = ctx.tol.motion_samples
         swept = []
-        for kind, lo, hi, continuous in ranges:
-            current = free.get(kind, 0.0)
+        for kind, lo, hi, continuous in plan.ranges:
+            current = plan.free.get(kind, 0.0)
             values = (current + np.arange(n) * (hi - lo) / n) if continuous else np.linspace(lo, hi, n)
             values = sorted(values, key=lambda v: abs(v - current))  # the first collision reached from where it sits
             unit = "°" if kind == "angle" else " mm"
             for value in values:
                 delta = float(value - current)
-                motions = {c: mate.motion(link.a.frame, kind, sign * delta) for c in moving}
-                stuck = self._propagate(motions, kind, delta, link, moving_links, relations, clusters, ground)
+                motions = {c: mate.motion(link.a.frame, kind, plan.sign * delta) for c in plan.moving}
+                stuck = self._propagate(motions, kind, delta, link, w.moving_links, w.relations, w.clusters, w.ground)
                 if stuck:
                     return result(self.name, mate.address, None, f"{label(link.a)} ↔ {label(link.b)}: its motion is "
                                   f"coupled by {', '.join(sorted(stuck))} to parts that cannot move with it here (a "
                                   "closed loop or the ground); not analysed without a solver", about)  # fmt: skip
-                hit = self._collision(ctx, motions, clusters, leaves, ok_pairs)
+                hit = self._collision(ctx, motions, w.clusters, w.leaves, w.ok_pairs)
                 if hit:
                     a, b, shared = hit
                     return result(self.name, mate.address, False, f"{label(link.a)} ↔ {label(link.b)} at "

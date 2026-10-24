@@ -9,7 +9,7 @@ export function StatusLine({ design, connected }: { design: DesignState; connect
       <span className={`status-text status-${status}`}>{label}</span>
       {design.error && <span className="muted" title={design.error}>{design.error.slice(0, 160)}</span>}
       <span className="spacer" />
-      <span className="muted">Saving model.py or design.json rebuilds.</span>
+      <span className="muted">Saving the design's files rebuilds what changed.</span>
       <span className={connected ? "conn ok" : connected === null ? "conn" : "conn fail"}>
         {connected ? "Live" : connected === null ? "Connecting" : "Reconnecting"}
       </span>

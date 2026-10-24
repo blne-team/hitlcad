@@ -87,8 +87,9 @@ $connectors
 frames must agree in what the type fixes (within `verification`). Optional: `fit`
 (`{"clearance": [min, max]}` diametral mm, negative is interference, or `{"iso": "H7/g6"}`) between a
 hole and a shaft; `limits` (`{"angle": [lo, hi]}` degrees, `{"travel": [lo, hi]}` mm), swept for
-collisions; `offset` (mm along a's Z); `overlap: true` when the parts are meant to overlap there (a
-heat-set insert's knurls, a modelled thread). Types:
+collisions; `offset` (mm along a's Z); `flip: true` when b's Z runs with a's (a shaft entering a bore
+from the end opposite its declared opening); `overlap: true` when the parts are meant to overlap
+there (a heat-set insert's knurls, a modelled thread). Types:
 $mates
 
 **Relations** (`"relations": [...]`), verified from the frames and the connectors' nominal values:

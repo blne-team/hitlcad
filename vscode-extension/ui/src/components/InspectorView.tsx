@@ -1,13 +1,16 @@
 import type { ReactNode } from "react";
+import { api } from "../api/client";
 import type { DesignState, Revision } from "../api/types";
 import { useDesign } from "../hooks/useDesign";
 import { baseRevision, currentRevision, type DesignUi, type InspectorTab, useDesignUi } from "../lib/designUi";
+import { BomPanel } from "./BomPanel";
 import { BriefPanel } from "./BriefPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { ParametersPanel } from "./ParametersPanel";
 import { deliveryStatus } from "../lib/delivery";
 import { PinsPanel } from "./PinsPanel";
 import { ReportPanel } from "./ReportPanel";
+import { StructurePanel } from "./StructurePanel";
 
 /** What a tab renders from: the design, the revision on screen and the shared UI state. */
 interface TabContext {
@@ -46,7 +49,29 @@ const TABS: Tab[] = [
       />
     ),
   },
-  { id: "parameters", label: "Parameters", render: ({ state, revision }) => <ParametersPanel design={state} revision={revision} /> },
+  {
+    id: "structure",
+    label: "Structure",
+    badge: ({ revision }) => (revision?.report.results ?? []).filter((r) => r.status === "fail" && ["mate", "relation", "fastener", "coverage", "structure"].includes(r.analysis)).length,
+    render: ({ id, state, revision, ui, refresh }) => (
+      <StructurePanel
+        designId={id}
+        revision={revision}
+        configuration={ui.configuration}
+        latest={state.revisions[state.revisions.length - 1]?.id ?? null}
+        onSelect={(instance, point) =>
+          void api.setSelection(id, revision?.id ?? null, [{ point, normal: null, component: { instance, topo: "solid", index: 0 } }]).then(refresh)
+        }
+      />
+    ),
+  },
+  {
+    id: "parameters",
+    label: "Parameters",
+    render: ({ state, revision, ui, setUi }) => (
+      <ParametersPanel design={state} revision={revision} configuration={ui.configuration} setConfiguration={(c) => setUi({ configuration: c, revision: null })} />
+    ),
+  },
   {
     id: "changes",
     label: "Changes",
@@ -59,11 +84,18 @@ const TABS: Tab[] = [
       />
     ),
   },
-  { id: "report", label: "Checks", render: ({ id, revision }) => <ReportPanel designId={id} revision={revision} /> },
+  {
+    id: "report",
+    label: "Results",
+    badge: ({ revision }) => (revision?.report.results ?? []).filter((r) => r.status === "fail").length,
+    render: ({ id, revision }) => <ReportPanel designId={id} revision={revision} />,
+  },
+  { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },
   { id: "brief", label: "Brief", render: ({ state }) => <BriefPanel brief={state.brief} /> },
 ];
 
-/** A design's pins, parameters, changes, checks and brief: VS Code's "hitlcad: Design" view, beside the 3D editor. */
+/** A design's pins, structure, parameters, changes, results, bill of materials and brief: VS Code's "hitlcad: Design"
+ * view, beside the 3D editor. */
 export function InspectorView({ id }: { id: string }) {
   const live = useDesign(id);
   const { state } = live;
@@ -77,7 +109,7 @@ export function InspectorView({ id }: { id: string }) {
     );
   }
 
-  const ctx: TabContext = { id, state, revision: currentRevision(state.revisions, ui.revision), ui, setUi, refresh: live.refresh };
+  const ctx: TabContext = { id, state, revision: currentRevision(state.revisions, ui.revision, ui.configuration), ui, setUi, refresh: live.refresh };
   const active = TABS.find((t) => t.id === ui.tab) ?? TABS[0]!;
 
   return (

@@ -107,6 +107,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/designs/{design_id}/structure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Structure
+         * @description The design graph for the panel's Structure view, and the overview an agent would read.
+         */
+        get: operations["structure_api_designs__design_id__structure_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog */
+        get: operations["catalog_api_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/designs/{design_id}/parameters": {
         parameters: {
             query?: never;
@@ -124,7 +161,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/designs/{design_id}/revisions/{revision_id}/files/{name}": {
+    "/api/designs/{design_id}/revisions/{revision_id}/files/{path}": {
         parameters: {
             query?: never;
             header?: never;
@@ -132,7 +169,7 @@ export interface paths {
             cookie?: never;
         };
         /** Revision File */
-        get: operations["revision_file_api_designs__design_id__revisions__revision_id__files__name__get"];
+        get: operations["revision_file_api_designs__design_id__revisions__revision_id__files__path__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -352,9 +389,6 @@ export interface components {
         /**
          * Artifact
          * @description A file produced for a revision; ``path`` is relative to the revision directory.
-         *
-         *     Roles a backend produces: ``mesh`` (mesh.stl, every backend), ``exchange`` (the B-rep as STEP),
-         *     ``native`` (the kernel's own file, e.g. .blend), and ``part_mesh`` / ``part_exchange`` per assembly part.
          */
         Artifact: {
             /** Name */
@@ -365,9 +399,9 @@ export interface components {
             media_type: string;
             /**
              * Role
-             * @enum {string}
+             * @description source, mesh, exchange, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name
              */
-            role: "source" | "params" | "native" | "mesh" | "view" | "exchange" | "part_mesh" | "part_exchange" | "objects" | "preview" | "log" | "report";
+            role: string;
             /** Sha256 */
             sha256: string;
             /** Bytes */
@@ -381,10 +415,43 @@ export interface components {
             title: string;
             /** Summary */
             summary: string;
+            /** Brep */
+            brep: boolean;
             /** Available */
             available: boolean;
             /** Detail */
             detail: string;
+        };
+        /**
+         * BallMate
+         * @description Turns about its origin: the origins coincide.
+         */
+        BallMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ball";
         };
         /**
          * BodiesCheck
@@ -392,10 +459,10 @@ export interface components {
          */
         BodiesCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -404,11 +471,61 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** BomLine */
+        BomLine: {
+            /**
+             * Level
+             * @description 0 for this design's own parts, deeper for components
+             */
+            level: number;
+            /**
+             * Path
+             * @description Where it is used: the part, or component/part
+             */
+            path: string;
+            /** Number */
+            number: string;
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "made" | "catalog" | "component";
+            /** Material */
+            material: string | null;
+            /** Process */
+            process: string | null;
+            /**
+             * Designation
+             * @default
+             */
+            designation: string;
+            /**
+             * Supplier
+             * @default
+             */
+            supplier: string;
+            /**
+             * Mpn
+             * @default
+             */
+            mpn: string;
+        };
         /** BuildReport */
         BuildReport: {
             status: components["schemas"]["BuildStatus"];
-            /** Backend */
-            backend: string;
+            /** Configuration */
+            configuration: string | null;
+            /**
+             * Values
+             * @description The parameter values built
+             */
+            values: {
+                [key: string]: number | boolean | string;
+            };
             /** Duration S */
             duration_s: number;
             /** Error */
@@ -418,34 +535,75 @@ export interface components {
              * @default
              */
             log_tail: string;
+            /** @description The whole placed assembly */
             metrics: components["schemas"]["MeshMetrics"] | null;
-            /** Checks */
-            checks: components["schemas"]["Check"][];
+            mass: components["schemas"]["MassProperties"] | null;
+            /** Interfaces */
+            interfaces: components["schemas"]["InterfaceValue"][];
+            assembly_reads: components["schemas"]["Reads"];
+            /** Parts */
+            parts: components["schemas"]["PartResult"][];
+            /** Instances */
+            instances: components["schemas"]["InstanceInfo"][];
             /**
-             * Parts
-             * @description Empty unless the design is an assembly
+             * Components
+             * @description Each component's own build
              */
-            parts: components["schemas"]["PartInfo"][];
-            /** Requirements */
-            requirements: components["schemas"]["RequirementResult"][];
+            components: {
+                [key: string]: components["schemas"]["BuildReport"];
+            };
+            /** Results */
+            results: components["schemas"]["Result"][];
+            /** Motions */
+            motions: components["schemas"]["MotionRange"][];
+            /** Bom */
+            bom: components["schemas"]["BomLine"][];
             /** Artifacts */
             artifacts: components["schemas"]["Artifact"][];
         };
+        /** BuildRequest */
+        BuildRequest: {
+            /**
+             * Configuration
+             * @description A named configuration; default: the parameters as written
+             */
+            configuration?: string | null;
+        };
         /**
          * BuildSpec
-         * @description Everything a build depends on: the model, and what it is checked and verified against.
+         * @description Everything a build depends on: the design, its sources, the configuration, the tolerances, and
+         *     the specs of the components it uses.
          */
         BuildSpec: {
-            /** Backend */
-            backend: string;
-            /** Source */
-            source: string;
-            /** Parameters */
-            parameters: components["schemas"]["ParamSpec"][];
-            /** Manufacturing */
-            manufacturing: components["schemas"]["FdmProcess"] | null;
-            /** Requirements */
-            requirements: components["schemas"]["Requirement"][];
+            design: components["schemas"]["DesignSpec"];
+            /**
+             * Sources
+             * @description Relative path -> text, for interfaces.py, assembly.py, parts/ and lib/
+             */
+            sources: {
+                [key: string]: string;
+            };
+            /**
+             * Assets
+             * @description Relative path -> sha256 of vendor/ files
+             */
+            assets: {
+                [key: string]: string;
+            };
+            /** Configuration */
+            configuration: string | null;
+            /**
+             * Overrides
+             * @description Parameter values a parent design binds
+             */
+            overrides: {
+                [key: string]: number | boolean | string;
+            };
+            tolerances: components["schemas"]["Tolerances"];
+            /** Components */
+            components: {
+                [key: string]: components["schemas"]["BuildSpec"];
+            };
         };
         /** BuildStarted */
         BuildStarted: {
@@ -464,10 +622,10 @@ export interface components {
              * @enum {string}
              */
             type: "build_started";
-            /** Backend */
-            backend: string;
             /** Origin */
             origin: string;
+            /** Configuration */
+            configuration: string | null;
         };
         /**
          * BuildStatus
@@ -483,27 +641,88 @@ export interface components {
             /** Mcp Url */
             mcp_url: string;
         };
-        /** Check */
-        Check: {
-            /** Name */
-            name: string;
-            /** Passed */
-            passed: boolean;
+        /**
+         * Catalog
+         * @description A bought part: what to buy, and how faithful its geometry is.
+         */
+        Catalog: {
             /**
-             * Detail
-             * @default
+             * Designation
+             * @description What to buy, e.g. 'ISO 4762 M3 × 14'
              */
-            detail: string;
+            designation: string;
             /**
-             * Severity
-             * @default error
+             * Fidelity
+             * @description exact: the manufacturer's geometry; simplified: an envelope, so fits against it are approximate
              * @enum {string}
              */
-            severity: "error" | "warning" | "info";
+            fidelity: "exact" | "simplified";
+            /**
+             * Supplier
+             * @default
+             */
+            supplier: string;
+            /**
+             * Mpn
+             * @description Manufacturer part number
+             * @default
+             */
+            mpn: string;
+        };
+        /** CatalogInfo */
+        CatalogInfo: {
+            /**
+             * Provider
+             * @description The catalog provider that made the geometry, or 'model' when the part file did
+             */
+            provider: string;
+            /**
+             * Designation
+             * @default
+             */
+            designation: string;
+            /** Material */
+            material: string | null;
+            /**
+             * Metadata
+             * @description What the provider knows: sizes, fastener data
+             */
+            metadata: {
+                [key: string]: number | boolean | string;
+            };
+        };
+        /** CatalogItem */
+        CatalogItem: {
+            /** Provider */
+            provider: string;
+            /**
+             * Family
+             * @description screw, nut, washer, insert, bearing, …
+             */
+            family: string;
+            /** Designation */
+            designation: string;
+            /**
+             * Call
+             * @description How model code makes it
+             */
+            call: string;
+            /** Sizes */
+            sizes: string[];
+            /**
+             * Connectors
+             * @description Connector -> kind and meaning
+             */
+            connectors: {
+                [key: string]: string;
+            };
+            /** Material */
+            material: string | null;
         };
         /**
          * ClearanceCheck
-         * @description The gap between two assembly parts, mm; parts that overlap have no gap and fail any minimum.
+         * @description The gap between two placed things (instances or component instances), mm. Things that overlap
+         *     have no gap and fail any minimum. Clearance is analysis, not a mate: use it for what must never touch.
          */
         ClearanceCheck: {
             /** Min */
@@ -522,16 +741,39 @@ export interface components {
             ];
         };
         /**
+         * CncMillingProcess
+         * @description 3-axis CNC milling from +Z (the part's own frame): concave vertical corners need a radius of at
+         *     least the tool radius, and pockets deeper than `max_depth_ratio` × their width are hard to reach.
+         */
+        CncMillingProcess: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            process: "cnc_milling";
+            /**
+             * Tool Diameter Mm
+             * @default 6
+             */
+            tool_diameter_mm: number;
+            /**
+             * Max Depth Ratio
+             * @default 4
+             */
+            max_depth_ratio: number;
+        };
+        /**
          * ComponentRef
-         * @description A B-rep face, edge or vertex as a 3D view picked it, `index` into that part's build123d
-         *     `faces()` / `edges()` / `vertices()`; or the whole part (`solid`, index 0).
+         * @description What a 3D view pick hit on a B-rep build: a face, edge or vertex of one instance, numbered as
+         *     `faces()` / `edges()` / `vertices()` of that instance's part (`build/parts/<part>.step`), or
+         *     the whole instance (`solid`, index 0).
          */
         "ComponentRef-Input": {
             /**
-             * Part
-             * @description Viewer part path, e.g. '/asm/block'
+             * Instance
+             * @description Instance address, e.g. 'lid' or 'tilt/planet[2]'
              */
-            part: string;
+            instance: string;
             /**
              * Topo
              * @enum {string}
@@ -545,15 +787,16 @@ export interface components {
         };
         /**
          * ComponentRef
-         * @description A B-rep face, edge or vertex as a 3D view picked it, `index` into that part's build123d
-         *     `faces()` / `edges()` / `vertices()`; or the whole part (`solid`, index 0).
+         * @description What a 3D view pick hit on a B-rep build: a face, edge or vertex of one instance, numbered as
+         *     `faces()` / `edges()` / `vertices()` of that instance's part (`build/parts/<part>.step`), or
+         *     the whole instance (`solid`, index 0).
          */
         "ComponentRef-Output": {
             /**
-             * Part
-             * @description Viewer part path, e.g. '/asm/block'
+             * Instance
+             * @description Instance address, e.g. 'lid' or 'tilt/planet[2]'
              */
-            part: string;
+            instance: string;
             /**
              * Topo
              * @enum {string}
@@ -565,6 +808,72 @@ export interface components {
              */
             index: number;
         };
+        /** ComponentSpec */
+        ComponentSpec: {
+            /**
+             * Design
+             * @description The component's design folder, relative to this one, e.g. ../gearbox
+             */
+            design: string;
+            /**
+             * Configuration
+             * @description One of the component's configurations
+             */
+            configuration: string | null;
+            /**
+             * Bind
+             * @description Component parameter -> this design's parameter or interface value
+             */
+            bind: {
+                [key: string]: string;
+            };
+            /**
+             * Flexible
+             * @description Its internal motion takes part in this design's motion analysis
+             * @default false
+             */
+            flexible: boolean;
+        };
+        /** ConnectorInfo */
+        ConnectorInfo: {
+            /** Kind */
+            kind: string;
+            /**
+             * Frames
+             * @description In the part's own frame
+             */
+            frames: [
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ]
+            ][];
+            /**
+             * Measured
+             * @description One per frame
+             */
+            measured: components["schemas"]["Measured"][];
+        };
         /** CreateDesign */
         CreateDesign: {
             /** Name */
@@ -574,6 +883,38 @@ export interface components {
              * @default build123d
              */
             backend: string;
+        };
+        /**
+         * CylindricalMate
+         * @description Turns about and slides along Z: origins on one line along Z, Z axes face each other.
+         */
+        CylindricalMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "cylindrical";
+            limits: components["schemas"]["Limits"] | null;
         };
         /** Delivery */
         Delivery: {
@@ -623,16 +964,6 @@ export interface components {
              * @description One paragraph describing the object and its purpose
              */
             summary: string;
-            /**
-             * Backend
-             * @description CAD backend chosen for this design, e.g. build123d or blender
-             */
-            backend: string;
-            /**
-             * Backend Rationale
-             * @default
-             */
-            backend_rationale: string;
             /** Key Dimensions */
             key_dimensions: components["schemas"]["Dimension"][];
             /** Features */
@@ -665,6 +996,79 @@ export interface components {
             name: string;
             /** Backend */
             backend: string;
+        };
+        /** DesignSpec */
+        DesignSpec: {
+            /**
+             * Hitlcad
+             * @default 2
+             * @constant
+             */
+            hitlcad: 2;
+            /** Name */
+            name: string;
+            /**
+             * Number
+             * @description The user's own part number for the whole design
+             * @default
+             */
+            number: string;
+            /**
+             * Backend
+             * @description Backend for parts that do not set their own
+             */
+            backend: string;
+            /** Parameters */
+            parameters: components["schemas"]["ParamSpec"][];
+            /**
+             * Configurations
+             * @description Named sets of parameter values over `parameters`: product variants
+             */
+            configurations: {
+                [key: string]: {
+                    [key: string]: number | boolean | string;
+                };
+            };
+            /**
+             * Ground
+             * @description The instance every mate chain leads back to
+             */
+            ground: string | null;
+            /** Parts */
+            parts: {
+                [key: string]: components["schemas"]["PartSpec"];
+            };
+            /** Components */
+            components: {
+                [key: string]: components["schemas"]["ComponentSpec"];
+            };
+            /**
+             * Exports
+             * @description Connector name -> connector of a direct child, for designs that use this one
+             */
+            exports: {
+                [key: string]: string;
+            };
+            /** Mates */
+            mates: (components["schemas"]["RigidMate"] | components["schemas"]["RevoluteMate"] | components["schemas"]["SliderMate"] | components["schemas"]["CylindricalMate"] | components["schemas"]["PlanarMate"] | components["schemas"]["BallMate"])[];
+            /** Relations */
+            relations: (components["schemas"]["GearRelation"] | components["schemas"]["RackRelation"] | components["schemas"]["ScrewRelation"])[];
+            /** Fasteners */
+            fasteners: components["schemas"]["FastenerSet"][];
+            /** Requirements */
+            requirements: components["schemas"]["Requirement"][];
+            /**
+             * Manufacturing
+             * @description Default process for made parts
+             */
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            verification: components["schemas"]["Verification"];
+            /**
+             * Outputs
+             * @description Exporters to run on every successful build
+             */
+            outputs: string[];
+            brief: components["schemas"]["DesignBrief"] | null;
         };
         /**
          * DesignState
@@ -788,9 +1192,66 @@ export interface components {
             message: string;
         };
         /**
+         * FaceConnector
+         * @description A planar face. Origin on its plane, inside its outline (the centre of a rim is fine), Z its outward
+         *     normal. Measured: the plane and its area.
+         */
+        FaceConnector: {
+            /**
+             * Count
+             * @description Frames in the pattern: a number or a parameter name
+             * @default 1
+             */
+            count: number | string;
+            /**
+             * Symmetry
+             * @description Rotations about Z that look the same: n (every 360°/n) or 'axial'
+             */
+            symmetry: number | "axial" | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "face";
+        };
+        /**
+         * FastenerSet
+         * @description A catalog fastener through clearance-hole patterns (head side first) into a threaded or insert hole.
+         *     `fastener` names the fastener's seat connector (under the head, Z along the shank); the fastener part's
+         *     catalog provider must give its `thread_diameter` and `length`.
+         */
+        FastenerSet: {
+            /**
+             * Fastener
+             * @description The fastener's seat connector, e.g. 'lid_screw.seat'
+             */
+            fastener: string;
+            /**
+             * Through
+             * @description Clearance-hole connectors, head side first
+             */
+            through: string[];
+            /**
+             * Into
+             * @description The threaded or insert hole connector it ends in
+             */
+            into: string;
+            /**
+             * Engagement
+             * @description Minimum thread engagement in nominal diameters; default: the into part's material
+             */
+            engagement: number | null;
+        };
+        /**
          * FdmProcess
-         * @description FDM (filament) 3D printing, printed the way the model stands (+Z up, resting on its lowest Z): wall
-         *     thickness, overhangs and bed contact. Optional `nozzle_mm`, `min_wall_mm`, `max_overhang_deg`.
+         * @description FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
+         *     Z): wall thickness, overhangs and bed contact. `hole_allowance_mm` / `shaft_allowance_mm`: how much
+         *     printed holes come out smaller and shafts larger than modelled, for fit checks.
          */
         FdmProcess: {
             /**
@@ -815,6 +1276,28 @@ export interface components {
              * @default 45
              */
             max_overhang_deg: number;
+            /**
+             * Min Bed Contact Share
+             * @description Of the footprint's bounding box
+             * @default 0.1
+             */
+            min_bed_contact_share: number;
+            /**
+             * Ignored Overhang Mm2
+             * @description Overhangs smaller than this print by bridging
+             * @default 1
+             */
+            ignored_overhang_mm2: number;
+            /**
+             * Hole Allowance Mm
+             * @default 0
+             */
+            hole_allowance_mm: number;
+            /**
+             * Shaft Allowance Mm
+             * @default 0
+             */
+            shaft_allowance_mm: number;
         };
         /**
          * FeedbackDelivered
@@ -857,15 +1340,32 @@ export interface components {
             };
         };
         /**
+         * Fit
+         * @description How a round shaft sits in a round hole: a diametral clearance range in mm (negative is
+         *     interference), or an ISO 286 fit evaluated at the measured nominal size.
+         */
+        Fit: {
+            /** Clearance */
+            clearance: [
+                number,
+                number
+            ] | null;
+            /**
+             * Iso
+             * @description e.g. 'H7/g6'
+             */
+            iso: string | null;
+        };
+        /**
          * FitsWithinCheck
          * @description Fits inside a box of this size (X, Y, Z mm), as it is modelled.
          */
         FitsWithinCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -878,6 +1378,93 @@ export interface components {
                 number
             ];
         };
+        /**
+         * FrameConnector
+         * @description A datum: a position and orientation with no feature to measure (an axis, a reference point).
+         */
+        FrameConnector: {
+            /**
+             * Count
+             * @description Frames in the pattern: a number or a parameter name
+             * @default 1
+             */
+            count: number | string;
+            /**
+             * Symmetry
+             * @description Rotations about Z that look the same: n (every 360°/n) or 'axial'
+             */
+            symmetry: number | "axial" | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "frame";
+        };
+        /**
+         * GearConnector
+         * @description A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Tooth geometry is
+         *     verified by its relations and by interference; the nominal values name parameters or interface values.
+         */
+        GearConnector: {
+            /**
+             * Count
+             * @description Frames in the pattern: a number or a parameter name
+             * @default 1
+             */
+            count: number | string;
+            /**
+             * Symmetry
+             * @description Rotations about Z that look the same: n (every 360°/n) or 'axial'
+             */
+            symmetry: number | "axial" | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "gear";
+            /** Teeth */
+            teeth: string;
+            /** Module */
+            module: string;
+            /** Width */
+            width: string;
+            /**
+             * Internal
+             * @default false
+             */
+            internal: boolean;
+        };
+        /**
+         * GearRelation
+         * @description Two spur gears in mesh: same module, parallel axes, centre distance m(z₁ ± z₂)/2 (minus when one is
+         *     internal), overlapping face widths. b turns −z_a/z_b times a (+ for an internal gear).
+         */
+        GearRelation: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+            /**
+             * Tolerance
+             * @description mm; default: verification.position_mm
+             */
+            tolerance: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "gear";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -885,14 +1472,14 @@ export interface components {
         };
         /**
          * HoleCheck
-         * @description At least `count` complete round holes of this diameter (through or blind), found on the B-rep (build123d).
+         * @description At least `count` complete round holes of this diameter (through or blind), found on the B-rep.
          */
         HoleCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -915,6 +1502,34 @@ export interface components {
              */
             count: number;
         };
+        /**
+         * HoleConnector
+         * @description A round hole. Origin at its opening on the axis, Z out of the opening. Measured: the diameter and
+         *     depth of the hole adjacent to the origin, below it.
+         */
+        HoleConnector: {
+            /**
+             * Count
+             * @description Frames in the pattern: a number or a parameter name
+             * @default 1
+             */
+            count: number | string;
+            /**
+             * Symmetry
+             * @description Rotations about Z that look the same: n (every 360°/n) or 'axial'
+             */
+            symmetry: number | "axial" | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "hole";
+        };
         /** InitProject */
         InitProject: {
             /** Path */
@@ -933,15 +1548,109 @@ export interface components {
             codex: boolean;
         };
         /**
+         * InjectionMoldingProcess
+         * @description Injection molding, pulled along Z of the part's own frame: faces parallel to the pull need at least
+         *     `min_draft_deg` of draft, and walls should stay within `max_wall_ratio` of each other.
+         */
+        InjectionMoldingProcess: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            process: "injection_molding";
+            /**
+             * Min Draft Deg
+             * @default 1
+             */
+            min_draft_deg: number;
+            /**
+             * Max Wall Ratio
+             * @default 2
+             */
+            max_wall_ratio: number;
+        };
+        /** InstanceInfo */
+        InstanceInfo: {
+            /**
+             * Path
+             * @description Instance address in this design, e.g. 'planet[2]' or 'tilt'
+             */
+            path: string;
+            /**
+             * Part
+             * @description The part it places
+             */
+            part: string | null;
+            /**
+             * Component
+             * @description The component it places
+             */
+            component: string | null;
+            /** Transform */
+            transform: [
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number,
+                    number
+                ]
+            ];
+        };
+        /** InterfaceValue */
+        InterfaceValue: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: unknown;
+            reads: components["schemas"]["Reads"];
+        };
+        /** Limits */
+        Limits: {
+            /**
+             * Angle
+             * @description Degrees
+             */
+            angle: [
+                number,
+                number
+            ] | null;
+            /**
+             * Travel
+             * @description mm
+             */
+            travel: [
+                number,
+                number
+            ] | null;
+        };
+        /**
          * MassCheck
-         * @description Mass in grams, from the volume and the material's density (PLA ~1.24, PETG ~1.27, aluminium 2.70 g/cm³).
+         * @description Mass in grams, from each part's volume and the density of its material.
          */
         MassCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /** Min */
             min: number | null;
             /** Max */
@@ -951,8 +1660,52 @@ export interface components {
              * @enum {string}
              */
             kind: "mass";
-            /** Density G Cm3 */
-            density_g_cm3: number;
+        };
+        /** MassProperties */
+        MassProperties: {
+            /** Mass G */
+            mass_g: number;
+            /** Centre Mm */
+            centre_mm: [
+                number,
+                number,
+                number
+            ];
+            /** Inertia G Mm2 */
+            inertia_g_mm2: [
+                [
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number
+                ],
+                [
+                    number,
+                    number,
+                    number
+                ]
+            ];
+        };
+        /**
+         * Measured
+         * @description A connector frame's feature, as measured on the part.
+         */
+        Measured: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "fail" | "unverified";
+            /** Detail */
+            detail: string;
+            /** Values */
+            values: {
+                [key: string]: number;
+            };
         };
         /** MeshMetrics */
         MeshMetrics: {
@@ -986,6 +1739,57 @@ export interface components {
             watertight: boolean;
             /** Winding Consistent */
             winding_consistent: boolean;
+        };
+        /**
+         * MotionRange
+         * @description A mate's range of motion, for the panel to move its moving side through.
+         */
+        MotionRange: {
+            /** Mate */
+            mate: string;
+            /**
+             * Pair
+             * @description Which frames of a pattern, e.g. 'base.hinge ↔ lid.pin'
+             */
+            pair: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "angle" | "travel";
+            /** Start */
+            start: number;
+            /** End */
+            end: number;
+            /** Continuous */
+            continuous: boolean;
+            /**
+             * Current
+             * @description Where it sits as assembled
+             */
+            current: number;
+            /** Origin */
+            origin: [
+                number,
+                number,
+                number
+            ];
+            /** Axis */
+            axis: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Sign
+             * @description +1: the moving side turns with the motion about the axis; -1: against it
+             */
+            sign: number;
+            /**
+             * Moving
+             * @description The instances that move
+             */
+            moving: string[];
         };
         /** OpenDesign */
         OpenDesign: {
@@ -1038,39 +1842,76 @@ export interface components {
              */
             description: string;
         };
-        /**
-         * PartInfo
-         * @description One part of an assembly (a design whose build(p) returns {name: shape}), measured on its own mesh.
-         */
-        PartInfo: {
+        /** PartResult */
+        PartResult: {
             /** Name */
             name: string;
-            /** Bbox Min */
-            bbox_min: [
-                number,
-                number,
-                number
-            ];
-            /** Bbox Max */
-            bbox_max: [
-                number,
-                number,
-                number
-            ];
-            /** Size */
-            size: [
-                number,
-                number,
-                number
-            ];
-            /** Volume */
-            volume: number | null;
-            /** Bodies */
-            bodies: number;
+            /** File */
+            file: string;
+            /** Backend */
+            backend: string;
+            /** Made */
+            made: boolean;
+            /** Material */
+            material: string | null;
+            /** Process */
+            process: string | null;
+            catalog: components["schemas"]["CatalogInfo"] | null;
+            /**
+             * Cached
+             * @description Reused from an earlier build whose inputs it read were the same
+             */
+            cached: boolean;
+            reads: components["schemas"]["Reads"];
+            metrics: components["schemas"]["MeshMetrics"];
+            mass: components["schemas"]["MassProperties"] | null;
+            /** Connectors */
+            connectors: {
+                [key: string]: components["schemas"]["ConnectorInfo"];
+            };
+        };
+        /** PartSpec */
+        PartSpec: {
+            /**
+             * Role
+             * @description One line: what the part does
+             */
+            role: string;
+            /**
+             * File
+             * @description The part file that builds it, e.g. parts/lid.py
+             */
+            file: string;
+            /**
+             * Number
+             * @description The user's own part number
+             * @default
+             */
+            number: string;
+            /**
+             * Material
+             * @description A name in the material registry
+             */
+            material: string | null;
+            /**
+             * Manufacturing
+             * @description Overrides the design's process for this made part
+             */
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            /**
+             * Backend
+             * @description Overrides the design's backend
+             */
+            backend: string | null;
+            catalog: components["schemas"]["Catalog"] | null;
+            /** Connectors */
+            connectors: {
+                [key: string]: components["schemas"]["FrameConnector"] | components["schemas"]["FaceConnector"] | components["schemas"]["HoleConnector"] | components["schemas"]["ShaftConnector"] | components["schemas"]["GearConnector"];
+            };
         };
         /**
          * Pick
-         * @description A click in a 3D view: the surface point, and on STEP models the face, edge, vertex or part it hit.
+         * @description A click in a 3D view: the surface point, and on B-rep builds the component it hit.
          */
         Pick: {
             /**
@@ -1117,8 +1958,18 @@ export interface components {
                 number,
                 number
             ] | null;
-            /** @description The face, edge, vertex or part it is on (STEP) */
+            /**
+             * Instance
+             * @description The instance it is on
+             */
+            instance: string | null;
+            /** @description The instance's component it is on (B-rep) */
             component: components["schemas"]["ComponentRef-Output"] | null;
+            /**
+             * Connector
+             * @description The connector whose feature it is on
+             */
+            connector: string | null;
             /**
              * Note
              * @default
@@ -1126,7 +1977,7 @@ export interface components {
             note: string;
             /**
              * Label
-             * @description What is under the pin, e.g. 'Planar face 40 × 30 mm'
+             * @description What is under the pin
              * @default
              */
             label: string;
@@ -1168,6 +2019,78 @@ export interface components {
             pins: components["schemas"]["Pin"][];
         };
         /**
+         * PlanarMate
+         * @description Slides in the plane and turns about Z: b's origin on a's plane (apart by `offset`), Z axes face each other.
+         */
+        PlanarMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "planar";
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+        };
+        /**
+         * RackRelation
+         * @description A pinion (a, gear) on a rack (b, frame on the pitch line, Z across the rack, X along it): the pitch
+         *     circle touches the pitch line. The rack moves π·m·z mm per pinion turn.
+         */
+        RackRelation: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+            /**
+             * Tolerance
+             * @description mm; default: verification.position_mm
+             */
+            tolerance: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rack";
+        };
+        /**
+         * Reads
+         * @description What a piece of model code read while it ran: the exact inputs it depends on.
+         */
+        Reads: {
+            /** Parameters */
+            parameters: string[];
+            /** Interfaces */
+            interfaces: string[];
+            /**
+             * Modules
+             * @description lib/ modules it imported
+             */
+            modules: string[];
+        };
+        /**
          * Requirement
          * @description Something the design must satisfy. With a `check`, every build verifies it; without one, the human judges.
          */
@@ -1175,22 +2098,45 @@ export interface components {
             /** Text */
             text: string;
             /** Check */
-            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"]) | null;
+            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"]) | null;
         };
-        /** RequirementResult */
-        RequirementResult: {
-            /** Text */
-            text: string;
+        /**
+         * Result
+         * @description One finding of one analysis.
+         */
+        Result: {
+            /**
+             * Analysis
+             * @description The analysis that found it: structure, connector, mate, interference, …
+             */
+            analysis: string;
+            /**
+             * Subject
+             * @description What it is about, in the address grammar
+             */
+            subject: string;
             /**
              * Status
              * @enum {string}
              */
             status: "pass" | "fail" | "unverified";
             /**
-             * Detail
-             * @default
+             * Severity
+             * @default error
+             * @enum {string}
              */
+            severity: "error" | "warning" | "info";
+            /** Detail */
             detail: string;
+            /**
+             * About
+             * @description Addresses it concerns: instances, parts, connectors
+             */
+            about: string[];
+            /** Values */
+            values: {
+                [key: string]: number | string | boolean;
+            };
         };
         /** Revision */
         Revision: {
@@ -1201,7 +2147,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            origin: components["schemas"]["RevisionOrigin"];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "file" | "parameter_edit";
             /** Parent */
             parent: number | null;
             spec: components["schemas"]["BuildSpec"];
@@ -1232,10 +2182,105 @@ export interface components {
             revision: components["schemas"]["Revision"];
         };
         /**
-         * RevisionOrigin
-         * @enum {string}
+         * RevoluteMate
+         * @description Turns about Z: origins coincide (Z apart by `offset`), Z axes face each other.
          */
-        RevisionOrigin: "file" | "parameter_edit";
+        RevoluteMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "revolute";
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            limits: components["schemas"]["Limits"] | null;
+        };
+        /**
+         * RigidMate
+         * @description Nothing moves: origins coincide (Z apart by `offset`), Z axes face each other, X axes agree up to
+         *     the features' shared symmetry.
+         */
+        RigidMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "rigid";
+            /**
+             * Offset
+             * @description Designed gap along a's Z, mm
+             * @default 0
+             */
+            offset: number;
+        };
+        /**
+         * ScrewRelation
+         * @description A lead screw (a) and its nut (b) on one axis: b travels `lead` mm per turn of a.
+         */
+        ScrewRelation: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+            /**
+             * Tolerance
+             * @description mm; default: verification.position_mm
+             */
+            tolerance: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "screw";
+            /**
+             * Lead
+             * @description mm per turn
+             */
+            lead: number;
+        };
         /** SelectionChanged */
         SelectionChanged: {
             /**
@@ -1288,14 +2333,24 @@ export interface components {
             kind: "face" | "edge" | "vertex" | "solid" | "point";
             /**
              * Label
-             * @description Human-readable description, e.g. 'Cylinder face r=2.25 mm …'
+             * @description Human-readable description, in the address grammar
              */
             label: string;
             /** Details */
             details: {
                 [key: string]: unknown;
             };
+            /**
+             * Instance
+             * @description The instance picked, on builds
+             */
+            instance: string | null;
             component: components["schemas"]["ComponentRef-Output"] | null;
+            /**
+             * Connector
+             * @description The connector whose feature was picked, e.g. 'lid.screws'
+             */
+            connector: string | null;
         };
         /** SetSelection */
         SetSelection: {
@@ -1305,15 +2360,64 @@ export interface components {
             items?: components["schemas"]["Pick"][];
         };
         /**
+         * ShaftConnector
+         * @description A round shaft or pin. Origin at its shoulder on the axis, Z towards its tip. Measured: the
+         *     diameter and length of the shaft adjacent to the origin, along Z.
+         */
+        ShaftConnector: {
+            /**
+             * Count
+             * @description Frames in the pattern: a number or a parameter name
+             * @default 1
+             */
+            count: number | string;
+            /**
+             * Symmetry
+             * @description Rotations about Z that look the same: n (every 360°/n) or 'axial'
+             */
+            symmetry: number | "axial" | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "shaft";
+        };
+        /**
+         * SheetMetalProcess
+         * @description Sheet metal: the thinnest and the median wall are `thickness_mm` (± `thickness_tolerance_mm`), and
+         *     every bend's inner radius is at least `min_bend_radius_mm` (no sharp inside corners).
+         */
+        SheetMetalProcess: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            process: "sheet_metal";
+            /** Thickness Mm */
+            thickness_mm: number;
+            /**
+             * Thickness Tolerance Mm
+             * @default 0.05
+             */
+            thickness_tolerance_mm: number;
+            /** Min Bend Radius Mm */
+            min_bend_radius_mm: number;
+        };
+        /**
          * SizeCheck
          * @description The extent along one axis, mm.
          */
         SizeCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /** Min */
             min: number | null;
             /** Max */
@@ -1328,6 +2432,92 @@ export interface components {
              * @enum {string}
              */
             axis: "x" | "y" | "z";
+        };
+        /**
+         * SliderMate
+         * @description Slides along Z: origins on one line along Z, Z axes face each other, X axes agree up to symmetry.
+         */
+        SliderMate: {
+            /**
+             * A
+             * @description Connector end, e.g. 'lid.bottom'
+             */
+            a: string;
+            /** B */
+            b: string;
+            fit: components["schemas"]["Fit"] | null;
+            /**
+             * Overlap
+             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @default false
+             */
+            overlap: boolean;
+            /**
+             * Flip
+             * @description b's Z runs with a's instead of facing it: a shaft entering a bore from the end opposite the bore's declared opening
+             * @default false
+             */
+            flip: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "slider";
+            limits: components["schemas"]["Limits"] | null;
+        };
+        /**
+         * StackCheck
+         * @description A tolerance stack: the gap between two connector frames along the first one's Z, as built (nominal),
+         *     worst case (± the sum of the contributors' tolerances) and statistically (± their root sum of squares).
+         *     `tolerances` maps each contributing part to its ± tolerance in mm, as the process holds it; the check
+         *     needs both the worst case and the nominal within min and max, and reports the RSS beside them.
+         */
+        StackCheck: {
+            /** Min */
+            min: number | null;
+            /** Max */
+            max: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "stack";
+            /**
+             * Between
+             * @description Connector ends, e.g. ['housing.top', 'carrier.output']
+             */
+            between: [
+                string,
+                string
+            ];
+            /**
+             * Tolerances
+             * @description Contributing part -> ± tolerance, mm
+             */
+            tolerances: {
+                [key: string]: number;
+            };
+        };
+        /** Structure */
+        Structure: {
+            /** Overview */
+            overview: string;
+            /** Graph */
+            graph: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * Tolerances
+         * @description Resolved verification settings: the design's own, over hitlcad's settings.
+         */
+        Tolerances: {
+            /** Position Mm */
+            position_mm: number;
+            /** Angle Deg */
+            angle_deg: number;
+            /** Motion Samples */
+            motion_samples: number;
         };
         /** UpdatePin */
         UpdatePin: {
@@ -1350,15 +2540,36 @@ export interface components {
             ctx?: Record<string, never>;
         };
         /**
+         * Verification
+         * @description Tolerances and sampling every check uses. Unset fields take hitlcad's settings (`HITLCAD_VERIFY_*`).
+         */
+        Verification: {
+            /**
+             * Position Mm
+             * @description Positions agree within this distance
+             */
+            position_mm: number | null;
+            /**
+             * Angle Deg
+             * @description Directions agree within this angle
+             */
+            angle_deg: number | null;
+            /**
+             * Motion Samples
+             * @description Positions sampled per range of motion
+             */
+            motion_samples: number | null;
+        };
+        /**
          * VolumeCheck
          * @description Material volume, mm³.
          */
         VolumeCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /** Min */
             min: number | null;
             /** Max */
@@ -1375,10 +2586,10 @@ export interface components {
          */
         WallCheck: {
             /**
-             * Part
-             * @description The assembly part it applies to; default: the whole design
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
              */
-            part: string | null;
+            target: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1568,7 +2779,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BuildRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             201: {
@@ -1577,6 +2792,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    structure_api_designs__design_id__structure_get: {
+        parameters: {
+            query?: {
+                configuration?: string | null;
+            };
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Structure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    catalog_api_catalog_get: {
+        parameters: {
+            query: {
+                query: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogItem"][];
                 };
             };
             /** @description Validation Error */
@@ -1625,14 +2905,14 @@ export interface operations {
             };
         };
     };
-    revision_file_api_designs__design_id__revisions__revision_id__files__name__get: {
+    revision_file_api_designs__design_id__revisions__revision_id__files__path__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 design_id: string;
                 revision_id: number;
-                name: string;
+                path: string;
             };
             cookie?: never;
         };

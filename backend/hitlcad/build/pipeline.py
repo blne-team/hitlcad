@@ -42,6 +42,7 @@ from hitlcad.core.report import (
     InstanceInfo,
     InterfaceValue,
     MassProperties,
+    MotionRange,
     PartResult,
     Result,
 )
@@ -337,7 +338,7 @@ class BuildPipeline:
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
         mesh = assemble.mesh_assembly(built)
-        return {"parts": parts, "instances": instances, "metrics": measure(mesh) if len(mesh.faces) else None,
+        return {"motions": _motions(built), "parts": parts, "instances": instances, "metrics": measure(mesh) if len(mesh.faces) else None,
                 "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
     async def _outputs(self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any]) -> list[Artifact]:
@@ -374,6 +375,25 @@ class BuildPipeline:
             for rel, media_type in await asyncio.to_thread(self.exporters[name].export, built, fields, out_dir):
                 artifacts.append(_artifact(out_dir, rel, media_type, name))
         return artifacts
+
+
+def _motions(built: BuiltDesign) -> list[MotionRange]:
+    from hitlcad.analysis.base import label
+    from hitlcad.analysis.motion import Plan, plans
+
+    out = []
+    for plan in plans(built, built.tolerances):
+        if not isinstance(plan, Plan):
+            continue
+        frame = plan.link.a.frame
+        for kind, start, end, continuous in plan.ranges:
+            out.append(MotionRange(
+                mate=plan.link.source.address, pair=f"{label(plan.link.a)} ↔ {label(plan.link.b)}", kind=kind,
+                start=start, end=end, continuous=continuous, current=plan.free.get(kind, 0.0),
+                origin=tuple(float(v) for v in fr.origin(frame)), axis=tuple(float(v) for v in fr.z_axis(frame)),
+                sign=plan.sign, moving=plan.world.leaves_of(plan.moving),
+            ))  # fmt: skip
+    return out
 
 
 def _ref_value(ref: str, values: dict[str, Value], interfaces: dict[str, Any]) -> Any:

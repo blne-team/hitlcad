@@ -47,8 +47,8 @@ def _claude_settings(config: dict[str, Any]) -> bool:
 
 
 def _vscode_settings(file: Path, python: str) -> bool:
-    """Point VS Code's Python extension at the interpreter hitlcad builds models with, so model.py
-    resolves its imports (build123d) and no unrelated interpreter is tried. Returns True when changed."""
+    """Point VS Code's Python extension at the interpreter hitlcad builds models with, so part files
+    resolve their imports (build123d) and no unrelated interpreter is tried. Returns True when changed."""
     try:
         settings = json.loads(file.read_text()) if file.is_file() else {}
     except json.JSONDecodeError as e:

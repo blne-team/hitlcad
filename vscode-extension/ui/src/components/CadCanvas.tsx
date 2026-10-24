@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useDarkScheme } from "../hooks/useScheme";
 import type { Pick } from "../api/types";
-import { type CadBounds, type CadMarker, CadView } from "../lib/cadView";
+import { type CadBounds, type CadMarker, type CadMotion, CadView } from "../lib/cadView";
 
 interface Props {
   /** A view JSON from the server (/api/files/cad or a revision's view.json). */
@@ -13,6 +13,8 @@ interface Props {
   markers: CadMarker[];
   /** A view JSON to show as a ghost, e.g. the revision being compared against. */
   ghost?: unknown;
+  /** Instances moved along a mate's range of motion. */
+  motion?: CadMotion | null;
   /** A click on the model; `additive` when shift was held. */
   onPick: (pick: Pick, additive: boolean) => void;
   onReady?: (bounds: CadBounds | null) => void;
@@ -36,6 +38,7 @@ export function CadCanvas(props: Props) {
       cad = new CadView(stage.current, props.data, now.dark, props.brep, (pick, additive) => latest.current.onPick(pick, additive));
       cad.setMarkers(now.markers);
       cad.setGhost(now.ghost ?? null);
+      cad.setMotion(now.motion ?? null);
     } catch (e) {
       now.onError(e instanceof Error ? e.message : String(e));
       return;
@@ -54,6 +57,7 @@ export function CadCanvas(props: Props) {
   }, [props.placing]);
   useEffect(() => view.current?.setMarkers(props.markers), [props.markers]);
   useEffect(() => view.current?.setGhost(props.ghost ?? null), [props.ghost]);
+  useEffect(() => view.current?.setMotion(props.motion ?? null), [props.motion]);
 
   return <div ref={stage} className="cad-stage" data-brep={props.brep} />;
 }
