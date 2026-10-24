@@ -6,9 +6,8 @@ from math import copysign, cos, pi, sin
 import bmesh
 import bpy
 import numpy as np
-from mathutils import Matrix, Vector
-
 from lib import sculpt
+from mathutils import Matrix, Vector
 
 COLORS = {
     "fur": (0.86, 0.58, 0.28),
@@ -78,10 +77,10 @@ def half_ellipsoid(name, center, radii, rot=None, color="mouth"):
     return mesh_object(name, bm, color)
 
 
-def cylinder(name, matrix, radius, length, color):
+def cylinder(name, matrix, radius, length, color, segments=48):
     """A round rod along the frame's Z, from Z=0 to Z=length."""
     bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=48, radius1=radius, radius2=radius, depth=length)
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=segments, radius1=radius, radius2=radius, depth=length)
     bmesh.ops.transform(bm, matrix=matrix @ Matrix.Translation((0, 0, length / 2)), verts=bm.verts)
     return mesh_object(name, bm, color)
 
@@ -102,7 +101,7 @@ def tube(name, pts, r, color, taper=None):
     cu.use_fill_caps = True
     sp = cu.splines.new("BEZIER")
     sp.bezier_points.add(len(pts) - 1)
-    for k, (bp, pt) in enumerate(zip(sp.bezier_points, pts)):
+    for k, (bp, pt) in enumerate(zip(sp.bezier_points, pts, strict=True)):
         bp.co = pt
         bp.handle_left_type = bp.handle_right_type = "AUTO"
         bp.radius = taper[k] if taper else 1.0
@@ -114,7 +113,7 @@ def band(name, pts, normals, axis, width, thick, sink, color, prof=16):
     """Closed rounded-rectangle band (a collar) following a loop of surface points."""
     bm = bmesh.new()
     rings = []
-    for q, n in zip(pts, normals):
+    for q, n in zip(pts, normals, strict=True):
         n = (n - axis * n.dot(axis)).normalized()
         ring = []
         for k in range(prof):
@@ -159,6 +158,28 @@ def cut(obj, cutter, operation="DIFFERENCE", transfer=False):
     if transfer:
         m.material_mode = "TRANSFER"
     return bake(obj)
+
+
+def union(obj, others, name):
+    """obj and the others as one solid (EXACT), each face keeping its object's material; returns the new
+    plain mesh object, named `name`."""
+    group = bpy.data.collections.new(f"{name}_parts")
+    bpy.context.scene.collection.children.link(group)
+    for o in others:
+        for c in o.users_collection:
+            c.objects.unlink(o)
+        group.objects.link(o)
+    m = obj.modifiers.new("union", "BOOLEAN")
+    m.operation = "UNION"
+    m.operand_type = "COLLECTION"
+    m.collection = group
+    m.solver = "EXACT"
+    m.material_mode = "TRANSFER"
+    out = bake(obj)
+    remove(*others)
+    bpy.data.collections.remove(group)
+    out.name = out.data.name = name
+    return out
 
 
 def copy(obj, name):

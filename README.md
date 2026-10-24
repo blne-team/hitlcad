@@ -97,7 +97,7 @@ relations, configurations.
 <tr>
 <td valign="top"><a href="examples/handhold-fan"><b>Hand-held blower</b></a><br>The blower from the walkthrough: 13 parts around a 750 W motor, 24 instances with the screws and inserts, 155 checks. build123d.</td>
 <td valign="top"><a href="examples/nas-case"><b>NAS case</b></a><br>A micro-ATX NAS for four 3.5" drives, printed as nine pieces that each fit a 256 mm bed and held together by 32 M3 screws in heat-set inserts. 97 instances, 435 checks. build123d.</td>
-<td valign="top"><a href="examples/happydog"><b>Happy dog</b></a><br>A figurine in three printed pieces that peg together. Sculpted in Blender, with sliders for head tilt, ear flare and tail wag.</td>
+<td valign="top"><a href="examples/happydog"><b>Happy dog</b></a><br>A figurine in its colours, printed in three pieces: the head on a peg whose fit is measured on the mesh, the tail plugged into the rump. Sculpted in Blender, with sliders for head tilt, ear flare and tail wag.</td>
 </tr>
 </table>
 

@@ -8,7 +8,6 @@ flat bottom at Z=0, facing -Y. The frames below are in that frame.
 from math import radians
 
 import numpy as np
-
 from lib import sculpt
 
 
@@ -27,12 +26,12 @@ def glue_gap(p, i):
 
 
 def neck_joint(p, i):
-    """Where the head is glued on: the plane along the collar's lower edge (the collar, part of the head,
-    hides the joint), Z up the neck, X sideways. The glue line is centred on it."""
+    """Where the head is glued on: the plane through the middle of the collar, Z up the neck, X sideways.
+    The collar's outer wall stands square to it all round, so neither part ends in a feather edge there.
+    The glue line is centred on it."""
     tilt = radians(sculpt.COLLAR_TILT_DEG)
     axis = np.array([0, -np.sin(tilt), np.cos(tilt)])
-    origin = np.array(sculpt.COLLAR_CENTRE) - axis * sculpt.COLLAR_WIDTH / 2
-    return sculpt.frame(_mm(p, i, origin), (1, 0, 0), axis)
+    return sculpt.frame(_mm(p, i, sculpt.COLLAR_CENTRE), (1, 0, 0), axis)
 
 
 def peg_d(p, i):
@@ -54,16 +53,10 @@ def socket_depth(p, i):
 
 
 def tail_root(p, i):
-    """The tail's root in the rump: on the tail's centre line, Z along it out of the body, X across the
-    tail's (wagged) plane."""
+    """The tail's flat root face, inside a socket in the rump: on the tail's centre line, Z along it out of
+    the body, X across the tail's (wagged) plane. It is also the tail's own frame: it prints standing on
+    this face."""
     a, b = sculpt.tail_curve(p)[:2]
+    along = (b - a) / np.linalg.norm(b - a)
     wag = sculpt.rot_y(radians(p["tail_wag_deg"]))
-    return sculpt.frame(_mm(p, i, a), wag @ (1, 0, 0), b - a)
-
-
-def tail_frame(p, i):
-    """The tail's own frame: lying flat in its plane on the bed, X along it from the root."""
-    a, b = sculpt.tail_curve(p)[:2]
-    normal = sculpt.rot_y(radians(p["tail_wag_deg"])) @ (1, 0, 0)
-    origin = np.asarray(_mm(p, i, a)) - normal * sculpt.TAIL_RADIUS * i.scale
-    return sculpt.frame(origin, b - a, normal)
+    return sculpt.frame(_mm(p, i, a + along * sculpt.TAIL_PLUG), wag @ (1, 0, 0), along)

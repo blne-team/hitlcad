@@ -25,6 +25,7 @@ COLLAR_THICK = 2.0
 
 TAIL_POINTS = ((0.0, 20.0, 14.0), (0.0, 42.0, 15.0), (0.0, 40.0, 40.0))  # quadratic Bezier from the rump
 TAIL_RADIUS = 4.4  # at the root; it tapers to 60 % at the tip
+TAIL_PLUG = 1.5  # the tail's flat root face, this far along it from the start of its centre line, inside the rump
 
 
 def rot_x(a):

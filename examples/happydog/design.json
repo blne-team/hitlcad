@@ -4,7 +4,7 @@
   "backend": "blender",
   "brief": {
     "title": "Happy cartoon puppy figurine",
-    "summary": "A stylised puppy sitting up, with a big head tilted to one side, an open smiling mouth with its tongue out, floppy ears and a wagging tail. It is sculpted as one smooth blended (metaball) shape, then split into the three pieces it prints as: the body, the head (which carries the collar and tag) and the tail. The head is glued onto the body at the neck, on a locating peg, along the collar's lower edge so the collar hides the joint; the tail is trimmed to the rump's surface and glued on. Eyes, nose, mouth, tongue, ears, spots, cheek blush, toe lines and the collar with its tag are separate coloured shells placed on the surface, so they follow it when parameters change.",
+    "summary": "A stylised puppy sitting up, with a big head tilted to one side, an open smiling mouth with its tongue out, floppy ears and a wagging tail. It is sculpted as one smooth blended (metaball) shape, then split into the three pieces it prints as: the body (with the collar's lower half and the tag), the head (with the collar's upper half) and the tail. The head is glued onto the body on a locating peg, the joint running round the middle of the collar; the tail plugs into a socket in the rump. Eyes, nose, mouth, tongue, ears, spots, cheek blush, toe lines and the collar with its tag are placed on the surface, so they follow it when parameters change, and merged into each part as faces of their own colour.",
     "key_dimensions": [
       {
         "name": "Overall height",
@@ -39,13 +39,14 @@
       "Floppy dark ears (ear_flare_deg) and a wagging tail (tail_wag_deg)",
       "Eye patch and back spot, pink cheek blush, toe lines on all four paws",
       "Red collar with a gold tag",
-      "Prints as three parts: body (with the neck peg), head (with the collar, tag and socket) and tail, glued together"
+      "Prints as three parts, glued together: body (with the neck peg and the tag), head (with the socket) and tail (standing on its flat root, which plugs into the rump)"
     ],
     "assumptions": [
       "Decorative figurine, 175 mm tall, faces −Y",
       "Organic, sculpted shape: Blender metaballs give smooth blended forms that B-rep cannot",
-      "Coloured details are separate overlapping shells (one colour each) so each part can be printed multi-colour or in one colour; a slicer merges them",
-      "Printed upright with supports (chin, tongue, ears and tail overhang) or in resin; no manufacturing process is declared because hitlcad's FDM check assumes printing without supports",
+      "Each part is one solid whose details keep their own colours, for multi-colour printing (or print it in one colour)",
+      "FDM-printed on support: the body upright on its flat bottom, the head on its neck joint, the tail on its root; chin, tongue, ears and the tail's curl overhang",
+      "The tag sits against the chest, just below the collar, held by a stub behind it",
       "Parts are glued, with a 0.1 mm glue line at each joint",
       "Bottom of the body is cut flat (about 1% of the height) so it stands steadily"
     ],
@@ -188,37 +189,45 @@
     }
   ],
   "ground": "body",
+  "manufacturing": {
+    "process": "fdm",
+    "supports": true
+  },
   "parts": {
     "body": {
-      "role": "the sitting body and legs, with spots, toe lines and the neck peg; stands on its flat bottom",
+      "role": "the sitting body and legs, with spots, toe lines, the collar's lower half, the tag and the neck peg; stands on its flat bottom",
       "file": "parts/figure.py",
       "material": "PLA",
       "connectors": {
         "neck": {
-          "kind": "frame"
+          "kind": "shaft",
+          "description": "the locating peg, from the neck joint up"
         },
         "tail": {
-          "kind": "frame"
+          "kind": "frame",
+          "description": "the bottom of the socket the tail plugs into"
         }
       }
     },
     "head": {
-      "role": "the head: face, ears, tongue, collar and tag; a socket takes the body's neck peg",
+      "role": "the head: face, ears, tongue and the collar's upper half; a socket takes the body's neck peg",
       "file": "parts/figure.py",
       "material": "PLA",
       "connectors": {
         "neck": {
-          "kind": "frame"
+          "kind": "hole",
+          "description": "the socket that takes the peg, from the neck joint up"
         }
       }
     },
     "tail": {
-      "role": "the wagging tail with its cream tip, trimmed to the rump",
+      "role": "the wagging tail with its cream tip, plugged into a socket in the rump",
       "file": "parts/figure.py",
       "material": "PLA",
       "connectors": {
         "root": {
-          "kind": "frame"
+          "kind": "frame",
+          "description": "the tail's flat root face, which it prints standing on"
         }
       }
     }
@@ -227,7 +236,13 @@
     {
       "type": "rigid",
       "a": "body.neck",
-      "b": "head.neck"
+      "b": "head.neck",
+      "fit": {
+        "clearance": [
+          0.2,
+          0.4
+        ]
+      }
     },
     {
       "type": "rigid",

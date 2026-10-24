@@ -1,28 +1,25 @@
-"""The puppy, sculpted as one piece and split into the three parts it prints as: body, head (with the collar
-and tag) and tail.
+"""The puppy, sculpted as one piece and split into the three parts it prints as: body, head and tail.
 
 The body is one metaball blob (lib/sculpt.py's elements), converted to a mesh. Coloured details (eyes,
-nose, tongue, ears, spots, collar, ...) are separate overlapping shells placed on the blob by ray-casting
-against it, so they follow the surface when parameters change. Everything is modelled in dog units, then
-scaled into millimetres (i.scale) and split: the head comes off at the neck joint along the collar's
-lower edge, the tail is cut back to the rump's surface. Each part leaves a glue line to the next.
+nose, tongue, ears, spots, collar, ...) are placed on the blob by ray-casting against it, so they follow
+the surface when parameters change. Everything is modelled in dog units, then scaled into millimetres
+(i.scale). The details are merged into the blob, each keeping its colour, so every part is one solid
+(overlapping shells would print, but read as paper-thin walls to a wall-thickness check). The figure is
+then split at the neck joint, through the middle of the collar, and the tail, standing on a flat root,
+plugs into a socket in the rump. Each joint leaves a glue line.
 """
 
 from math import cos, pi, radians, sin
 
 import bmesh
-from mathutils import Matrix, Vector
-from mathutils.bvhtree import BVHTree
-
 from lib import sculpt
 from lib.meshes import (
+    Blob,
     X,
     Y,
     Z,
-    Blob,
     bake,
     band,
-    copy,
     cut,
     cylinder,
     disc,
@@ -34,7 +31,10 @@ from lib.meshes import (
     mesh_object,
     remove,
     tube,
+    union,
 )
+from mathutils import Matrix, Vector
+from mathutils.bvhtree import BVHTree
 
 
 def build(p, i):
@@ -53,7 +53,6 @@ def build(p, i):
     hx = Rh @ X  # head's sideways axis
 
     blob = bake(Blob(p["detail"], sculpt.elements(p)).obj)
-    raw = copy(blob, "smooth_body")  # before its cuts: what the tail is trimmed against
 
     # open smiling mouth: a D-shaped cut (flat top) under the nose; the cut faces turn dark red.
     # Cut before placing the details, so the smile lines can find the real mouth outline.
@@ -219,13 +218,24 @@ def build(p, i):
         pf, nf = pts[front], nrms[front]
         downv = (-Z - nf * (-Z).dot(nf)).normalized()
         centre = pf + nf * (thick + 0.2) + downv * (width / 2 + 2.0)
-        head.append(disc("tag", centre, 3.0, 1.2, nf, "gold"))
-        # the ring the tag hangs from: from inside the collar band to just inside the tag's top edge
-        out = (nf - axis * nf.dot(axis)).normalized()
-        a = pf + out * 0.2 - axis * (width / 2 - 0.6)
-        b = centre - downv * 2.4
-        head.append(cylinder("tag_ring", Matrix.Translation(a) @ frame(b - a, X).to_4x4(), 0.4, (b - a).length,
-                             "gold"))  # fmt: skip
+        # the tag hangs just below the collar, against the chest: on the body, held by a stub behind it
+
+        def height(v):  # above the neck joint, through the middle of the collar
+            return (v - c0).dot(axis)
+
+        na = abs(nf.dot(axis))
+        reach = 3.0 * (1 - na * na) ** 0.5 + 0.6 * na  # from its centre to its rim's highest point, along the axis
+        clear = (-0.4 - reach - height(pf + nf * (thick + 0.2))) / downv.dot(axis)  # all of it below the joint
+        drop = max(width / 2 + 2.0, clear)
+        centre = pf + nf * (thick + 0.2) + downv * drop
+        body.append(disc("tag", centre, 3.0, 1.2, nf, "gold"))
+        for tilt in range(0, 90, 5):  # back into the chest, below the joint
+            back = (-nf).lerp(downv, tilt / 90).normalized()
+            loc, _, _, _ = bvh.ray_cast(centre, back)
+            if loc is not None and height(loc) < -1.3:
+                break
+        body.append(cylinder("tag_stub", Matrix.Translation(centre) @ frame(loc - centre, X).to_4x4(), 0.8,
+                             (loc - centre).length + 0.5, "gold"))  # fmt: skip
 
     # ---------------------------------------------------------------- body details
     if p["spots"] >= 0.5:
@@ -255,39 +265,41 @@ def build(p, i):
     for c, part in curves.items():
         part.append(bake(c))
 
-    # ---------------------------------------------------------------- millimetres, split, joints
+    # ---------------------------------------------------------------- millimetres, joints, parts
     to_mm = Matrix.Scale(i.scale, 4) @ Matrix.Translation((0, 0, -sculpt.FLOOR))
-    for o in [blob, raw, *head, *body, *tail]:
+    for o in [blob, *head, *body, *tail]:
         o.data.transform(to_mm)
         o.data.update()
 
-    rump = inflated(raw, i.glue_gap, "rump_cutter")
-    tail = [cut(o, rump) for o in tail]
-    remove(raw, rump)
+    # the tail plugs into a socket in the rump, on its flat root face
+    root = Matrix(i.tail_root)
+    tube_obj = next(o for o in tail if o.name == "tail")
+    tail.remove(tube_obj)
+    tube_obj = halves(tube_obj, root, 0)[1]
+    tail = union(tube_obj, tail, "tail")
+    socket = inflated(tail, i.glue_gap, "tail_socket")
+    blob = cut(blob, socket)
+    remove(socket)
 
     joint = Matrix(i.neck_joint)
-    below, above = halves(blob, joint, i.glue_gap)
-    below.name, above.name = "body", "head"
-    socket = cylinder("socket_cut", joint @ Matrix.Translation((0, 0, -1)), i.socket_d / 2, i.socket_depth + 1, "fur")
+    # one solid of many colours: the details' faces keep their materials
+    figure = union(blob, [*head, *body], "figure")
+    below, above = halves(figure, joint, i.glue_gap)
+    peg = cylinder("peg", joint @ Matrix.Translation((0, 0, -i.peg_len)), i.peg_d / 2,
+                   2 * i.peg_len - i.glue_gap / 2, "fur", 96)  # fmt: skip
+    below = union(below, [peg], "body")
+    socket = cylinder("socket_cut", joint @ Matrix.Translation((0, 0, -1)), i.socket_d / 2, i.socket_depth + 1,
+                      "fur", 96)  # fmt: skip
     above = cut(above, socket)
     remove(socket)
-    peg = cylinder("peg", joint @ Matrix.Translation((0, 0, -i.peg_len)), i.peg_d / 2,
-                   2 * i.peg_len - i.glue_gap / 2, "fur")  # fmt: skip
+    for o, name in ((below, "body"), (above, "head"), (tail, "tail")):
+        o.name = o.data.name = name
 
-    def own(objs, frame_in_body):
-        """Move a part's objects from the body's frame into its own."""
-        m = frame_in_body.inverted()
-        for o in objs:
-            o.data.transform(m)
-            o.data.update()
-        return objs
-
-    for o in [below, above, peg, *head, *body, *tail]:
-        o.data.name = o.name  # the 3D view names what was clicked by its mesh
-    tail_frame = Matrix(i.tail_frame)
+    above.data.transform(joint.inverted())
+    tail.data.transform(root.inverted())
     flip = Matrix.Rotation(pi, 4, "X")  # a connector facing the one it mates with
     return {
-        "body": ([below, peg, *body], {"neck": joint, "tail": Matrix(i.tail_root)}),
-        "head": (own([above, *head], joint), {"neck": flip}),
-        "tail": (own(tail, tail_frame), {"root": tail_frame.inverted() @ Matrix(i.tail_root) @ flip}),
+        "body": (below, {"neck": joint, "tail": root}),
+        "head": (above, {"neck": flip}),
+        "tail": (tail, {"root": flip}),
     }
