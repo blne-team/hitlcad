@@ -47,7 +47,9 @@ const SELECT_COLOR = "#2f6df6";
 const GHOST_COLOR = "#4c6ef5";
 
 const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, directIntensity: 1.1, metalness: 0.3, roughness: 0.65, defaultOpacity: 0.5, normalLen: 0 };
-const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, grid: [true, false, false], collapse: 1 };
+// The axes and the grid at the design's origin (0, 0, 0), which its parts are placed from, not at the middle of
+// its bounding box: three-cad-viewer's default moves them with the model's extent.
+const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, axes0: true, grid: [true, false, false], collapse: 1 };
 
 /** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
 export const instanceOf = (viewerPath: string): string => viewerPath.replace(/^\/+/, "").split("/").slice(1).join("/");
