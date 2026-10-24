@@ -403,6 +403,10 @@ class BuildBodies:
     def overlap_mm3(self) -> float:
         return self.settings.overlap_mm3
 
+    def number(self, value: float | str | None) -> float | None:
+        """A requirement's number: as written, or the parameter or interface value it names."""
+        return value if value is None or not isinstance(value, str) else float(self.built.nominal(value))
+
     def _body(self, name: str, leaves: list[Leaf]) -> Body:
         return Body(name, leaves, self.settings)
 

@@ -294,6 +294,10 @@ case (± the sum of the contributors' tolerances, which must stay within min and
 `mass` uses each part's material (a catalog part's from its provider); a part without one makes it
 `unverified`, naming the part.
 
+A requirement's numbers (min and max, a box, a hole's diameter, a wall) may name a parameter or an
+interface value instead (`"max": "interfaces.height_max"`), so the requirement follows the design in
+every configuration; anything computed is computed in `interfaces.py`, like any shared value.
+
 ## Code contract
 
 hitlcad runs every function with `p` (the parameter values of the configuration built, a

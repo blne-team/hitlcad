@@ -16,9 +16,12 @@ from pydantic import Field, model_validator
 from hitlcad.core.types import Model, members
 
 if TYPE_CHECKING:
-    from hitlcad.analysis.bodies import Body, BuildBodies
+    from hitlcad.analysis.model import Body, BuildBodies
 
 Verdict = tuple[bool | None, str]  # (passed, detail); None: this build cannot tell, and the detail says why
+#: A requirement's number: as written, or a parameter's name or "interfaces.<name>" that gives it, so a
+#: requirement follows the design ("as tall as the height parameter") in every configuration.
+Number = float | str
 
 AXES = {"x": 0, "y": 1, "z": 2}
 
@@ -44,16 +47,19 @@ class _Check(Model):
 
 
 class _Bounded(Model):
-    min: float | None = None
-    max: float | None = None
+    min: Number | None = None
+    max: Number | None = None
 
     @model_validator(mode="after")
     def _bounded(self) -> _Bounded:
         if self.min is None and self.max is None:
             raise ValueError("give min, max or both")
-        if self.min is not None and self.max is not None and self.min > self.max:
+        if isinstance(self.min, float) and isinstance(self.max, float) and self.min > self.max:
             raise ValueError("min is greater than max")
         return self
+
+    def bounds(self, value: float, build: BuildBodies, unit: str) -> Verdict:
+        return _bounds(value, build.number(self.min), build.number(self.max), unit)
 
 
 class _OnTarget(_Check):
@@ -74,10 +80,10 @@ class SizeCheck(_Bounded, _OnTarget):
 
     kind: Literal["size"]
     axis: Literal["x", "y", "z"]
-    example = {"kind": "size", "axis": "z", "min": 9.9, "max": 10.1}
+    example = {"kind": "size", "axis": "z", "min": 9.9, "max": "interfaces.height_max"}
 
     def verify(self, build: BuildBodies) -> Verdict:
-        passed, detail = _bounds(self.subject(build).metrics.size[AXES[self.axis]], self.min, self.max, "mm")
+        passed, detail = self.bounds(self.subject(build).metrics.size[AXES[self.axis]], build, "mm")
         return passed, f"{self.axis.upper()} {detail}"
 
 
@@ -85,13 +91,14 @@ class FitsWithinCheck(_OnTarget):
     """Fits inside a box of this size (X, Y, Z mm), as it is modelled."""
 
     kind: Literal["fits_within"]
-    box: tuple[float, float, float]
+    box: tuple[Number, Number, Number]
     example = {"kind": "fits_within", "box": [120, 80, 40]}
 
     def verify(self, build: BuildBodies) -> Verdict:
         size = self.subject(build).metrics.size
-        over = [f"{axis.upper()} {size[i]:.2f} > {self.box[i]:g}" for axis, i in AXES.items() if size[i] > self.box[i]]
-        box = " × ".join(f"{b:g}" for b in self.box)
+        limit = [build.number(b) for b in self.box]
+        over = [f"{axis.upper()} {size[i]:.2f} > {limit[i]:g}" for axis, i in AXES.items() if size[i] > limit[i]]
+        box = " × ".join(f"{b:g}" for b in limit)
         return not over, f"{' × '.join(f'{v:.2f}' for v in size)} mm in a {box} mm box" + (
             f": {', '.join(over)}" if over else ""
         )
@@ -107,7 +114,7 @@ class VolumeCheck(_Bounded, _OnTarget):
         volume = self.subject(build).metrics.volume
         if volume is None:
             return None, "volume unknown: the mesh is not closed"
-        return _bounds(volume, self.min, self.max, "mm³")
+        return self.bounds(volume, build, "mm³")
 
 
 class MassCheck(_Bounded, _OnTarget):
@@ -121,15 +128,15 @@ class MassCheck(_Bounded, _OnTarget):
         if unknown:
             return None, f"mass unknown: {unknown}"
         assert mass is not None
-        return _bounds(mass, self.min, self.max, "g")
+        return self.bounds(mass, build, "g")
 
 
 class HoleCheck(_OnTarget):
     """At least `count` complete round holes of this diameter (through or blind), found on the B-rep."""
 
     kind: Literal["hole"]
-    diameter: float = Field(gt=0, description="mm")
-    tol: float = Field(default=0.1, ge=0, description="mm either way")
+    diameter: Number = Field(description="mm")
+    tol: Number = Field(default=0.1, description="mm either way")
     count: int = Field(default=1, ge=1)
     example = {"kind": "hole", "diameter": 6, "tol": 0.1, "count": 2}
 
@@ -141,11 +148,12 @@ class HoleCheck(_OnTarget):
             holes = body.holes()
         except Unmeasurable as e:
             return None, f"{body.name}: {e}"
-        matching = [h for h in holes if abs(h.diameter - self.diameter) <= self.tol]
+        diameter, tol = build.number(self.diameter), build.number(self.tol)
+        matching = [h for h in holes if abs(h.diameter - diameter) <= tol]
         found = Counter(f"Ø{h.diameter:.2f}" for h in holes)
         inventory = ", ".join(f"{d} ×{n}" for d, n in sorted(found.items())) or "none"
         return len(matching) >= self.count, (
-            f"{len(matching)} of Ø{self.diameter:g} ±{self.tol:g} mm (needs {self.count}); holes: {inventory}"
+            f"{len(matching)} of Ø{diameter:g} ±{tol:g} mm (needs {self.count}); holes: {inventory}"
         )
 
 
@@ -153,14 +161,15 @@ class WallCheck(_OnTarget):
     """No wall thinner than `min` mm."""
 
     kind: Literal["wall"]
-    min: float = Field(gt=0)
+    min: Number
     example = {"kind": "wall", "min": 2}
 
     def verify(self, build: BuildBodies) -> Verdict:
         thinnest = self.subject(build).thinnest_wall()
         if thinnest is None:
             return None, "wall thickness not measurable: the mesh is not closed"
-        return thinnest >= self.min, f"thinnest wall {thinnest:.2f} mm (needs ≥ {self.min:g})"
+        minimum = build.number(self.min)
+        return thinnest >= minimum, f"thinnest wall {thinnest:.2f} mm (needs ≥ {minimum:g})"
 
 
 class BodiesCheck(_OnTarget):
@@ -194,7 +203,7 @@ class ClearanceCheck(_Bounded, _Check):
             shared = a.overlap(b)
             if shared > build.overlap_mm3:
                 return self.min is None, f"{a.name} and {b.name} overlap by {shared:.1f} mm³"
-            passed, detail = _bounds(a.gap(b), self.min, self.max, "mm")
+            passed, detail = self.bounds(a.gap(b), build, "mm")
         except Unmeasurable as e:  # a mesh is not closed
             return None, f"not measurable: {e}"
         return passed, f"{a.name} to {b.name}: {detail}"
@@ -237,9 +246,10 @@ class StackCheck(_Bounded, _Check):
         worst = sum(abs(t) for t in self.tolerances.values())
         rss = math.sqrt(sum(t * t for t in self.tolerances.values()))
         low, high = nominal - worst, nominal + worst
-        ok = (self.min is None or low >= self.min) and (self.max is None or high <= self.max)
-        need = " and ".join(p for p in (f"≥ {self.min:g}" if self.min is not None else "",
-                                         f"≤ {self.max:g}" if self.max is not None else "") if p)  # fmt: skip
+        least, most = build.number(self.min), build.number(self.max)
+        ok = (least is None or low >= least) and (most is None or high <= most)
+        need = " and ".join(p for p in (f"≥ {least:g}" if least is not None else "",
+                                         f"≤ {most:g}" if most is not None else "") if p)  # fmt: skip
         return ok, (f"{nominal:.3f} mm nominal, {low:.3f} … {high:.3f} worst case (± {worst:.3f}), ± {rss:.3f} RSS "
                     f"over {len(self.tolerances)} parts (needs {need})")  # fmt: skip
 

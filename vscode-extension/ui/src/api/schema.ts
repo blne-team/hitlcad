@@ -726,9 +726,9 @@ export interface components {
          */
         ClearanceCheck: {
             /** Min */
-            min: number | null;
+            min: number | string | null;
             /** Max */
-            max: number | null;
+            max: number | string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1381,9 +1381,9 @@ export interface components {
             kind: "fits_within";
             /** Box */
             box: [
-                number,
-                number,
-                number
+                number | string,
+                number | string,
+                number | string
             ];
         };
         /**
@@ -1497,13 +1497,13 @@ export interface components {
              * Diameter
              * @description mm
              */
-            diameter: number;
+            diameter: number | string;
             /**
              * Tol
              * @description mm either way
              * @default 0.1
              */
-            tol: number;
+            tol: number | string;
             /**
              * Count
              * @default 1
@@ -1660,9 +1660,9 @@ export interface components {
              */
             target: string | null;
             /** Min */
-            min: number | null;
+            min: number | string | null;
             /** Max */
-            max: number | null;
+            max: number | string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2462,9 +2462,9 @@ export interface components {
              */
             target: string | null;
             /** Min */
-            min: number | null;
+            min: number | string | null;
             /** Max */
-            max: number | null;
+            max: number | string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2517,9 +2517,9 @@ export interface components {
          */
         StackCheck: {
             /** Min */
-            min: number | null;
+            min: number | string | null;
             /** Max */
-            max: number | null;
+            max: number | string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2614,9 +2614,9 @@ export interface components {
              */
             target: string | null;
             /** Min */
-            min: number | null;
+            min: number | string | null;
             /** Max */
-            max: number | null;
+            max: number | string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2639,7 +2639,7 @@ export interface components {
              */
             kind: "wall";
             /** Min */
-            min: number;
+            min: number | string;
         };
     };
     responses: never;

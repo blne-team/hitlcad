@@ -138,6 +138,20 @@ async def test_configurations_build_their_own_values(core: HitlCad, tmp_path: Pa
     ]  # the wide variant breaks a requirement the default meets
 
 
+async def test_requirements_follow_the_parameters_they_name(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("enclosure", tmp_path / "enclosure")
+    edit_json(folder / "design.json", lambda d: d["requirements"].extend([
+        {"text": "as wide as its width", "check": {"kind": "size", "axis": "x", "min": "width", "max": "width"}},
+        {"text": "named wrong", "check": {"kind": "wall", "min": "thickness"}},
+    ]))  # fmt: skip
+    for configuration, width in ((None, 40), ("wide", 60)):
+        report = await build(core, folder, tmp_path / f"out-{width}", configuration)
+        (follows,) = [r for r in results(report, "requirement") if r.subject == "as wide as its width"]
+        assert follows.status == "pass" and f"X {width}.00 mm" in follows.detail, follows.detail
+        (wrong,) = [r for r in results(report, "requirement") if r.subject == "named wrong"]
+        assert wrong.status == "fail" and "thickness" in wrong.detail, wrong.detail
+
+
 async def test_structure_is_checked_before_any_geometry(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     edit_json(
@@ -453,10 +467,24 @@ def test_fixtures_are_valid_design_files() -> None:
 EXAMPLES = Path(__file__).parents[2] / "examples"
 
 
-@pytest.mark.parametrize("name", sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir()))
-async def test_the_readme_examples_build_and_verify(core: HitlCad, tmp_path: Path, name: str) -> None:
+EXAMPLE_BUILDS = [
+    (folder.name, configuration)
+    for folder in sorted(p for p in EXAMPLES.iterdir() if p.is_dir())
+    for configuration in [
+        None,
+        *json.loads((folder / "design.json").read_text(encoding="utf-8")).get("configurations", {}),
+    ]
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "configuration"), EXAMPLE_BUILDS, ids=[f"{n}-{c or 'default'}" for n, c in EXAMPLE_BUILDS]
+)
+async def test_the_readme_examples_build_and_verify_in_every_configuration(
+    core: HitlCad, tmp_path: Path, name: str, configuration: str | None
+) -> None:
     folder = shutil.copytree(EXAMPLES / name, tmp_path / name)
-    report = await build(core, folder, tmp_path / "out")
+    report = await build(core, folder, tmp_path / "out", configuration)
     assert report.status == "succeeded", report.error
     assert failing(report) == []
 
