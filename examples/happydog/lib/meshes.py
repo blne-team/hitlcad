@@ -90,9 +90,9 @@ def disc(name, center, radius, thick, axis, color):
     return cylinder(name, m @ Matrix.Translation((0, 0, -thick / 2)), radius, thick, color)
 
 
-def tube(name, pts, r, color, taper=None):
+def tube(name, pts, r, color, taper=None, closed=False):
     """A round tube through the points (smooth Bezier), turned into a mesh by bake(). `taper` optionally
-    scales the radius at each point."""
+    scales the radius at each point; `closed` makes it a ring through them."""
     cu = bpy.data.curves.new(name, "CURVE")
     cu.dimensions = "3D"
     cu.bevel_depth = r
@@ -101,6 +101,7 @@ def tube(name, pts, r, color, taper=None):
     cu.use_fill_caps = True
     sp = cu.splines.new("BEZIER")
     sp.bezier_points.add(len(pts) - 1)
+    sp.use_cyclic_u = closed
     for k, (bp, pt) in enumerate(zip(sp.bezier_points, pts, strict=True)):
         bp.co = pt
         bp.handle_left_type = bp.handle_right_type = "AUTO"
@@ -109,8 +110,9 @@ def tube(name, pts, r, color, taper=None):
     return link(bpy.data.objects.new(name, cu))
 
 
-def band(name, pts, normals, axis, width, thick, sink, color, prof=16):
-    """Closed rounded-rectangle band (a collar) following a loop of surface points."""
+def band(name, pts, normals, axis, width, thick, sink, color, prof=16, roundness=0.5):
+    """Closed band (a collar) following a loop of surface points; its profile a rounded rectangle, or with
+    `roundness` 1 an ellipse."""
     bm = bmesh.new()
     rings = []
     for q, n in zip(pts, normals, strict=True):
@@ -118,8 +120,8 @@ def band(name, pts, normals, axis, width, thick, sink, color, prof=16):
         ring = []
         for k in range(prof):
             a = 2 * pi * k / prof
-            u = copysign(abs(cos(a)) ** 0.5, cos(a))
-            w = copysign(abs(sin(a)) ** 0.5, sin(a))
+            u = copysign(abs(cos(a)) ** roundness, cos(a))
+            w = copysign(abs(sin(a)) ** roundness, sin(a))
             ring.append(bm.verts.new(q + n * (thick / 2 - sink + u * thick / 2) + axis * (w * width / 2)))
         rings.append(ring)
     for k in range(len(rings)):
@@ -174,6 +176,7 @@ def union(obj, others, name):
     m.operand_type = "COLLECTION"
     m.collection = group
     m.solver = "EXACT"
+    m.use_self = True  # a bent tube may fold over itself
     m.material_mode = "TRANSFER"
     out = bake(obj)
     remove(*others)

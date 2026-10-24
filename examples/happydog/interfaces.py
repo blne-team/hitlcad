@@ -20,6 +20,38 @@ def _mm(p, i, v):
     return [i.scale * c for c in np.asarray(v, float) - (0, 0, sculpt.FLOOR)]
 
 
+def height_min(p, i):
+    """The height the build may measure: within 0.3 % of `height` (the mesher places the surface to about
+    0.1 %)."""
+    return p["height"] * 0.997
+
+
+def height_max(p, i):
+    return p["height"] * 1.003
+
+
+def envelope_x(p, i):
+    """The shelf space the figurine may take, as shares of its height: 0.7 wide (ears flared out) and as
+    deep as it is tall (a long tongue in front, the tail behind)."""
+    return 0.7 * p["height"]
+
+
+def envelope_y(p, i):
+    return 1.0 * p["height"]
+
+
+#: The thinnest wall that prints: two perimeters of the 0.4 mm nozzle, the FDM process's min_wall_mm.
+MIN_WALL_MM = 0.8
+
+
+def feature_min(p, i):
+    """The narrowest detail in dog units at this scale: the thinnest wall that prints and a quarter more,
+    for the facets of a mesh. A raised line or bump is drawn at least this wide, a flat ear, the tag and
+    each half of the neck band at least this thick, and the lips are rounded to it; a line designed at
+    less than half of it is left out, since widening it further would blot the face."""
+    return 1.25 * MIN_WALL_MM / i.scale
+
+
 def glue_gap(p, i):
     """The glue line left between parts that are glued together (head on body, tail on rump)."""
     return 0.1

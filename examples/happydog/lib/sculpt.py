@@ -1,9 +1,9 @@
 """The puppy's sculpt, without Blender: its metaball elements and the fixed points of its layout, in "dog
 units" (the sculpt is roughly 100 tall and scaled to the `height` parameter as a whole).
 
-interfaces.py evaluates the metaball field here to find the top of the head, so the scale (and with it
-every joint frame) is known before any geometry is built; parts/figure.py builds the same elements in
-Blender. Sculpt coordinates: Z up, the dog faces -Y.
+interfaces.py evaluates the metaball field here to find the top of the figurine (the head, or an ear when
+it stands higher), so the scale (and with it every joint frame) is known before any geometry is built;
+parts/figure.py builds the same elements and ears in Blender. Sculpt coordinates: Z up, the dog faces -Y.
 """
 
 from math import cos, radians, sin
@@ -99,9 +99,8 @@ def field(points, els):
     return total
 
 
-def top(p):
-    """The highest point of the blended body (the top of the head), in dog units."""
-    els = elements(p)
+def _blob_top(els):
+    """The highest point of the blended body (the top of the head)."""
     reach = [np.asarray(e[1], float) + K * (max(e[2]) if e[0] == "ellipsoid" else e[-1]) for e in els]
     lo = np.min([np.asarray(e[1], float) for e in els], axis=0) - 40
     hi = np.max(reach, axis=0)
@@ -122,6 +121,66 @@ def top(p):
         below, above = np.where(ins, mid, below), np.where(ins, above, mid)
     ok = field(np.column_stack([fx, fy, z - 0.5 + 0 * fx]), els) >= THRESHOLD
     return float(np.max(below[ok]))
+
+
+def field_cast(els):
+    """cast(target, direction) -> (point, normal) on the blended body, hit by a ray coming from outside along
+    `direction` toward `target`: as parts/figure.py casts against the mesh, on the field instead."""
+
+    def cast(target, direction, dist=80.0):
+        d = np.asarray(direction, float) / np.linalg.norm(direction)
+        o, step = np.asarray(target, float) + d * dist, 0.25
+        ts = np.arange(0, 2 * dist, step)
+        inside = field(o - np.outer(ts, d), els) >= THRESHOLD
+        k = int(np.argmax(inside))
+        lo, hi = ts[k] - step, ts[k]
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            if field((o - d * mid)[None], els)[0] >= THRESHOLD:
+                hi = mid
+            else:
+                lo = mid
+        q = o - d * hi
+        e = np.eye(3) * 1e-4
+        grad = np.array([field((q + e[j])[None], els)[0] - field((q - e[j])[None], els)[0] for j in range(3)])
+        return q, -grad / np.linalg.norm(grad)
+
+    return cast
+
+
+def rotation(z, xhint):
+    """3 × 3 rotation whose Z column is `z` and X column is as close to `xhint` as possible."""
+    z = np.asarray(z, float) / np.linalg.norm(z)
+    y = np.cross(z, xhint)
+    y /= np.linalg.norm(y)
+    return np.column_stack([np.cross(y, z), y, z])
+
+
+def ears(p, cast, thinnest=0.0):
+    """The two floppy ears: (side, centre, radii, rotation) of each ellipsoid, hung from the head's surface
+    found by `cast`. `thinnest` is the narrowest detail that prints (dog units): a flat ear is at least that
+    thick from its middle to each face, so its thin tip still prints."""
+    hs = p["head_scale"]
+    h, rh = head_map(p)
+    f = radians(p["ear_flare_deg"])
+    out = []
+    for s, side in ((-1, "r"), (1, "l")):
+        loc, n = cast(h((0, -6, 67)), rh @ np.array((s * 0.70, -0.05, 0.71)))
+        down = rh @ np.array((s * sin(f), -0.12, -cos(f)))
+        down /= np.linalg.norm(down)
+        rl = 14 * hs
+        radii = (max(2.6 * hs, thinnest), 8 * hs, rl)
+        out.append((side, loc - n * 1.6 * hs + down * rl * 0.8, radii, rotation(down, rh @ np.array((s, 0, 0)))))
+    return out
+
+
+def top(p):
+    """The highest point of the figurine in dog units: the head's, or an ear's when it stands higher."""
+    els = elements(p)
+    tops = [_blob_top(els)]
+    for _, centre, radii, rot in ears(p, field_cast(els)):
+        tops.append(centre[2] + float(np.sqrt(np.sum((rot[2] * np.asarray(radii)) ** 2))))
+    return max(tops)
 
 
 def tail_curve(p, n=9):

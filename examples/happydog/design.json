@@ -39,16 +39,20 @@
       "Floppy dark ears (ear_flare_deg) and a wagging tail (tail_wag_deg)",
       "Eye patch and back spot, pink cheek blush, toe lines on all four paws",
       "Red collar with a gold tag",
-      "Prints as three parts, glued together: body (with the neck peg and the tag), head (with the socket) and tail (standing on its flat root, which plugs into the rump)"
+      "Prints as three parts, glued together: body (with the neck peg and the tag), head (with the socket) and tail (standing on its flat root, which plugs into the rump)",
+      "Every detail prints at any height: raised lines, bumps, the ears, the tag and the neck band are at least 1 mm (two perimeters and a quarter) across; a line designed under half that is left out (the toe lines below about 33 mm tall)",
+      "Configurations cover the parameter extremes: no_collar, plain, small (30 mm), large_detailed (250 mm, fine mesh, nearly closed mouth), tilted_left and tilted_right"
     ],
     "assumptions": [
       "Decorative figurine, 175 mm tall, faces −Y",
       "Organic, sculpted shape: Blender metaballs give smooth blended forms that B-rep cannot",
       "Each part is one solid whose details keep their own colours, for multi-colour printing (or print it in one colour)",
       "FDM-printed on support: the body upright on its flat bottom, the head on its neck joint, the tail on its root; chin, tongue, ears and the tail's curl overhang",
-      "The tag sits against the chest, just below the collar, held by a stub behind it",
       "Parts are glued, with a 0.1 mm glue line at each joint",
-      "Bottom of the body is cut flat (about 1% of the height) so it stands steadily"
+      "Bottom of the body is cut flat (about 1% of the height) so it stands steadily",
+      "The tag sits against the chest, just below the collar, held by a stub behind it",
+      "Without the collar, a soft fold of fur takes its place round the neck: the head's joint needs a band there to meet the neck squarely",
+      "The eye patch, spots and blush are raised 0.45 dog units (about 1 mm at 175 mm) and follow the surface"
     ],
     "open_questions": [
       "Breed or colouring you have in mind (e.g. golden retriever, dalmatian, beagle)?",
@@ -252,22 +256,22 @@
   ],
   "requirements": [
     {
-      "text": "175 mm tall (follows the height parameter)",
+      "text": "As tall as the height parameter",
       "check": {
         "kind": "size",
         "axis": "z",
-        "min": 174.5,
-        "max": 175.5
+        "min": "interfaces.height_min",
+        "max": "interfaces.height_max"
       }
     },
     {
-      "text": "Fits in a 100 × 170 × 180 mm box",
+      "text": "Fits on a shelf: no wider than 0.7 and no deeper than 1.0 times its height",
       "check": {
         "kind": "fits_within",
         "box": [
-          100,
-          170,
-          180
+          "interfaces.envelope_x",
+          "interfaces.envelope_y",
+          "interfaces.height_max"
         ]
       }
     },
@@ -278,5 +282,40 @@
   "outputs": [
     "bom",
     "3mf"
-  ]
+  ],
+  "configurations": {
+    "no_collar": {
+      "collar": 0
+    },
+    "plain": {
+      "spots": 0,
+      "blush": 0,
+      "eye_style": 1
+    },
+    "small": {
+      "height": 30
+    },
+    "large_detailed": {
+      "height": 250,
+      "detail": 0.5,
+      "mouth_open": 0.5
+    },
+    "tilted_left": {
+      "head_tilt_deg": -25,
+      "head_scale": 0.8,
+      "ear_flare_deg": 60,
+      "tail_wag_deg": -45,
+      "eye_size": 0.7,
+      "tongue_length": 1.6,
+      "mouth_open": 1.5
+    },
+    "tilted_right": {
+      "head_tilt_deg": 25,
+      "head_scale": 1.3,
+      "ear_flare_deg": 0,
+      "tail_wag_deg": 45,
+      "eye_size": 1.4,
+      "tongue_length": 0.5
+    }
+  }
 }
