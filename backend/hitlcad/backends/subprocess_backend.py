@@ -89,12 +89,17 @@ class SubprocessBackend(CADBackend):
         return PartsOutcome(files=result["files"], log=log)
 
 
-# Signals that end a build process, and why they usually do.
+# Signals that end a build process on POSIX, and why they usually do.
 _SIGNALS = {
-    signal.SIGKILL: "was killed by the system, most often for running out of memory",
-    signal.SIGXFSZ: "was stopped for writing a file over 512 MB",
-    signal.SIGSEGV: "crashed (segmentation fault)",
-    signal.SIGABRT: "aborted, often for running out of memory",
+    "SIGKILL": "was killed by the system, most often for running out of memory",
+    "SIGXFSZ": "was stopped for writing a file over 512 MB",
+    "SIGSEGV": "crashed (segmentation fault)",
+    "SIGABRT": "aborted, often for running out of memory",
+}
+# Windows ends a crashed process with an NTSTATUS as its exit code.
+_NTSTATUS = {
+    0xC0000005: "crashed (access violation)",
+    0xC0000409: "aborted (a fail-fast exception)",
 }
 
 
@@ -102,5 +107,7 @@ def _ended(code: int | None) -> str:
     """How the build process ended, when it left no result."""
     if code is not None and code < 0:
         sig = signal.Signals(-code)
-        return f"the build process {_SIGNALS.get(sig, f'was ended by {sig.name}')}"
+        return f"the build process {_SIGNALS.get(sig.name, f'was ended by {sig.name}')}"
+    if code in _NTSTATUS:
+        return f"the build process {_NTSTATUS[code]}"
     return f"the build process exited with code {code}"

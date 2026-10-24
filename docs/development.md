@@ -71,5 +71,13 @@ script refuses a mismatch), then push a matching tag:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-GitHub Actions (`.github/workflows/release.yml`) runs CI, builds the release and publishes it as a
-GitHub release with the `.tar.gz`, the wheel and the `.vsix` attached.
+GitHub Actions (`.github/workflows/release.yml`) runs CI, which builds the release and installs it on
+Linux, macOS and Windows, then publishes that same build as a GitHub release with the `.tar.gz`, the wheel
+and the `.vsix` attached.
+
+## Platforms
+
+CI runs the backend tests (with Blender) and the extension's on Linux, macOS and Windows, and installs
+the release package on each the way [INSTALL.md](../INSTALL.md) says, then builds an example with the
+installed tool. Build processes are contained per platform in `backends/executor.py`: resource limits
+and a process group on POSIX, a job object on Windows.

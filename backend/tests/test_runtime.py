@@ -3,6 +3,7 @@ process that runs it."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,17 @@ def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None
     assert key(values={}) is None  # t no longer exists
 
 
+async def test_a_build_process_past_its_deadline_ends_with_what_it_started(tmp_path: Path) -> None:
+    # The child starts a grandchild that would write a file after the deadline, then waits on it.
+    late = "import pathlib, time; time.sleep(3); pathlib.Path('alive').touch()"
+    parent = f"import subprocess, sys; subprocess.run([sys.executable, '-c', {late!r}])"
+    run = await LocalExecutor().run([sys.executable, "-c", parent], tmp_path, timeout_s=1)
+    assert run.timed_out
+    await asyncio.sleep(4)
+    assert not (tmp_path / "alive").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX resource limits")
 async def test_build_processes_are_bounded_by_their_deadline_not_cpu_time(tmp_path: Path) -> None:
     # Blender's mesher spends CPU on every core at once; a CPU-time limit would kill it long before the deadline.
     probe = "import resource; print(resource.getrlimit(resource.RLIMIT_CPU)[0] == resource.RLIM_INFINITY)"
@@ -105,6 +117,7 @@ async def test_build_processes_are_bounded_by_their_deadline_not_cpu_time(tmp_pa
     assert run.output.strip() == "True"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 async def test_a_build_process_ended_by_a_signal_says_why(tmp_path: Path) -> None:
     kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
     run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)

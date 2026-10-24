@@ -18,45 +18,40 @@ jobs:
       - run: uv run ruff format --check backend
 
   backend:
-    name: backend (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: backend (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python: ["3.11", "3.12", "3.13"]
+        include: # Windows and macOS on the Python a release installs by default (.python-version)
+          - os: windows-latest
+            python: "3.11"
+          - os: macos-latest
+            python: "3.11"
+    env:
+      UV_PYTHON: ${{ matrix.python }} # every uv command below, not only the first, runs on this Python
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      # Blender builds the Blender backend's designs and renders every preview; same version as the devcontainer.
-      - name: Blender version
-        id: blender
-        run: echo "version=$(sed -n 's/^ARG BLENDER_VERSION="\(.*\)"/\1/p' .devcontainer/Dockerfile)" >> "$GITHUB_OUTPUT"
-      - name: Blender's system libraries (software OpenGL)
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes libgl1 libegl1 libgl1-mesa-dri libglu1-mesa \
-            libxi6 libxkbcommon0 libxxf86vm1 libxrender1 libxfixes3 libsm6 libxrandr2 libxinerama1 libxcursor1 libx11-xcb1
-      - uses: actions/cache@v4
-        id: blender-cache
-        with:
-          path: ~/blender
-          key: blender-${{ steps.blender.outputs.version }}-linux-x64
-      - name: Download Blender
-        if: steps.blender-cache.outputs.cache-hit != 'true'
-        run: |
-          v="${{ steps.blender.outputs.version }}"
-          mkdir -p ~/blender
-          curl --fail --location --silent --show-error "https://download.blender.org/release/Blender${v%.*}/blender-$v-linux-x64.tar.xz" \
-            | tar -xJ -C ~/blender --strip-components=1
-      - run: echo "$HOME/blender" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/blender
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --locked --extra dev --python ${{ matrix.python }}
+      - run: uv sync --locked --extra dev
       - run: uv run hitlcad doctor
       - run: uv run pytest
 
   extension:
-    runs-on: ubuntu-latest
+    name: extension (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         working-directory: vscode-extension
@@ -69,9 +64,11 @@ jobs:
           cache-dependency-path: vscode-extension/package-lock.json
       - run: npm ci
       - uses: astral-sh/setup-uv@v6
+        if: runner.os == 'Linux'
         with:
           enable-cache: true
       - name: Panel UI's API types match the server's models
+        if: runner.os == 'Linux'
         run: |
           npm run api-types
           git diff --exit-code -- ui/src/api/schema.ts || { echo "::error::run scripts/api-types.sh and commit ui/src/api/schema.ts"; exit 1; }
@@ -84,6 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/blender
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -113,3 +111,53 @@ jobs:
           path: |
             e2e/playwright-report
             e2e/test-results
+
+  package:
+    name: release package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/
+
+  install:
+    name: install the release (${{ matrix.os }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      HITLCAD_BACKENDS: '["build123d"]' # no Blender here: the installed tool on its own, as INSTALL.md sets it up
+    steps:
+      - uses: actions/checkout@v4 # for the examples
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - name: Install the tool as install.sh does
+        if: runner.os != 'Windows'
+        working-directory: dist
+        run: |
+          cd hitlcad-*/
+          uv tool install --force --python "$(cat python-version)" --constraints constraints.txt hitlcad-*.whl
+      - name: Install the tool as INSTALL.md says for Windows
+        if: runner.os == 'Windows'
+        working-directory: dist
+        shell: pwsh
+        run: |
+          Set-Location (Get-ChildItem -Directory hitlcad-*)
+          uv tool install --force --python (Get-Content python-version) --constraints constraints.txt (Get-Item hitlcad-*.whl)
+      - run: uv tool dir --bin >> "$GITHUB_PATH"
+        shell: bash
+      - run: hitlcad doctor
+      - run: hitlcad build examples/handhold-fan --out build-out --no-render
