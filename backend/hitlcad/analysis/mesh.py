@@ -25,23 +25,32 @@ def load_mesh(path: Path) -> trimesh.Trimesh:
 def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """Closed shells that overlap as the one solid they make: a part modelled as several objects (a Blender
     figure's head, eyes and spots) would otherwise measure their buried surfaces as walls and their shared
-    volume twice. Shells facing inwards are hollows, cut from it. Shells that do not touch stay apart."""
+    volume twice. Shells facing inwards are hollows, cut from it; a shell enclosing nothing (a flattened
+    sliver) is no material and is left out. Shells that do not touch stay apart."""
     import manifold3d
 
     shells = mesh.split(only_watertight=False)
     if len(shells) < 2 or not all(s.is_watertight for s in shells) or not _overlapping([s.bounds for s in shells]):
         return mesh
+    volumes = [_signed_volume(s) for s in shells]
 
-    def body(shell: trimesh.Trimesh) -> manifold3d.Manifold:
-        faces = shell.faces if shell.volume > 0 else shell.faces[:, ::-1]
+    def body(shell: trimesh.Trimesh, volume: float) -> manifold3d.Manifold:
+        faces = shell.faces if volume > 0 else shell.faces[:, ::-1]
         return manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(shell.vertices, dtype=np.float32),
                                                    tri_verts=np.asarray(faces, dtype=np.uint32)))  # fmt: skip
 
-    add = manifold3d.Manifold.batch_boolean([body(s) for s in shells if s.volume > 0], manifold3d.OpType.Add)
-    hollows = [body(s) for s in shells if s.volume < 0]
+    solids = [body(s, v) for s, v in zip(shells, volumes, strict=True) if v > 0]
+    add = manifold3d.Manifold.batch_boolean(solids, manifold3d.OpType.Add)
+    hollows = [body(s, v) for s, v in zip(shells, volumes, strict=True) if v < 0]
     whole = add - manifold3d.Manifold.batch_boolean(hollows, manifold3d.OpType.Add) if hollows else add
     out = whole.to_mesh()
     return trimesh.Trimesh(out.vert_properties[:, :3], out.tri_verts)
+
+
+def _signed_volume(shell: trimesh.Trimesh) -> float:
+    """A closed shell's volume, negative when it faces inwards: the sum of its triangles' signed tetrahedra."""
+    a, b, c = shell.triangles[:, 0], shell.triangles[:, 1], shell.triangles[:, 2]
+    return float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6)
 
 
 def _overlapping(bounds: list[np.ndarray]) -> bool:
