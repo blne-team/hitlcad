@@ -64,25 +64,25 @@ def _all_parts(built: BuiltDesign) -> list[PartGeometry]:
     return [*built.parts.values(), *(p for c in built.components.values() for p in _all_parts(c))]
 
 
-def mesh_assembly(built: BuiltDesign) -> trimesh.Trimesh:
-    leaves = built.leaves()
-    if not leaves:
-        return trimesh.Trimesh()
-    return trimesh.util.concatenate([leaf.mesh for leaf in leaves])
-
-
-def _quaternion(m: fr.Frame) -> tuple[float, float, float, float]:
-    """(x, y, z, w) of a rotation matrix."""
+def quaternion(m: fr.Frame) -> tuple[float, float, float, float]:
+    """(x, y, z, w) of a rotation matrix, by Shepperd's method: stable for every rotation, half turns included."""
     r = m[:3, :3]
-    w = math.sqrt(max(0.0, 1 + r[0, 0] + r[1, 1] + r[2, 2])) / 2
-    x = math.copysign(math.sqrt(max(0.0, 1 + r[0, 0] - r[1, 1] - r[2, 2])) / 2, r[2, 1] - r[1, 2])
-    y = math.copysign(math.sqrt(max(0.0, 1 - r[0, 0] + r[1, 1] - r[2, 2])) / 2, r[0, 2] - r[2, 0])
-    z = math.copysign(math.sqrt(max(0.0, 1 - r[0, 0] - r[1, 1] + r[2, 2])) / 2, r[1, 0] - r[0, 1])
-    return (x, y, z, w)
+    trace = r[0, 0] + r[1, 1] + r[2, 2]
+    if trace > 0:
+        s = math.sqrt(trace + 1) * 2
+        return ((r[2, 1] - r[1, 2]) / s, (r[0, 2] - r[2, 0]) / s, (r[1, 0] - r[0, 1]) / s, s / 4)
+    if r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
+        s = math.sqrt(1 + r[0, 0] - r[1, 1] - r[2, 2]) * 2
+        return (s / 4, (r[0, 1] + r[1, 0]) / s, (r[0, 2] + r[2, 0]) / s, (r[2, 1] - r[1, 2]) / s)
+    if r[1, 1] > r[2, 2]:
+        s = math.sqrt(1 + r[1, 1] - r[0, 0] - r[2, 2]) * 2
+        return ((r[0, 1] + r[1, 0]) / s, s / 4, (r[1, 2] + r[2, 1]) / s, (r[0, 2] - r[2, 0]) / s)
+    s = math.sqrt(1 + r[2, 2] - r[0, 0] - r[1, 1]) * 2
+    return ((r[0, 2] + r[2, 0]) / s, (r[1, 2] + r[2, 1]) / s, s / 4, (r[1, 0] - r[0, 1]) / s)
 
 
 def _loc(m: fr.Frame) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    return (tuple(float(v) for v in m[:3, 3]), _quaternion(m))  # type: ignore[return-value]
+    return (tuple(float(v) for v in m[:3, 3]), tuple(float(v) for v in quaternion(m)))  # type: ignore[return-value]
 
 
 def _tessellate(part: PartGeometry) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -132,7 +132,7 @@ def write_view(built: BuiltDesign, target: Path) -> None:
         return {"version": 3, "parts": parts, "loc": IDENTITY_LOC, "name": name, "id": path, "normal_len": 0}
 
     tree = group(built, f"/{root}", root, fr.IDENTITY)
-    lo, hi = mesh_assembly(built).bounds if built.leaves() else (np.zeros(3), np.zeros(3))
+    lo, hi = built.mesh.bounds if len(built.mesh.faces) else (np.zeros(3), np.zeros(3))
     tree["bb"] = {f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")}
     data = numpy_to_buffer_json({"instances": meshes, "shapes": tree})
     tmp = target.with_suffix(".tmp")

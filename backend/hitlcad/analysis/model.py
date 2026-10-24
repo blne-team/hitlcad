@@ -20,7 +20,7 @@ from hitlcad.analysis.mesh import load_mesh, measure, measure_union
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
 from hitlcad.core.design import DesignSpec
-from hitlcad.core.report import CatalogInfo, MeshMetrics, Reads
+from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
 from hitlcad.core.structure import Measured, PartSpec, Tolerances, _Connector
 from hitlcad.core.types import Value
 from hitlcad.materials import Material
@@ -240,6 +240,36 @@ class BuiltDesign:
         for segment in InstancePath.parse(address).segments[:-1]:
             design = design.components[segment.name]
         return design
+
+    @cached_property
+    def mesh(self) -> trimesh.Trimesh:
+        """Every placed part instance as one mesh, in this design's frame."""
+        import trimesh
+
+        leaves = self.leaves()
+        return trimesh.util.concatenate([leaf.mesh for leaf in leaves]) if leaves else trimesh.Trimesh()
+
+    def mass(self, part: PartGeometry, transform: fr.Frame = fr.IDENTITY) -> MassProperties | None:
+        """One of its parts' mass, centre and inertia about the centre, placed by `transform`: known when the
+        part's material is and its mesh is closed."""
+        material = self.materials.get(part.material or "")
+        if material is None or not part.mesh.is_watertight:
+            return None
+        props = part.mesh.mass_properties  # at unit density
+        density = material.density_g_cm3 / 1000  # g/mm³
+        r = transform[:3, :3]
+        return MassProperties(
+            mass_g=float(props["mass"]) * density,
+            centre_mm=tuple(float(v) for v in (transform @ np.append(props["center_mass"], 1.0))[:3]),
+            inertia_g_mm2=tuple(tuple(float(v) for v in row) for row in r @ props["inertia"] @ r.T * density),
+        )  # type: ignore[arg-type]
+
+    @cached_property
+    def motion_plans(self) -> list[Any]:
+        """The motion analysis's plans (`analysis.motion.plans`), shared by the analysis and the report."""
+        from hitlcad.analysis.motion import plans
+
+        return plans(self)
 
     # ------------------------------------------------------------------ connectors
 

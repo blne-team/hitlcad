@@ -184,11 +184,10 @@ def mesh_view_parts(scene: trimesh.Scene, name: str = "") -> tuple[list[dict[str
 def mesh_view(scene: trimesh.Scene, name: str) -> dict[str, Any]:
     from ocp_tessellate.utils import numpy_to_buffer_json
 
-    identity = IDENTITY
     instances, parts = mesh_view_parts(scene, name)
     if not parts:
         raise ValueError("no triangle meshes in the file")
     lo, hi = scene.bounds
     bb = {f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")}
-    shapes = {"version": 3, "loc": identity, "name": name, "id": f"/{name}", "normal_len": 0, "bb": bb, "parts": parts}
+    shapes = {"version": 3, "loc": IDENTITY, "name": name, "id": f"/{name}", "normal_len": 0, "bb": bb, "parts": parts}
     return numpy_to_buffer_json({"instances": instances, "shapes": shapes})

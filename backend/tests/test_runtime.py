@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from hitlcad.backends.runtime import ModelError, Runtime, plan
-from hitlcad.build.cache import PartCache
+from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.core.report import Reads
 
 from .conftest import write_design
@@ -77,12 +78,18 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
 def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None:
     reads = Reads(parameters=["t"], interfaces=["holes"], modules=["lib/shapes.py"])
     sources = {"parts/a.py": "code", "lib/shapes.py": "helper"}
-    key = PartCache.key("be", "parts/a.py", sources, {"t": 3, "od": 40}, {"holes": [1]}, reads)
-    assert key == PartCache.key("be", "parts/a.py", sources, {"t": 3, "od": 99}, {"holes": [1]}, reads)  # od: not read
-    assert key != PartCache.key("be", "parts/a.py", sources, {"t": 4, "od": 40}, {"holes": [1]}, reads)
-    assert key != PartCache.key("be", "parts/a.py", sources, {"t": 3}, {"holes": [2]}, reads)
-    assert key != PartCache.key(
-        "be", "parts/a.py", {**sources, "lib/shapes.py": "changed"}, {"t": 3}, {"holes": [1]}, reads
-    )
-    assert key != PartCache.key("other", "parts/a.py", sources, {"t": 3}, {"holes": [1]}, reads)
-    assert PartCache.key("be", "parts/a.py", sources, {}, {"holes": [1]}, reads) is None  # t no longer exists
+    declared = {"a": ["top"]}
+
+    def key(declared: dict[str, list[str]] = declared, **change: Any) -> str | None:
+        fields = {"fingerprint": "be", "sources": sources, "assets": {}, "values": {"t": 3, "od": 40},
+                  "interfaces": {"holes": [1]}, **change}  # fmt: skip
+        return PartCache.key("parts/a.py", declared, Inputs(**fields), reads)
+
+    assert key() == key(values={"t": 3, "od": 99})  # od: not read
+    assert key() != key(values={"t": 4, "od": 40})
+    assert key() != key(interfaces={"holes": [2]})
+    assert key() != key(sources={**sources, "lib/shapes.py": "changed"})
+    assert key() != key(fingerprint="other")
+    assert key() != key(assets={"vendor/m.step": "digest"})
+    assert key() != key({"a": ["top", "bottom"]})  # design.json asks for another connector
+    assert key(values={}) is None  # t no longer exists

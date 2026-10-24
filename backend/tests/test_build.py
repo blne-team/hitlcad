@@ -160,6 +160,22 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     assert motion.status == "pass" and "-100 … 0°" in motion.detail
 
 
+async def test_an_analysis_that_crashes_is_reported_and_spares_the_others(
+    core: HitlCad, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (motion,) = [a for a in core.pipeline.analyses if a.name == "motion"]
+
+    def crash(ctx: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(motion, "run", crash)
+    report = await build(core, copy_design("hinge", tmp_path / "hinge"), tmp_path / "out")
+    assert report.status == "succeeded"
+    (crashed,) = results(report, "motion")
+    assert crashed.status == "unverified" and crashed.detail == "the analysis failed: boom"
+    assert results(report, "interference")
+
+
 async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("gearbox", tmp_path / "gearbox")
     report = await build(core, folder, tmp_path / "out")

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -62,7 +61,7 @@ def _ranges(mate: _Mate) -> list[tuple[str, float, float, bool]]:
     return out
 
 
-def plans(built: BuiltDesign, tol: Any) -> list[Plan | Result]:
+def plans(built: BuiltDesign) -> list[Plan | Result]:
     """A plan for every mate with a range of motion, or the result saying why it does not move on its own."""
     leaves = {leaf.path: leaf for leaf in built.leaves()}
     if not leaves or built.spec.ground is None:
@@ -100,7 +99,7 @@ def plans(built: BuiltDesign, tol: Any) -> list[Plan | Result]:
             continue
         moving, sign = (side_b, 1.0) if side_b is not None else (side_a, -1.0)
         assert moving is not None
-        free = mate.verify(link.a.frame, mate.facing(link.b.frame), "axial", tol).free
+        free = mate.verify(link.a.frame, mate.facing(link.b.frame), "axial", built.tolerances).free
         out.append(Plan(link, ranges, moving, sign, free, world))
     return out
 
@@ -112,7 +111,7 @@ class Motion:
     name = NAME
 
     def run(self, ctx: Context) -> list[Result]:
-        return [p if isinstance(p, Result) else self._sweep(ctx, p) for p in plans(ctx.built, ctx.tol)]
+        return [p if isinstance(p, Result) else self._sweep(ctx, p) for p in ctx.built.motion_plans]
 
     def _sweep(self, ctx: Context, plan: Plan) -> Result:
         link, w = plan.link, plan.world
@@ -128,7 +127,7 @@ class Motion:
             for value in values:
                 delta = float(value - current)
                 motions = {c: mate.motion(link.a.frame, kind, plan.sign * delta) for c in plan.moving}
-                stuck = self._propagate(motions, kind, delta, link, w.moving_links, w.relations, w.clusters, w.ground)
+                stuck = self._propagate(motions, link, w.moving_links, w.relations, w.clusters, w.ground)
                 if stuck:
                     return result(self.name, mate.address, None, f"{label(link.a)} ↔ {label(link.b)}: its motion is "
                                   f"coupled by {', '.join(sorted(stuck))} to parts that cannot move with it here (a "
@@ -143,11 +142,10 @@ class Motion:
         return result(self.name, mate.address, True, f"{label(link.a)} ↔ {label(link.b)} moves through "
                       f"{', '.join(swept)} ({n} positions) without collision", about)  # fmt: skip
 
-    def _propagate(self, motions: dict[str, fr.Frame], kind: str, delta: float, driver: Link, moving_links: list[Link],
-                   relations: list[Link], clusters: _Clusters, ground: str) -> set[str]:  # fmt: skip
-        """Carry the motion through relations to the clusters they drive, each about its own mate's axis.
-        Returns the relations that couple a moving cluster to one that cannot move."""
-        amounts = {c: delta for c in motions}
+    def _propagate(self, motions: dict[str, fr.Frame], driver: Link, moving_links: list[Link], relations: list[Link],
+                   clusters: _Clusters, ground: str) -> set[str]:  # fmt: skip
+        """Carry the motion through relations to the clusters they drive, along the axis each relation gives
+        them. Returns the relations that couple a moving cluster to one that cannot move."""
         changed = True
         while changed:
             changed = False
@@ -158,22 +156,19 @@ class Motion:
                 rel_spec: _Relation = rel.source
                 na, nb = rel.a.owner.nominals(rel.a.spec), rel.b.owner.nominals(rel.b.spec)
                 ratio = rel_spec.ratio(na, nb)
-                drv, driven, amount = (
-                    (ca, rel.b, amounts[ca] * ratio) if ca in motions else (cb, rel.a, amounts[cb] / ratio)
-                )
+                axis_a, axis_b = rel_spec.axes(rel.a.frame, rel.b.frame)
+                if ca in motions:
+                    driven, step = rel.b, axis_b.motion(ratio * axis_a.of(motions[ca]))
+                else:
+                    driven, step = rel.a, axis_a.motion(axis_b.of(motions[cb]) / ratio)
                 own = [k for k in moving_links if k is not driver and clusters.find(driven.instance) in
                        (clusters.find(k.a.instance), clusters.find(k.b.instance))]  # fmt: skip
                 for k in own:
                     side = clusters.side(driven.instance, moving_links, exclude=k, ground=ground, also=driver)
                     if side is None or side & motions.keys():
                         continue
-                    mate: _Mate = k.source
-                    turn = "angle" if "angle" in mate.free_motion else "travel"
-                    on_b = clusters.find(k.b.instance) in side
-                    step = mate.motion(k.a.frame, turn, amount if on_b else -amount)
                     for c in side:
                         motions[c] = step
-                        amounts[c] = amount
                     changed = True
                     break
         return {

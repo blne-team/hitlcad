@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # What agents are told
     explore_limit: int = Field(default=25, ge=5, description="Results listed in full per answer; the rest are counted")
     section_size: int = Field(default=640, ge=200, description="Pixels of a section view")
+    loaded_builds: int = Field(default=8, ge=1, description="Built revisions kept in memory for picks and pins")
 
     # Carrying picks and pins to a new build by geometry
     anchor_reach: float = Field(

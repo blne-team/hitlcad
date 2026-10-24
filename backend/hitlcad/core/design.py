@@ -50,13 +50,6 @@ class DesignSpec(Model):
     outputs: list[str] = Field(default_factory=list, description="Exporters to run on every successful build")
     brief: DesignBrief | None = None
 
-    @field_validator("ground")
-    @classmethod
-    def _ground(cls, v: str | None) -> str | None:
-        if v is not None:
-            (segment,) = InstancePath.parse(v).segments
-        return v
-
     @field_validator("exports")
     @classmethod
     def _exports(cls, v: dict[str, str]) -> dict[str, str]:
@@ -75,8 +68,10 @@ class DesignSpec(Model):
                 if name in seen:
                     raise ValueError(f"{name!r} names both a {seen[name]} and a {what}: names must be unique")
                 seen[name] = what
-        if self.ground is not None and InstancePath.parse(self.ground).head.name not in {*self.parts, *self.components}:
-            raise ValueError(f"ground {self.ground!r} is not a part or component of this design")
+        if self.ground is not None:
+            ground = InstancePath.parse(self.ground)
+            if len(ground.segments) != 1 or ground.head.name not in {*self.parts, *self.components}:
+                raise ValueError(f"ground {self.ground!r} is not an instance of a part or component of this design")
         by_name = {p.name: p for p in self.parameters}
         for config, values in self.configurations.items():
             for key, value in values.items():

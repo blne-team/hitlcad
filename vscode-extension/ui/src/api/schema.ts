@@ -2258,7 +2258,8 @@ export interface components {
         };
         /**
          * ScrewRelation
-         * @description A lead screw (a) and its nut (b) on one axis: b travels `lead` mm per turn of a.
+         * @description A lead screw (a) and its nut (b) on one axis, right-hand thread: b travels `lead` mm per turn of a, back
+         *     along a's Z as a turns positively about it.
          */
         ScrewRelation: {
             /** A */

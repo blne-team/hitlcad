@@ -54,7 +54,8 @@ class HitlCad:
                                  exporters if exporters is not None else discover(), renderer)  # fmt: skip
         designs = DesignService(FileDesignStore(settings.designs_dir), registry, settings.folders_file)
         feedback = FeedbackService(designs, AnchorSettings(reach=settings.anchor_reach, tie=settings.anchor_tie,
-                                                           aligned_deg=settings.anchor_aligned_deg))  # fmt: skip
+                                                           aligned_deg=settings.anchor_aligned_deg),
+                                   settings.loaded_builds)  # fmt: skip
         builds = BuildService(designs, pipeline, feedback, settings)
         return cls(settings, registry, pipeline, designs, builds, feedback, ExploreService(designs, settings),
                    ContextFeed(designs), FolderWatcher(designs, builds))  # fmt: skip

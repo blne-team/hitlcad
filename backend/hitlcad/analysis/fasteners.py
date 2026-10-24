@@ -21,8 +21,9 @@ def _coaxial(a: PlacedFrame, b: PlacedFrame, tol: Any) -> bool:
     return parallel and fr.distance_to_line(fr.origin(b.frame), fr.origin(a.frame), za) <= tol.position_mm
 
 
-def stacks(ctx: Context, fs: FastenerSet) -> tuple[list[PlacedFrame], list[list[PlacedFrame]]]:
-    """The fastener seats, and each into frame with the through frame of every through pattern on its axis."""
+def stacks(ctx: Context, fs: FastenerSet) -> list[tuple[PlacedFrame, list[PlacedFrame]]]:
+    """Each stack (the through frame of every through pattern on an into frame's axis, then the into frame)
+    with its fastener seat: the free seat nearest the stack's top."""
     seats = ctx.built.frames(fs.fastener)
     throughs = [ctx.built.frames(t) for t in fs.through]
     into = ctx.built.frames(fs.into)
@@ -39,7 +40,12 @@ def stacks(ctx: Context, fs: FastenerSet) -> tuple[list[PlacedFrame], list[list[
         raise StructureError(
             f"{len(out)} hole stacks and {len(seats)} placed {fs.fastener.split('.')[0]}: one fastener per stack"
         )
-    return seats, out
+    free, paired = list(seats), []
+    for stack in out:
+        seat = min(free, key=lambda s: float(np.linalg.norm(fr.origin(s.frame) - fr.origin(stack[0].frame))))
+        free.remove(seat)
+        paired.append((seat, stack))
+    return paired
 
 
 class Fasteners:
@@ -49,20 +55,11 @@ class Fasteners:
         out = []
         for fs in ctx.built.spec.fasteners:
             try:
-                seats, all_stacks = stacks(ctx, fs)
+                paired = stacks(ctx, fs)
             except StructureError as e:
                 out.append(structural(fs.address, e, [fs.fastener, *fs.through, fs.into]))
                 continue
-            free = list(seats)
-            for stack in all_stacks:
-                top = stack[0]
-                seat = min(
-                    free, key=lambda s: float(np.linalg.norm(fr.origin(s.frame) - fr.origin(top.frame))), default=None
-                )
-                if seat is None:
-                    break
-                free.remove(seat)
-                out.append(self._stack(ctx, fs, seat, stack))
+            out += [self._stack(ctx, fs, seat, stack) for seat, stack in paired]
         return out
 
     def _stack(self, ctx: Context, fs: FastenerSet, seat: PlacedFrame, stack: list[PlacedFrame]) -> Result:

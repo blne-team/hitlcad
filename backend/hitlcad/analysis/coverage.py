@@ -48,11 +48,11 @@ def links(built: BuiltDesign) -> tuple[list[Link], list[Result]]:
             errors.append(structural(rel.address, e, [rel.a, rel.b]))
     for fs in built.spec.fasteners:
         try:
-            seats, all_stacks = stacks(view, fs)
+            paired = stacks(view, fs)
         except StructureError as e:
             errors.append(structural(fs.address, e, [fs.fastener, *fs.through, fs.into]))
             continue
-        for seat, stack in zip(seats, all_stacks, strict=True):
+        for seat, stack in paired:
             out += [Link(seat, f, "fastener", fs, "through") for f in stack[:-1]]
             out.append(Link(seat, stack[-1], "fastener", fs, "into"))
     return out, errors

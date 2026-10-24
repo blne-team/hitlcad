@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import abstractmethod
+from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -33,11 +34,16 @@ class SubprocessBackend(CADBackend):
         self.mesh_tolerance_mm = mesh_tolerance_mm
         self.mesh_angular_tolerance = mesh_angular_tolerance
 
-    def fingerprint(self) -> str:
+    @cached_property
+    def _fingerprint(self) -> str:
         code = b"".join(p.read_bytes() for p in (self.entry, Path(runtime.__file__)))
         return hashlib.sha256(
             code + f"{self.name}:{self.mesh_tolerance_mm}:{self.mesh_angular_tolerance}".encode()
         ).hexdigest()
+
+    def fingerprint(self) -> str:
+        """Its entry script, the model runtime and the mesh tolerances, read once."""
+        return self._fingerprint
 
     @abstractmethod
     def command(self, job_file: Path) -> list[str]:

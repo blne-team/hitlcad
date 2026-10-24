@@ -15,13 +15,12 @@ from hitlcad.core.report import Revision
 from hitlcad.core.types import Pick, Pin, SelectionItem
 from hitlcad.service.designs import DesignService, NotFoundError
 
-LOADED = 8  # built designs kept in memory: picks and carries reload the same few revisions
-
 
 class FeedbackService:
-    def __init__(self, designs: DesignService, anchors: AnchorSettings) -> None:
+    def __init__(self, designs: DesignService, anchors: AnchorSettings, loaded: int) -> None:
         self.designs = designs
         self.anchors = anchors
+        self.loaded = loaded  # built revisions kept in memory: picks and carries reload the same few
         self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
 
     # ------------------------------------------------------------------ builds of revisions
@@ -46,7 +45,7 @@ class FeedbackService:
         if key not in self._loaded:
             folder = Path(self.designs.get(design_id).path)
             self._loaded[key] = load_built(rev.report, rev.spec, folder, self.revision_dir(design_id, rev))
-            while len(self._loaded) > LOADED:
+            while len(self._loaded) > self.loaded:
                 self._loaded.popitem(last=False)
         self._loaded.move_to_end(key)
         return self._loaded[key]

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import shutil
 import time
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -29,7 +31,7 @@ from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, P
 from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.build import assemble
-from hitlcad.build.cache import PartCache
+from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.config import Settings
 from hitlcad.core import frames as fr
 from hitlcad.core.report import (
@@ -56,6 +58,8 @@ MESH_FILE = "mesh.stl"
 STEP_FILE = "model.step"
 REPORT_FILE = "report.json"
 SOURCES = "src"
+
+logger = logging.getLogger(__name__)
 
 
 class BuildFailed(Exception):
@@ -99,6 +103,7 @@ class BuildPipeline:
         self.parts_cache = PartCache(settings.cache_dir / "parts")
         self.results_cache = ResultCache(settings.cache_dir / "results")
         self.components_dir = settings.cache_dir / "components"
+        self._component_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.analysis_settings = AnalysisSettings(
             tolerances=settings.tolerances, overlap_mm3=settings.overlap_mm3,
             mesh_tolerance_mm=settings.mesh_tolerance_mm, wall_samples=settings.wall_samples,
@@ -135,7 +140,7 @@ class BuildPipeline:
             log.append(e.log)
             return finish(BuildStatus.FAILED, e.error, results=e.results), None
         results = await asyncio.to_thread(self._analyse, built)
-        report_fields = {**fields, **self._describe(built), "results": results}
+        report_fields = {**fields, **await asyncio.to_thread(self._describe, built), "results": results}
         if outputs:
             try:
                 report_fields["artifacts"] = await self._outputs(built, out_dir, report_fields)
@@ -253,15 +258,18 @@ class BuildPipeline:
                 except (KeyError, ValueError) as e:
                     raise BuildFailed(f"component {name}: binding {param} = {ref}: {e}") from None
             bound = child.model_copy(update={"configuration": use.configuration, "overrides": overrides})
-            target = self.components_dir / bound.key
+            backends = sorted({child.design.part_backend(p) for p in child.design.parts} | {child.design.backend})
+            fingerprints = ":".join(self._backend(b).fingerprint() for b in backends)
+            target = self.components_dir / hashlib.sha256(f"{bound.key}:{fingerprints}".encode()).hexdigest()
             report_file = target / REPORT_FILE
-            if (
-                report_file.is_file()
-                and (cached := BuildReport.model_validate_json(report_file.read_text())).status == "succeeded"
-            ):
-                report = cached
-            else:
-                report, _ = await self._build(bound, child_folder, target, outputs=False)
+            async with self._component_locks[target.name]:  # two designs may build the same component at once
+                if (
+                    report_file.is_file()
+                    and (cached := BuildReport.model_validate_json(report_file.read_text())).status == "succeeded"
+                ):
+                    report = cached
+                else:
+                    report, _ = await self._build(bound, child_folder, target, outputs=False)
             if report.status != "succeeded":
                 raise BuildFailed(f"component {name} ({use.design}) did not build:\n{report.error}")
             shutil.copytree(target, out_dir / "components" / name)
@@ -273,18 +281,21 @@ class BuildPipeline:
         design = spec.design
         scope = str(folder)
         files = design.files()
+        declared = {file: {n: list(design.parts[n].connectors) for n in names} for file, names in files.items()}
+        inputs: dict[str, Inputs] = {}  # by backend
         outcomes: dict[str, FileOutcome] = {}
         todo: dict[str, dict[str, dict[str, list[str]]]] = {}
         for file, names in files.items():
             backend = self._backend(design.part_backend(names[0]))
-            hit = self.parts_cache.lookup(scope, backend.fingerprint(), file, spec.sources, values, interfaces)
+            inputs.setdefault(backend.name, Inputs(fingerprint=backend.fingerprint(), sources=spec.sources,
+                                                   assets=spec.assets, values=values, interfaces=interfaces))  # fmt: skip
+            hit = self.parts_cache.lookup(scope, file, declared[file], inputs[backend.name])
             if hit:
                 key, outcome = hit
                 self.parts_cache.restore(key, outcome, out_dir)
                 outcomes[file] = outcome.model_copy(update={"cached": True})
             else:
-                connectors = {n: list(design.parts[n].connectors) for n in names}
-                todo.setdefault(backend.name, {})[file] = connectors
+                todo.setdefault(backend.name, {})[file] = declared[file]
         jobs = []
         for backend_name, wanted in todo.items():
             backend = self._backend(backend_name)
@@ -307,7 +318,7 @@ class BuildPipeline:
                     for rel in filter(None, (part.mesh, part.step, part.objects)):
                         (out_dir / rel).parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(work / rel, out_dir / rel)
-                self.parts_cache.store(scope, backend.fingerprint(), fo, work, spec.sources, values, interfaces)
+                self.parts_cache.store(scope, fo, declared[fo.file], work, inputs[backend.name])
         return [outcomes[f] for f in files]
 
     def _geometry(self, spec: BuildSpec, out_dir: Path, outcome: FileOutcome, bp: BuiltPart) -> PartGeometry:
@@ -330,6 +341,9 @@ class BuildPipeline:
                 out += analysis.run(ctx)
             except StructureError as e:
                 out.append(result("structure", analysis.name, False, str(e)))
+            except Exception as e:  # a bug in one analysis: report it unverified, keep the others
+                logger.exception("analysis %s failed", analysis.name)
+                out.append(result(analysis.name, analysis.name, None, f"the analysis failed: {e}"))
         return out
 
     def _describe(self, built: BuiltDesign) -> dict[str, Any]:
@@ -337,7 +351,7 @@ class BuildPipeline:
         parts = [_part_result(built, p) for p in built.parts.values()]
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
-        mesh = assemble.mesh_assembly(built)
+        mesh = built.mesh
         return {"motions": _motions(built), "parts": parts, "instances": instances, "metrics": measure(mesh) if len(mesh.faces) else None,
                 "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
@@ -358,8 +372,7 @@ class BuildPipeline:
                         out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects"
                     )
                 )
-        mesh = assemble.mesh_assembly(built)
-        mesh.export(out_dir / MESH_FILE)
+        await asyncio.to_thread(built.mesh.export, out_dir / MESH_FILE)
         artifacts.append(_artifact(out_dir, MESH_FILE, "model/stl", "mesh"))
         if await asyncio.to_thread(assemble.step_assembly, built, out_dir / STEP_FILE):
             artifacts.append(_artifact(out_dir, STEP_FILE, "model/step", "exchange"))
@@ -379,10 +392,10 @@ class BuildPipeline:
 
 def _motions(built: BuiltDesign) -> list[MotionRange]:
     from hitlcad.analysis.base import label
-    from hitlcad.analysis.motion import Plan, plans
+    from hitlcad.analysis.motion import Plan
 
     out = []
-    for plan in plans(built, built.tolerances):
+    for plan in built.motion_plans:
         if not isinstance(plan, Plan):
             continue
         frame = plan.link.a.frame
@@ -410,26 +423,12 @@ def _part_result(built: BuiltDesign, part: PartGeometry) -> PartResult:
     return PartResult(name=part.name, file=part.file, backend=part.backend, made=part.spec.catalog is None,
                       material=part.material, process=getattr(process, "process", None), catalog=part.catalog,
                       cached=part.cached, reads=part.reads, metrics=part.metrics,
-                      mass=_part_mass(built, part), connectors=connectors)  # fmt: skip
-
-
-def _part_mass(built: BuiltDesign, part: PartGeometry, transform: fr.Frame = fr.IDENTITY) -> MassProperties | None:
-    material = built.materials.get(part.material or "")
-    if material is None or not part.mesh.is_watertight:
-        return None
-    mesh = part.mesh.copy().apply_transform(transform)
-    mesh.density = material.density_g_cm3 / 1000  # g/mm³
-    props = mesh.mass_properties
-    return MassProperties(
-        mass_g=float(props["mass"]),
-        centre_mm=tuple(float(v) for v in props["center_mass"]),
-        inertia_g_mm2=tuple(tuple(float(v) for v in row) for row in props["inertia"]),
-    )  # type: ignore[arg-type]
+                      mass=built.mass(part), connectors=connectors)  # fmt: skip
 
 
 def _mass(built: BuiltDesign) -> MassProperties | None:
     """The assembly's mass properties, when every part's are known."""
-    each = [_part_mass(leaf.owner, leaf.part, leaf.transform) for leaf in built.leaves()]
+    each = [leaf.owner.mass(leaf.part, leaf.transform) for leaf in built.leaves()]
     if not each or any(m is None for m in each):
         return None
     total = sum(m.mass_g for m in each if m)

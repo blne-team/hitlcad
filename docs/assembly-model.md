@@ -245,9 +245,9 @@ instance nothing connects is floating, the real-CAD "under-defined component".
 
 | Type | Ends | Verified | Motion |
 | --- | --- | --- | --- |
-| `gear` | two `gear` connectors | same module; axes parallel; centre distance m(z₁ ± z₂)/2 (− for an internal gear); face widths overlap | b turns −z_a/z_b (+ internal) |
-| `rack` | a `gear` and a `frame` on the pitch line | pitch circle tangent to the pitch line; pinion axis square to the rack | π·m·z mm per turn |
-| `screw` | two `frame`s | axes collinear | `lead` mm per turn |
+| `gear` | two `gear` connectors | same module; axes parallel; centre distance m(z₁ ± z₂)/2 (− for an internal gear); face widths overlap | b turns −z_a/z_b (+ internal), both about a's Z |
+| `rack` | a `gear` and a `frame` on the pitch line | pitch circle tangent to the pitch line; pinion axis square to the rack | π·m·z mm per turn, along the rack's X the way the pitch point moves |
+| `screw` | two `frame`s | axes collinear | `lead` mm per turn, right-hand: back along a's Z as a turns positively about it |
 
 Distances are verified within the relation's `tolerance`, or `verification.position_mm`. A single
 frame meets every frame of the other end (a sun and its planets); two patterns pair one-to-one.

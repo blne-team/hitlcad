@@ -15,10 +15,13 @@ from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, parse_mate
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.structure import (
+    Axis,
     CylindricalMate,
     Fit,
     GearRelation,
+    RackRelation,
     RigidMate,
+    ScrewRelation,
     Tolerances,
     Verification,
     symmetry_of,
@@ -131,6 +134,26 @@ def test_gear_relations_check_centre_distance_and_give_ratios() -> None:
     assert gear.ratio(sun, planet) == pytest.approx(-1.0) and gear.ratio(planet, ring) == pytest.approx(18 / 54)
 
 
+def test_relations_drive_each_end_the_way_it_physically_moves() -> None:
+    for axis, value in ((Axis("angle", np.array([5.0, 0, 0]), np.array([0, 0, 1.0])), 23.0),
+                        (Axis("travel", np.array([5.0, 0, 0]), np.array([0, 1.0, 0])), 4.0)):  # fmt: skip
+        assert axis.of(axis.motion(value)) == pytest.approx(value)
+    # an external mesh turns the two gears opposite ways, whichever way the driven gear's Z points
+    gear = GearRelation(type="gear", a="s.t", b="p.t")
+    sun_axis, planet_axis = gear.axes(frame(), frame((22.5, 0, 0), z_down=True))
+    planet_turn = fr.rotation_about((22.5, 0, 0), (0, 0, 1), -10)
+    assert planet_axis.of(planet_turn) == pytest.approx(-10) and np.allclose(planet_axis.direction, (0, 0, 1))
+    # a pinion turning anticlockwise seen from above moves a rack below it towards +X
+    rack_frame = np.eye(4)
+    rack_frame[:3, :3] = np.column_stack(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # X along the rack, Z up to the pinion
+    rack_frame[:3, 3] = (0, -10, 0)
+    _, travel = RackRelation(type="rack", a="p.t", b="r.l").axes(frame(), rack_frame)
+    assert np.allclose(travel.direction, (1, 0, 0))
+    # a right-hand lead screw turning positively about its Z draws its nut back along it
+    _, nut = ScrewRelation(type="screw", a="s.axis", b="n.axis", lead=8).axes(frame(), frame((0, 0, 30)))
+    assert np.allclose(nut.direction, (0, 0, -1))
+
+
 def test_fits_come_as_clearance_ranges_or_iso_286() -> None:
     assert Fit(clearance=(0, 0.1)).limits(5) == (0, 0.1)
     assert fit_clearance("H7/g6", 8) == pytest.approx((0.005, 0.029))
@@ -165,3 +188,23 @@ def test_frames_turn_about_any_axis() -> None:
     m = fr.rotation_about((1, 0, 0), (0, 0, 1), 90)
     assert np.allclose(m @ np.array([2, 0, 0, 1.0]), [1, 1, 0, 1])
     assert fr.reduce_angle(91, 4) == pytest.approx(1) and fr.reduce_angle(-179, None) == pytest.approx(-179)
+
+
+def test_view_quaternions_hold_for_every_rotation() -> None:
+    from hitlcad.build.assemble import quaternion
+
+    def rotate(q: tuple[float, ...], v: np.ndarray) -> np.ndarray:
+        x, y, z, w = q
+        u = np.array([x, y, z])
+        return 2 * np.dot(u, v) * u + (w * w - np.dot(u, u)) * v + 2 * w * np.cross(u, v)
+
+    half_turn = np.diag([1.0, -1.0, -1.0, 1.0]) @ fr.rotation_about((0, 0, 0), (0, 0, 1), 90)  # about (1, -1, 0)
+    for m in (
+        half_turn,
+        fr.rotation_about((0, 0, 0), (1, 2, 3), 179.9),
+        fr.rotation_about((0, 0, 0), (0, 1, 0), 180),
+        np.eye(4),
+    ):
+        q = quaternion(m)
+        for v in np.eye(3):
+            assert np.allclose(rotate(q, v), m[:3, :3] @ v)

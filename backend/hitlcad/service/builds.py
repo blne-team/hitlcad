@@ -93,6 +93,7 @@ class BuildService:
         try:
             report = await self.pipeline.run(spec, folder.path, designs.store.revision_dir(design_id, rev_id))
         except Exception as e:  # a bug in hitlcad: end the build visibly, then let it surface
+            self._built.pop(design_id, None)  # so the next save tries again
             designs.emit(design_id, ErrorRaised(message=f"the build crashed: {e}"))
             raise
         previous = state.latest(spec.configuration)

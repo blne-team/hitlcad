@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
@@ -434,6 +434,29 @@ class RelationCheck(Model):
     values: dict[str, float] = Field(default_factory=dict)
 
 
+class Axis(NamedTuple):
+    """A coordinate a relation couples: a turn (degrees) about, or a travel (mm) along, `direction` through
+    `origin`."""
+
+    kind: Literal["angle", "travel"]
+    origin: np.ndarray
+    direction: np.ndarray
+
+    def motion(self, value: float) -> fr.Frame:
+        """The rigid motion that moves `value` along this coordinate."""
+        if self.kind == "angle":
+            return fr.rotation_about(self.origin, self.direction, value)
+        return fr.translation(self.direction * value)
+
+    def of(self, motion: fr.Frame) -> float:
+        """How far a rigid motion moves along this coordinate."""
+        if self.kind == "angle":
+            u = np.cross(self.direction, [1.0, 0.0, 0.0])
+            u = u if np.linalg.norm(u) > 1e-6 else np.cross(self.direction, [0.0, 1.0, 0.0])
+            return fr.signed_angle_deg(u, motion[:3, :3] @ u, self.direction)
+        return float(np.dot(motion[:3, :3] @ self.origin + motion[:3, 3] - self.origin, self.direction))
+
+
 class _Relation(Model):
     a: str
     b: str
@@ -457,8 +480,12 @@ class _Relation(Model):
                tol: Any) -> RelationCheck: ...  # fmt: skip
 
     @abstractmethod
+    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
+        """The coordinates of a and b the relation couples, from the placed frames."""
+
+    @abstractmethod
     def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        """How far b moves per unit a moves along its free motion (degrees per degree, mm per degree)."""
+        """How far b moves along its axis per unit a moves along its own (degrees per degree, mm per degree)."""
 
 
 class GearRelation(_Relation):
@@ -494,6 +521,10 @@ class GearRelation(_Relation):
         detail = "; ".join(problems) or f"in mesh: centre distance {actual:.3f} mm (m{m:g}, {za:g}/{zb:g} teeth)"
         return RelationCheck(passed=not problems, detail=detail, values=values)
 
+    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
+        """Both turns are about a's Z: an external mesh turns them opposite ways."""
+        return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("angle", fr.origin(fb), fr.z_axis(fa))
+
     def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
         internal = bool(na.get("internal") or nb.get("internal"))
         return (1.0 if internal else -1.0) * na["teeth"] / nb["teeth"]
@@ -522,12 +553,20 @@ class RackRelation(_Relation):
             passed=not problems, detail="; ".join(problems) or "pinion on the pitch line", values=values
         )
 
+    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
+        """The rack travels along its X the way the pinion's pitch point moves."""
+        za, zb, xb = fr.z_axis(fa), fr.z_axis(fb), fr.x_axis(fb)
+        to_pitch_line = fr.along(fr.origin(fb), fr.origin(fa), zb) * zb
+        sign = float(np.sign(np.dot(np.cross(za, to_pitch_line), xb)))
+        return Axis("angle", fr.origin(fa), za), Axis("travel", fr.origin(fb), sign * xb)
+
     def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
         return math.pi * na["module"] * na["teeth"] / 360.0
 
 
 class ScrewRelation(_Relation):
-    """A lead screw (a) and its nut (b) on one axis: b travels `lead` mm per turn of a."""
+    """A lead screw (a) and its nut (b) on one axis, right-hand thread: b travels `lead` mm per turn of a, back
+    along a's Z as a turns positively about it."""
 
     type: Literal["screw"]
     lead: float = Field(gt=0, description="mm per turn")
@@ -541,6 +580,9 @@ class ScrewRelation(_Relation):
         ok = offset <= (self.tolerance or tol.position_mm) and tilt <= tol.angle_deg
         return RelationCheck(passed=ok, detail="on one axis" if ok else f"axes {offset:.3f} mm, {tilt:.2f}° apart",
                              values=values)  # fmt: skip
+
+    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
+        return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("travel", fr.origin(fb), -fr.z_axis(fa))
 
     def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
         return self.lead / 360.0

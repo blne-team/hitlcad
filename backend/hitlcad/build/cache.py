@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,17 @@ from hitlcad.backends.base import FileOutcome
 from hitlcad.core.report import Reads
 
 OUTCOME = "outcome.json"
+
+
+@dataclass(frozen=True)
+class Inputs:
+    """What any part file of one build may depend on besides its own recorded reads."""
+
+    fingerprint: str  # the backend's code and settings
+    sources: dict[str, str]
+    assets: dict[str, str]  # vendor files, path -> sha256: any part file may load one
+    values: dict[str, Any]
+    interfaces: dict[str, Any]
 
 
 class PartCache:
@@ -29,31 +41,34 @@ class PartCache:
         return self.root / "index" / f"{digest}.json"
 
     @staticmethod
-    def key(fingerprint: str, file: str, sources: dict[str, str], values: dict[str, Any], interfaces: dict[str, Any],
-            reads: Reads) -> str | None:  # fmt: skip
-        """The cache key of `file` given what it read, or None when something it read no longer exists."""
-        if (any(n not in values for n in reads.parameters) or any(n not in interfaces for n in reads.interfaces)
-                or any(m not in sources for m in reads.modules)):  # fmt: skip
+    def key(file: str, declared: dict[str, list[str]], inputs: Inputs, reads: Reads) -> str | None:
+        """The cache key of `file`, asked by design.json for the parts and connectors `declared`, given what it
+        read; None when something it read no longer exists."""
+        if (any(n not in inputs.values for n in reads.parameters) or any(n not in inputs.interfaces for n in reads.interfaces)
+                or any(m not in inputs.sources for m in reads.modules)):  # fmt: skip
             return None
-        data = {"backend": fingerprint, "file": sources.get(file), "modules": {m: sources[m] for m in reads.modules},
-                "parameters": {n: values[n] for n in reads.parameters},
-                "interfaces": {n: interfaces[n] for n in reads.interfaces}}  # fmt: skip
+        data = {"backend": inputs.fingerprint, "file": inputs.sources.get(file), "declared": declared,
+                "modules": {m: inputs.sources[m] for m in reads.modules}, "assets": inputs.assets,
+                "parameters": {n: inputs.values[n] for n in reads.parameters},
+                "interfaces": {n: inputs.interfaces[n] for n in reads.interfaces}}  # fmt: skip
         return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
-    def lookup(self, scope: str, fingerprint: str, file: str, sources: dict[str, str], values: dict[str, Any],
-               interfaces: dict[str, Any]) -> tuple[str, FileOutcome] | None:  # fmt: skip
+    def lookup(
+        self, scope: str, file: str, declared: dict[str, list[str]], inputs: Inputs
+    ) -> tuple[str, FileOutcome] | None:
         index = self._index(scope, file)
         if not index.is_file():
             return None
         for raw in json.loads(index.read_text()):
-            key = self.key(fingerprint, file, sources, values, interfaces, Reads.model_validate(raw))
+            key = self.key(file, declared, inputs, Reads.model_validate(raw))
             if key and (self.root / key / OUTCOME).is_file():
                 return key, FileOutcome.model_validate_json((self.root / key / OUTCOME).read_text())
         return None
 
-    def store(self, scope: str, fingerprint: str, outcome: FileOutcome, work: Path, sources: dict[str, str],
-              values: dict[str, Any], interfaces: dict[str, Any]) -> None:  # fmt: skip
-        key = self.key(fingerprint, outcome.file, sources, values, interfaces, outcome.reads)
+    def store(
+        self, scope: str, outcome: FileOutcome, declared: dict[str, list[str]], work: Path, inputs: Inputs
+    ) -> None:
+        key = self.key(outcome.file, declared, inputs, outcome.reads)
         if key is None or outcome.error:
             return
         target = self.root / key

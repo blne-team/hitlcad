@@ -11,7 +11,7 @@ from abc import abstractmethod
 from collections import Counter
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
-from pydantic import Field, TypeAdapter, model_validator
+from pydantic import Field, model_validator
 
 from hitlcad.core.types import Model, members
 
@@ -360,4 +360,3 @@ Manufacturing = Annotated[
     FdmProcess | CncMillingProcess | SheetMetalProcess | InjectionMoldingProcess, Field(discriminator="process")
 ]
 MANUFACTURING_PROCESSES: tuple[type[_Process], ...] = members(Manufacturing)
-MANUFACTURING_ADAPTER: TypeAdapter[Any] = TypeAdapter(Manufacturing)

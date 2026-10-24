@@ -121,7 +121,13 @@ def tree(built: BuiltDesign) -> Tree:
             driver, driven = by_child.get(link.a.instance), by_child.get(link.b.instance)
             if driver and driven and {driver.kind, driven.kind} <= {"revolute", "continuous", "prismatic"}:
                 na, nb = link.a.owner.nominals(link.a.spec), link.b.owner.nominals(link.b.spec)
-                mimics[driven.name] = (driver.name, link.source.ratio(na, nb))
+                axis_a, axis_b = link.source.axes(link.a.frame, link.b.frame)
+                # joint values turn about (or slide along) each joint's Z, in radians or metres
+                sign = np.sign(np.dot(fr.z_axis(driver.frame), axis_a.direction)) * np.sign(
+                    np.dot(fr.z_axis(driven.frame), axis_b.direction))  # fmt: skip
+                unit = {"angle": math.radians(1), "travel": MM}
+                mimics[driven.name] = (driver.name, float(sign * link.source.ratio(na, nb) * unit[axis_b.kind]
+                                                          / unit[axis_a.kind]))  # fmt: skip
     return Tree(base_path, leaves, joints, frames, mimics)
 
 
@@ -138,17 +144,10 @@ def _meshes(t: Tree, out: Path, folder: str) -> dict[str, str]:
 
 def _inertial(leaf: Leaf, link_frame: fr.Frame) -> tuple[float, np.ndarray, np.ndarray] | None:
     """(kg, centre in the link frame in m, inertia about the centre in kg·m² in link axes)."""
-    material = leaf.owner.materials.get(leaf.part.material or "")
-    if material is None or not leaf.part.mesh.is_watertight:
+    m = leaf.owner.mass(leaf.part, np.linalg.inv(link_frame) @ leaf.transform)
+    if m is None:
         return None
-    mesh = leaf.part.mesh.copy()
-    mesh.density = material.density_g_cm3 / 1000
-    props = mesh.mass_properties
-    pose = np.linalg.inv(link_frame) @ leaf.transform
-    r = pose[:3, :3]
-    centre = (pose @ np.append(props["center_mass"], 1.0))[:3] * MM
-    inertia = r @ props["inertia"] @ r.T * 1e-9
-    return float(props["mass"]) / 1000, centre, inertia
+    return m.mass_g / 1000, np.array(m.centre_mm) * MM, np.array(m.inertia_g_mm2) * 1e-9  # g·mm² → kg·m²
 
 
 class UrdfExporter:
