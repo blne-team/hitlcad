@@ -34,12 +34,16 @@ def fit_check(ctx: Context, mate: _Mate, fa: PlacedFrame, fb: PlacedFrame) -> tu
         lo, hi = mate.fit.limits(nominal)
     except ValueError as e:
         return False, str(e), {}
-    ok = lo - ctx.tol.position_mm <= clearance <= hi + ctx.tol.position_mm
+    # A mesh measures a diameter only to within its facets: the fit fails when it is out by more than that.
+    slack = ctx.tol.position_mm + hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm
+    ok = lo - slack <= clearance <= hi + slack
     spec = mate.fit.iso or f"{lo:g} … {hi:g}"
     allowances = (
         f" after process allowances ({hole_allow:g} hole, {shaft_allow:g} shaft)" if hole_allow or shaft_allow else ""
     )
-    detail = (f"fit {clearance:.3f} mm (hole Ø{hole_d:.3f}, shaft Ø{shaft_d:.3f}){allowances}, needs {spec}"
+    meshes = hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm
+    detail = (f"fit {clearance:.3f} mm (hole Ø{hole_d:.3f}, shaft Ø{shaft_d:.3f}){allowances}"
+              + (f" ±{meshes:.3f} on the meshes" if meshes else "") + f", needs {spec}"
               + ("" if ok else f" ({lo:.3f} … {hi:.3f})" if mate.fit.iso else ""))  # fmt: skip
     return ok, detail, {"clearance_mm": clearance, "hole_mm": hole_d, "shaft_mm": shaft_d}
 

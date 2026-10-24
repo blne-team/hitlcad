@@ -1,4 +1,4 @@
-"""B-rep geometry of a build: what each face, edge and vertex is, measurements between them, and round holes.
+"""B-rep geometry of a build: what each face, edge and vertex is, and measurements between them.
 
 References use the numbering of the 3D view and of selections: "face 9 of lid[0]" is faces()[9] of the
 lid's STEP (`parts/lid.step`), placed where instance lid[0] sits. See `Resolver` for every form.
@@ -8,10 +8,6 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from hitlcad.analysis import cadview
@@ -22,7 +18,6 @@ _PART = re.compile(r"^part\s+(\S+)$", re.IGNORECASE)
 _NUMBER = r"\s*(-?\d+(?:\.\d+)?)\s*"
 _POINT = re.compile(rf"^\(?{_NUMBER},{_NUMBER},{_NUMBER}\)?$")
 PARALLEL_DEG = 0.5
-FULL_CIRCLE = 0.95  # of 2π: a cylindrical cut that goes this far round is a hole, not a fillet or slot end
 
 
 def location(m: Any) -> Any:
@@ -212,40 +207,3 @@ def measure(built: Any, a: str, b: str) -> str:
         else:
             lines.append(f"Angle between the edge and the face's plane: {abs(90 - between):.2f}°")
     return "\n".join(lines)
-
-
-@dataclass(frozen=True)
-class Hole:
-    diameter: float
-    depth: float
-
-
-@lru_cache(maxsize=32)
-def find_holes(step: Path) -> list[Hole]:
-    """Complete round holes (through or blind): inward-facing cylindrical faces that go all the way round."""
-    from build123d import Vector
-
-    groups: dict[tuple[float, tuple[float, ...], tuple[float, ...]], list] = defaultdict(list)
-    for face in cadview.load_step(step).faces():
-        if face.geom_type.name != "CYLINDER":
-            continue
-        axis = face.axis_of_rotation
-        d = axis.direction.normalized()
-        p = face.position_at(0.5, 0.5)
-        radial = (p - axis.position) - d * (p - axis.position).dot(d)
-        if face.normal_at(p).dot(radial) >= 0:
-            continue  # faces away from its axis: a boss or a rounded outside corner
-        direction = tuple(round(c, 6) + 0.0 for c in (d.X, d.Y, d.Z))
-        if next(c for c in direction if c != 0) < 0:
-            direction = tuple(-c + 0.0 for c in direction)
-        origin = axis.position - d * axis.position.dot(d)
-        groups[
-            (round(face.radius, 4), direction, tuple(round(c, 3) + 0.0 for c in (origin.X, origin.Y, origin.Z)))
-        ].append(face)
-    holes = []
-    for (radius, direction, origin), faces in groups.items():
-        along = [(v.center() - Vector(*origin)).dot(Vector(*direction)) for f in faces for v in f.vertices()]
-        depth = max(along) - min(along)
-        if depth > 0 and sum(f.area for f in faces) / (radius * depth) >= FULL_CIRCLE * 2 * math.pi:
-            holes.append(Hole(diameter=2 * radius, depth=depth))
-    return holes

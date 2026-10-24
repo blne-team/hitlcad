@@ -134,10 +134,13 @@ class HoleCheck(_OnTarget):
     example = {"kind": "hole", "diameter": 6, "tol": 0.1, "count": 2}
 
     def verify(self, build: BuildBodies) -> Verdict:
+        from hitlcad.analysis.features import Unmeasurable
+
         body = self.subject(build)
-        holes = body.holes()
-        if holes is None:
-            return None, f"holes are found on B-rep builds; {body.name} is a mesh"
+        try:
+            holes = body.holes()
+        except Unmeasurable as e:
+            return None, f"{body.name}: {e}"
         matching = [h for h in holes if abs(h.diameter - self.diameter) <= self.tol]
         found = Counter(f"Ø{h.diameter:.2f}" for h in holes)
         inventory = ", ".join(f"{d} ×{n}" for d, n in sorted(found.items())) or "none"

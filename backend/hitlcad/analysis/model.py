@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from hitlcad.analysis.features import BrepFeatures, Features, Hole, MeshFeatures
 from hitlcad.analysis.mesh import load_mesh, measure, measure_union
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
@@ -70,6 +71,11 @@ class PartGeometry:
         if self.shape is not None:
             metrics = metrics.model_copy(update={"bodies": len(self.shape.solids())})
         return metrics
+
+    @cached_property
+    def features(self) -> Features:
+        """Its features, measured on the B-rep when it has one, else on the mesh."""
+        return BrepFeatures(self.shape) if self.shape is not None else MeshFeatures(self.mesh)
 
     @cached_property
     def digest(self) -> str:
@@ -312,7 +318,7 @@ class BuiltDesign:
                 except StructureError as e:
                     self.measured[(name, cname)] = [Measured(status="fail", detail=str(e))]
                     continue
-                self.measured[(name, cname)] = [spec.measure(part.shape, f, self.tolerances, nominals)
+                self.measured[(name, cname)] = [spec.measure(part.features, f, self.tolerances, nominals)
                                                 for f in part.frames.get(cname, [])]  # fmt: skip
 
     def nominals(self, spec: _Connector) -> dict[str, float]:
@@ -345,12 +351,8 @@ class Body:
             return measure(self.mesh)
         return measure_union(measure(self.mesh), [leaf.part.metrics for leaf in self.leaves])
 
-    def holes(self) -> list[Any] | None:
-        from hitlcad.analysis.geometry import find_holes
-
-        if any(leaf.part.shape is None for leaf in self.leaves):
-            return None
-        return [hole for leaf in self.leaves for hole in find_holes(leaf.part.step_file)]  # type: ignore[arg-type]
+    def holes(self) -> list[Hole]:
+        return [hole for leaf in self.leaves for hole in leaf.part.features.holes()]
 
     def thinnest_wall(self) -> float | None:
         from hitlcad.analysis.processes import wall_thickness

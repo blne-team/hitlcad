@@ -250,17 +250,23 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
             "    plate = Box(40, 40, 6, align=(Align.CENTER, Align.CENTER, Align.MIN)) - "
             "Cylinder(2, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))\n"
             "    return {'plate': (plate, {'socket': Location((0, 0, 6))})}\n",
+            # A sphere with a Ø3.8 stem below it, into the plate's Ø4 hole.
             "parts/knob.py": "import bpy\nfrom mathutils import Matrix\n\n\ndef build(p, i):\n"
             "    bpy.ops.mesh.primitive_uv_sphere_add(radius=p['r'], location=(0, 0, p['r']))\n"
             "    knob = bpy.context.active_object\n    knob.name = 'grip'\n"
+            "    bpy.ops.mesh.primitive_cylinder_add(radius=1.9, depth=6.5, location=(0, 0, -2.75))\n"
+            "    union = knob.modifiers.new('stem', 'BOOLEAN')\n"
+            "    union.operation, union.object, union.solver = 'UNION', bpy.context.active_object, 'EXACT'\n"
             "    return {'knob': (knob, {'stem': Matrix.Rotation(3.14159265, 4, 'X')})}\n",
             "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'plate': [Pos()], 'knob': [Pos(0, 0, 6)]}\n",
         },
     )
     report = await build(core, folder, tmp_path / "out")
     assert report.status == "succeeded", report.error
+    (stem,) = [r for r in results(report, "connector") if r.subject == "knob.stem"]
+    assert stem.status == "pass" and abs(stem.values["diameter"] - 3.8) < 0.05 and abs(stem.values["length"] - 6) < 0.05
     (mate,) = results(report, "mate")
-    assert mate.status == "unverified" and "fit not measurable" in mate.detail and "mesh" in mate.detail
+    assert mate.status == "pass" and "on the meshes" in mate.detail, mate.detail
     assert {p.name: p.backend for p in report.parts} == {"plate": "build123d", "knob": "blender"}
     assert not (tmp_path / "out" / "model.step").exists()  # an assembly with a mesh part has no B-rep STEP
     assert (tmp_path / "out" / "parts" / "knob.glb").is_file()

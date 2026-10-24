@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import trimesh
 
+from hitlcad.analysis.features import FULL_CIRCLE, Unmeasurable
 from hitlcad.core.checks import (
     CncMillingProcess,
     FdmProcess,
@@ -26,8 +27,6 @@ if TYPE_CHECKING:
 #: A wall's far side faces back within this angle; a ray that leaves through anything else crossed a
 #: corner, not a wall. This defines what wall thickness means, not a tolerance.
 WALL_EXIT_DEG = 60
-#: Of 2π: a concave cylinder that goes this far round is a drilled hole, not an inside corner.
-FULL_CIRCLE = 0.95
 
 
 def _fmt(p: Any) -> str:
@@ -115,9 +114,9 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
 # --------------------------------------------------------------------------- B-rep helpers
 
 
-def _brep(body: Body) -> Any | None:
+def _brep(body: Body) -> Any:
     (leaf,) = body.leaves
-    return leaf.part.shape
+    return leaf.part.features.brep
 
 
 def _edge_faces(shape: Any) -> list[tuple[Any, list[Any]]]:
@@ -158,8 +157,8 @@ def _inside_radii(shape: Any) -> list[tuple[float, Any, float]]:
     return out
 
 
-def _unverified(name: str, body: Body) -> ProcessFinding:
-    return ProcessFinding(name=name, passed=None, detail=f"needs a B-rep; {body.name} is a mesh")
+def _unverified(name: str, why: Unmeasurable) -> ProcessFinding:
+    return ProcessFinding(name=name, passed=None, detail=str(why))
 
 
 def _vertical(direction: Any, tol_deg: float) -> bool:
@@ -170,9 +169,10 @@ def _vertical(direction: Any, tol_deg: float) -> bool:
 
 
 def cnc_milling_checks(body: Body, rules: CncMillingProcess) -> list[ProcessFinding]:
-    shape = _brep(body)
-    if shape is None:
-        return [_unverified("cnc_inside_corners", body)]
+    try:
+        shape = _brep(body)
+    except Unmeasurable as e:
+        return [_unverified("cnc_inside_corners", e)]
     tol = body.settings.tolerances.angle_deg
     tool_r = rules.tool_diameter_mm / 2
     sharp = [e for e, faces in _edge_faces(shape)
@@ -221,9 +221,10 @@ def sheet_metal_checks(body: Body, rules: SheetMetalProcess) -> list[ProcessFind
         walls = ProcessFinding(name="sheet_thickness", passed=ok,
                                detail=f"thinnest {thinnest:.2f} mm, median {median:.2f} mm (sheet "
                                       f"{rules.thickness_mm:g} ± {rules.thickness_tolerance_mm:g} mm)")  # fmt: skip
-    shape = _brep(body)
-    if shape is None:
-        return [walls, _unverified("sheet_bend_radius", body)]
+    try:
+        shape = _brep(body)
+    except Unmeasurable as e:
+        return [walls, _unverified("sheet_bend_radius", e)]
     sharp = [e for e, faces in _edge_faces(shape) if e.geom_type.name == "LINE" and _concave(e, faces)]
     tight = [r for r, _, _ in _inside_radii(shape) if r < rules.min_bend_radius_mm]
     ok = not sharp and not tight

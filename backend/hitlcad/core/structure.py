@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from typing import Annotated, Any, ClassVar, Literal, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
@@ -19,6 +19,9 @@ from hitlcad.core import frames as fr
 from hitlcad.core.address import End, check_name, is_interface_ref
 from hitlcad.core.checks import Manufacturing
 from hitlcad.core.types import Model, members
+
+if TYPE_CHECKING:
+    from hitlcad.analysis.features import Features
 
 Ref = str  # a parameter name, or "interfaces.<name>" for an interface value
 Symmetry = int | Literal["axial"] | None
@@ -52,6 +55,7 @@ class Measured(Model):
     status: Literal["pass", "fail", "unverified"]
     detail: str
     values: dict[str, float] = Field(default_factory=dict)
+    uncertainty_mm: float = Field(default=0.0, description="Either way on the values in mm: a mesh's facets")
 
 
 class _Connector(Model):
@@ -68,16 +72,8 @@ class _Connector(Model):
         return {}
 
     @abstractmethod
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        """The feature at `frame` on the part's B-rep (`shape`; None for a mesh part)."""
-
-
-def _needs_brep(shape: Any | None, what: str) -> Measured | None:
-    return (
-        None
-        if shape is not None
-        else Measured(status="unverified", detail=f"{what} is measured on B-rep parts; this part is a mesh")
-    )
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+        """The feature at `frame` on the part."""
 
 
 class FrameConnector(_Connector):
@@ -86,7 +82,7 @@ class FrameConnector(_Connector):
     kind: Literal["frame"]
     example = {"kind": "frame", "symmetry": "axial"}
 
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
         return Measured(status="pass", detail="datum")
 
 
@@ -97,10 +93,8 @@ class FaceConnector(_Connector):
     kind: Literal["face"]
     example = {"kind": "face", "symmetry": 4}
 
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        from hitlcad.analysis.connectors import measure_face
-
-        return _needs_brep(shape, "a face") or measure_face(shape, frame, tol)
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+        return features.face(frame, tol)
 
 
 class HoleConnector(_Connector):
@@ -110,10 +104,8 @@ class HoleConnector(_Connector):
     kind: Literal["hole"]
     example = {"kind": "hole", "count": 4}
 
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        from hitlcad.analysis.connectors import measure_round
-
-        return _needs_brep(shape, "a hole") or measure_round(shape, frame, tol, inward=True)
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+        return features.round(frame, tol, inward=True)
 
 
 class ShaftConnector(_Connector):
@@ -123,10 +115,8 @@ class ShaftConnector(_Connector):
     kind: Literal["shaft"]
     example = {"kind": "shaft"}
 
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        from hitlcad.analysis.connectors import measure_round
-
-        return _needs_brep(shape, "a shaft") or measure_round(shape, frame, tol, inward=False)
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+        return features.round(frame, tol, inward=False)
 
 
 class GearConnector(_Connector):
@@ -143,7 +133,7 @@ class GearConnector(_Connector):
     def nominal_refs(self) -> dict[str, Ref]:
         return {"teeth": self.teeth, "module": self.module, "width": self.width}
 
-    def measure(self, shape: Any | None, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
+    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
         kind = "internal" if self.internal else "external"
         return Measured(status="pass", detail=f"{kind} gear m{nominals['module']:g}, {nominals['teeth']:g} teeth, "
                         f"{nominals['width']:g} mm wide (nominal)", values=nominals)  # fmt: skip
