@@ -224,17 +224,19 @@ def as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list | tuple) else [value]
 
 
-def run(job_file: Path, modes: dict[str, Callable[[Runtime, dict[str, Any]], dict[str, Any]]]) -> None:
+def run(job_file: Path, modes: dict[str, Callable[[Runtime | None, dict[str, Any]], dict[str, Any]]]) -> None:
     """The entry scripts' main: read job.json, run its mode, write result.json (always). Model code runs in
     the design's sources folder, so its relative paths (vendor/…) resolve there; outputs go to `job["out"]`,
-    the folder the entry was started in."""
+    the folder the entry was started in. A job that runs no model code (one that assembles built parts) has
+    no `src` and gets no runtime."""
     job = json.loads(job_file.read_text(encoding="utf-8"))
     out = Path.cwd()
     job["out"] = str(out)
     result: dict[str, Any] = {"ok": False}
     try:
-        runtime = Runtime(Path(job["src"]), job["params"])
-        os.chdir(runtime.src)
+        runtime = Runtime(Path(job["src"]), job["params"]) if "src" in job else None
+        if runtime:
+            os.chdir(runtime.src)
         result = {"ok": True, **modes[job["mode"]](runtime, job)}
     except ModelError as e:
         result = {"ok": False, "error": str(e)}

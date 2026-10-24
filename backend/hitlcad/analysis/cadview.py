@@ -4,7 +4,7 @@ build's own view is written by `build.assemble` from its parts.
 STEP keeps its B-rep topology: part `/asm/block` carries `faces_i`, `edges_i` and `vertices_i`, which are
 `faces()[i]`, `edges()[i]` and `vertices()[i]` of that part in build123d, so `component` maps a pick in
 the viewer straight back to the model. Meshes become one part per mesh with a single face, and their
-crease and boundary lines as edges.
+crease and boundary lines as edges, in the colour their file gives them.
 """
 
 from __future__ import annotations
@@ -125,14 +125,50 @@ def component(shape: Shape, name: str, ref: ComponentRef) -> Shape:
 # ---------------------------------------------------------------------------------------------- meshes
 
 
-def _meshes(scene: trimesh.Scene) -> Iterator[tuple[str, trimesh.Trimesh]]:
+def meshes(scene: trimesh.Scene) -> Iterator[tuple[str, trimesh.Trimesh]]:
+    """Each triangle mesh of a scene, placed, by its node."""
     import trimesh
 
     for node in scene.graph.nodes_geometry:
         transform, geometry = scene.graph[node]
         mesh = scene.geometry[geometry]
         if isinstance(mesh, trimesh.Trimesh) and len(mesh.faces):
-            yield str(node).replace("/", "_"), mesh.copy().apply_transform(transform)
+            yield str(node), mesh.copy().apply_transform(transform)
+
+
+def object_of(scene: trimesh.Scene, node: str) -> str:
+    """The object a mesh node belongs to: glTF splits an object with several materials into one mesh per
+    material, under a node named after the object."""
+    split = scene.geometry[scene.graph[node][1]].metadata.get("from_gltf_primitive")
+    return scene.graph.transforms.parents[node] if split else node
+
+
+def objects(scene: trimesh.Scene) -> list[tuple[str, trimesh.Trimesh]]:
+    """Each object of a scene as one mesh (its geometry), placed, by its name."""
+    import trimesh
+
+    found: dict[str, list[trimesh.Trimesh]] = {}
+    for node, mesh in meshes(scene):
+        found.setdefault(object_of(scene, node), []).append(trimesh.Trimesh(mesh.vertices, mesh.faces, process=False))
+    return [(name, trimesh.util.concatenate(parts)) for name, parts in found.items()]
+
+
+def color(mesh: trimesh.Trimesh) -> str | None:
+    """A mesh's colour as sRGB hex: its glTF material's base colour (linear in glTF, and white when the file
+    leaves it out), or the colour its faces or vertices carry (3MF, PLY); None when its file gives it none."""
+    import numpy as np
+    from trimesh.visual.color import linear_to_srgb
+    from trimesh.visual.material import PBRMaterial
+
+    material = getattr(mesh.visual, "material", None)
+    if isinstance(material, PBRMaterial):
+        factor = material.baseColorFactor
+        rgb = np.ones(3) if factor is None else linear_to_srgb(factor[:3] / 255)
+    elif mesh.visual.kind in ("face", "vertex"):
+        rgb = mesh.visual.main_color[:3] / 255
+    else:
+        return None
+    return "#" + "".join(f"{v:02x}" for v in np.round(np.asarray(rgb) * 255).astype(int))
 
 
 def _mesh_shape(mesh: trimesh.Trimesh) -> dict[str, Any]:
@@ -168,16 +204,25 @@ def _mesh_shape(mesh: trimesh.Trimesh) -> dict[str, Any]:
 IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 
 
-def mesh_view_parts(scene: trimesh.Scene, name: str = "") -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def mesh_entry(
+    mesh: trimesh.Trimesh, view_id: str, name: str, color: str | None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A mesh tessellated for the viewer, and its entry in the view's tree (shape ref 0)."""
+    return _mesh_shape(mesh), {
+        "id": view_id, "type": "shapes", "subtype": "solid", "name": name, "shape": {"ref": 0}, "state": [1, 1],
+        "color": color or MESH_COLOR, "alpha": 1.0, "material": None, "normalize_uvs": True, "texture": None,
+        "loc": IDENTITY, "renderback": False, "accuracy": None, "bb": None,
+    }  # fmt: skip
+
+
+def mesh_view_parts(scene: trimesh.Scene, name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Each mesh of a scene tessellated for the viewer, and its entry in the view's tree."""
     instances, parts = [], []
-    for i, (node, mesh) in enumerate(_meshes(scene)):
-        instances.append(_mesh_shape(mesh))
-        parts.append({
-            "id": f"/{name}/{node}", "type": "shapes", "subtype": "solid", "name": node, "shape": {"ref": i},
-            "state": [1, 1], "color": MESH_COLOR, "alpha": 1.0, "material": None, "normalize_uvs": True,
-            "texture": None, "loc": IDENTITY, "renderback": False, "accuracy": None, "bb": None,
-        })  # fmt: skip
+    for i, (node, mesh) in enumerate(meshes(scene)):
+        node = node.replace("/", "_")
+        shape, entry = mesh_entry(mesh, f"/{name}/{node}", node, color(mesh))
+        instances.append(shape)
+        parts.append({**entry, "shape": {"ref": i}})
     return instances, parts
 
 

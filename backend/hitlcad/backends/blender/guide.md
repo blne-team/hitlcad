@@ -83,8 +83,17 @@ def build(p, i):
 
 Useful API notes for this version:
 - Link new objects with `bpy.context.scene.collection.objects.link(obj)`.
-- Materials: `mat = bpy.data.materials.new("m"); mat.diffuse_color = (r, g, b, 1)`;
-  `obj.data.materials.append(mat)`. Colours carry into the viewer.
+- Colours are materials' Principled BSDF Base Color, linear RGB as Blender's colour fields are (an
+  sRGB value v is about v ** 2.2). Name each material for what it is:
+  ```python
+  mat = bpy.data.materials.new("collar")
+  mat.use_nodes = True
+  mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.85, 0.1, 0.15, 1)
+  obj.data.materials.append(mat)
+  ```
+  An object may carry several (faces pick one by `material_index`). Colours carry into the 3D view
+  (a part in several colours is drawn as one shape per colour), the 3MF files (one object per
+  colour, for multi-colour printers) and `model.blend`.
 - Curves: `bpy.data.curves.new(name, "CURVE")`, set `bevel_depth` for tubes; they are converted
   to meshes on export.
 - Booleans: `m = obj.modifiers.new("cut", "BOOLEAN"); m.operation = "DIFFERENCE"; m.object = cutter;
@@ -92,4 +101,7 @@ Useful API notes for this version:
   `cutter.hide_render = True` and returning only the kept objects.
 
 The build exports each part in its own frame (`build/parts/<part>.stl`, and `.glb` with the objects
-by name), the placed assembly (`build/mesh.stl`) and the 3D view.
+by name and their materials), the placed assembly (`build/mesh.stl`), the 3D view, and
+`build/model.blend`: the whole assembly as one Blender scene to open, tweak or render, each part's
+objects in a collection of their own and each instance a collection instance at its placement
+(nested for components), 1 unit = 1 mm, Z up.

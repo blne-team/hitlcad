@@ -87,9 +87,7 @@ def describe_build_point(built: BuiltDesign, point: Vec, normal: Vec | None) -> 
     local = (np.linalg.inv(leaf.transform) @ np.append(point, 1.0))[:3]
     where = leaf.path
     if leaf.part.objects_file is not None:
-        scene = cadview.load_mesh(leaf.part.objects_file)
-        names = list(scene.graph.nodes_geometry)
-        pieces = [scene.geometry[scene.graph[n][1]].copy().apply_transform(scene.graph[n][0]) for n in names]
+        names, pieces = zip(*cadview.objects(cadview.load_mesh(leaf.part.objects_file)), strict=True)
         nearest = int(np.argmin([float(np.min(np.linalg.norm(p.vertices - local, axis=1))) for p in pieces]))
         where = f"{names[nearest]} of {leaf.path}"
     details = {"instance": leaf.path, "part": leaf.part.name}
@@ -134,8 +132,7 @@ def _describe_mesh_file(mesh_path: Path, point: Vec, normal: Vec | None) -> Sele
     mesh = scene.to_geometry()
     mesh.merge_vertices()  # exporters (glTF especially) repeat vertices per face, which would split every face off
     if mesh_path.suffix.lower() in (".glb", ".gltf"):
-        names = list(scene.graph.nodes_geometry)
-        pieces = [scene.geometry[scene.graph[n][1]].copy().apply_transform(scene.graph[n][0]) for n in names]
+        names, pieces = (list(t) for t in zip(*cadview.objects(scene), strict=True))
     else:
         pieces = mesh.split(only_watertight=False, repair=False) or [mesh]
         names = [f"body {i + 1} of {len(pieces)}" for i in range(len(pieces))]
