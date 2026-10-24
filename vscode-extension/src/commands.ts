@@ -145,24 +145,35 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
   });
 
   command("hitlcad.newDesign", async () => {
+    // A project keeps its designs in designs/, so the name is all there is to ask; elsewhere, where first.
+    // (Open Design on any folder without a design.json offers to create one there.)
     const root = firstFolder();
-    const designsDir = root && fs.existsSync(path.join(root.fsPath, "designs")) ? vscode.Uri.file(path.join(root.fsPath, "designs")) : root;
-    const parent = await vscode.window.showOpenDialog({
-      canSelectFolders: true,
-      canSelectFiles: false,
-      canSelectMany: false,
-      defaultUri: designsDir ?? vscode.Uri.file(os.homedir()),
-      openLabel: "Create design here",
-      title: "Where should the design folder go?",
-    });
-    if (!parent?.[0]) return;
+    const designsDir = root ? path.join(root.fsPath, "designs") : null;
+    let parent = designsDir && fs.existsSync(designsDir) ? designsDir : null;
+    if (!parent) {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        defaultUri: root ?? vscode.Uri.file(os.homedir()),
+        openLabel: "Create design here",
+        title: "Where should the design folder go?",
+      });
+      if (!picked?.[0]) return;
+      parent = picked[0].fsPath;
+    }
+    const where = parent;
     const name = await vscode.window.showInputBox({
-      title: "Design name",
+      title: "New design",
       placeHolder: "Wall hook",
-      validateInput: (v) => (!v.trim() ? "Enter a name" : slugify(v) ? null : "Use at least one letter or digit"),
+      validateInput: (v) => {
+        if (!v.trim()) return "Enter a name";
+        if (!slugify(v)) return "Use at least one letter or digit";
+        return { message: `Creates ${path.join(where, slugify(v))}`, severity: vscode.InputBoxValidationSeverity.Info };
+      },
     });
     if (!name) return;
-    const dir = path.join(parent[0].fsPath, slugify(name));
+    const dir = path.join(where, slugify(name));
     if (hasDesign(dir)) {
       const choice = await vscode.window.showInformationMessage(`${path.basename(dir)} already exists.`, "Open It");
       if (choice) {
