@@ -11,9 +11,13 @@ the model in 3D next to the code. You stay in the loop by pointing at the model 
 describing it: click a face and the agent knows exactly which one, or pin a note to it and the agent
 changes the files to match.
 
-![VS Code with Codex in the chat on the right and the robot arm it built open in the 3D editor](docs/images/vscode-extension.png)
+<p align="center">
+  <img src="docs/images/vscode-extension.png" alt="VS Code with Codex in the chat on the right and the robot arm it built open in the 3D editor" width="680">
+</p>
 
-![Selecting a face and pinning a note in the 3D editor](docs/images/point-and-pin.gif)
+<p align="center">
+  <img src="docs/images/point-and-pin.gif" alt="Selecting a face and pinning a note in the 3D editor" width="520">
+</p>
 
 ## How you stay in the loop
 
