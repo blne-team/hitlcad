@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import signal
 from abc import abstractmethod
 from functools import cached_property
 from pathlib import Path
@@ -62,7 +63,7 @@ class SubprocessBackend(CADBackend):
             return {"ok": False, "error": f"the build exceeded the {self.timeout_s:.0f}s time limit"}, run.output
         if not result_file.is_file():
             tail = "\n".join(run.output.strip().splitlines()[-25:])
-            return {"ok": False, "error": f"the build process exited with code {run.returncode}:\n{tail}"}, run.output
+            return {"ok": False, "error": f"{_ended(run.returncode)}:\n{tail}"}, run.output
         return json.loads(result_file.read_text(encoding="utf-8")), run.output
 
     async def plan(self, src: Path, values: dict[str, Value], work: Path) -> PlanOutcome:
@@ -86,3 +87,20 @@ class SubprocessBackend(CADBackend):
         if not result["ok"]:
             return PartsOutcome(error=result["error"], log=log)
         return PartsOutcome(files=result["files"], log=log)
+
+
+# Signals that end a build process, and why they usually do.
+_SIGNALS = {
+    signal.SIGKILL: "was killed by the system, most often for running out of memory",
+    signal.SIGXFSZ: "was stopped for writing a file over 512 MB",
+    signal.SIGSEGV: "crashed (segmentation fault)",
+    signal.SIGABRT: "aborted, often for running out of memory",
+}
+
+
+def _ended(code: int | None) -> str:
+    """How the build process ended, when it left no result."""
+    if code is not None and code < 0:
+        sig = signal.Signals(-code)
+        return f"the build process {_SIGNALS.get(sig, f'was ended by {sig.name}')}"
+    return f"the build process exited with code {code}"

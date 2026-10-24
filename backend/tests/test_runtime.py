@@ -1,4 +1,5 @@
-"""The model runtime: interface values evaluated lazily, and exactly what each piece of code read."""
+"""The model runtime: interface values evaluated lazily, and exactly what each piece of code read; and the
+process that runs it."""
 
 from __future__ import annotations
 
@@ -8,7 +9,9 @@ from typing import Any
 
 import pytest
 
+from hitlcad.backends.executor import LocalExecutor
 from hitlcad.backends.runtime import ModelError, Runtime, plan
+from hitlcad.backends.subprocess_backend import _ended
 from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.core.report import Reads
 
@@ -93,3 +96,16 @@ def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None
     assert key() != key(assets={"vendor/m.step": "digest"})
     assert key() != key({"a": ["top", "bottom"]})  # design.json asks for another connector
     assert key(values={}) is None  # t no longer exists
+
+
+async def test_build_processes_are_bounded_by_their_deadline_not_cpu_time(tmp_path: Path) -> None:
+    # Blender's mesher spends CPU on every core at once; a CPU-time limit would kill it long before the deadline.
+    probe = "import resource; print(resource.getrlimit(resource.RLIMIT_CPU)[0] == resource.RLIM_INFINITY)"
+    run = await LocalExecutor().run([sys.executable, "-c", probe], tmp_path, timeout_s=30)
+    assert run.output.strip() == "True"
+
+
+async def test_a_build_process_ended_by_a_signal_says_why(tmp_path: Path) -> None:
+    kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
+    run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)
+    assert _ended(run.returncode) == "the build process was killed by the system, most often for running out of memory"

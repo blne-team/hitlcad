@@ -1,7 +1,8 @@
 """Process execution for untrusted model code.
 
 ``LocalExecutor`` applies resource limits, a scrubbed environment, a wall-clock deadline and
-process-group kill. It does not isolate the filesystem or network; swap in a container or
+process-group kill. Time is bounded by the deadline alone: a CPU-time limit counts every thread, so it
+would kill parallel work (OCP's and Blender's meshers) long before the deadline. It does not isolate the filesystem or network; swap in a container or
 bubblewrap executor for anything beyond local single-user use.
 """
 
@@ -61,8 +62,6 @@ class LocalExecutor:
             if memory_mb:
                 cap = memory_mb * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
-            cpu = int(timeout_s) + 5
-            resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
             resource.setrlimit(resource.RLIMIT_FSIZE, (512 << 20, 512 << 20))
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
