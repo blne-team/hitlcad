@@ -48,7 +48,7 @@ npm --prefix vscode-extension run compile
 cd e2e && npm run screenshots
 ```
 
-The one picture of the whole VS Code window (`docs/images/vscode.png`) is taken by hand.
+The one picture of the whole VS Code window (`docs/images/vscode-extension.png`) is taken by hand.
 
 ## Build a release
 
