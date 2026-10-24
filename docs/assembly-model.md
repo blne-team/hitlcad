@@ -182,8 +182,18 @@ bolt pattern's clocking), and `symmetry` says where it does not.
 - `frame`: nothing; it is a datum.
 
 A frame with no matching feature fails ("lid.screws[2]: no hole on the frame's axis below its
-origin"), so a frame cannot drift from its geometry. On mesh parts the B-rep kinds are `unverified`,
-with the reason.
+origin"), so a frame cannot drift from its geometry.
+
+Every part is measured, whatever it is made of (`analysis/features.py`). Analyses ask a part's
+`Features`, and one of two adapters answers: on a B-rep part, its faces; on a mesh part, its
+triangles. A hole is probed with rays cast out from its axis, which land on its wall facing the
+axis; a shaft with rays cast in from outside, which land on its skin facing away, even when it is a
+tube. A station along the axis is on the feature where most rays land at one distance (the rest may
+leave through a slot or a teardrop's point), and the feature runs while its stations do. Faces are
+trimesh's facets. A mesh measurement carries its facets' uncertainty (`Ø3.800 × 6.00 long (on the
+mesh, ±0.010)`), and a fit allows for it. On the build123d examples the two adapters agree on every
+connector. What a mesh cannot measure at all (CNC inside corners, sheet bends, a part's inventory of
+holes) is `unverified`, with the reason.
 
 ### Components
 
@@ -230,7 +240,8 @@ Optional fields:
 - `fit`, between a `hole` and a `shaft`: `{"clearance": [min, max]}` in diametral mm (negative is
   interference), or `{"iso": "H7/g6"}` evaluated from ISO 286 at the measured nominal size
   (isofits). The clearance is measured hole Ø − shaft Ø, adjusted by each part's process allowance
-  (FDM's `hole_allowance_mm`, `shaft_allowance_mm`).
+  (FDM's and resin's `hole_allowance_mm`, `shaft_allowance_mm`), within the measurements'
+  uncertainty on mesh parts.
 - `limits`: the range of the free motion (`{"angle": [0, 110]}` degrees, `{"travel": [0, 40]}` mm).
   The placed position must lie within it, and motion analysis sweeps it.
 - `offset`: a designed gap along a's Z, for `rigid`, `revolute` and `planar`.
@@ -369,7 +380,7 @@ motion slider moves.
 | Coverage | the instances | floating instances |
 | Interference | each pair of placed instances | overlap volume, except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it; pairs inside a component are its own build's |
 | Motion | each mate with a range | the first collision, or why it is not analysed |
-| Manufacturing | each made part, in its own frame | the process's checks: FDM (walls, overhangs, bed contact), CNC milling (inside corners against the tool, pocket depth, setups), sheet metal (thickness, bend radii), injection molding (draft, wall uniformity) |
+| Manufacturing | each made part, in its own frame | the process's checks: FDM (walls, overhangs, bed contact; overhangs reported, not failed, with `supports`), resin (walls, sealed hollows that need a drain hole), CNC milling (inside corners against the tool, pocket depth, setups), sheet metal (thickness, bend radii), injection molding (draft, wall uniformity) |
 | Requirements | as declared | pass, fail or unverified |
 
 Interference uses a bounding-box broad phase before exact manifold3d booleans, and caches each
@@ -499,7 +510,8 @@ BOM tabs), hierarchy and scale (components, where-used, the part cache, parallel
 answers, broad-phase interference, instanced views, STEP product structure, revision comparisons),
 variants and motion (configurations, relations, limits, motion analysis, flexible components, the
 configuration switcher and motion slider), and manufacturing depth (ISO 286 fits, process
-allowances, CNC milling, sheet metal and injection molding, URDF and SDF, tolerance stacks).
+allowances, CNC milling, sheet metal and injection molding, URDF and SDF, tolerance stacks), and
+mesh parts measured like B-rep ones, with resin printing and FDM on support for organic shapes.
 
 **Next: measure the agent.** The reference designs become benchmark tasks, each run headless with
 Claude Code and Codex against fixed requirements, on this version and the one before it: requirements

@@ -78,8 +78,8 @@ Each line below is quoted from that build.
 - **Motion** (5). Moving parts are swept through their range:
   `motor.shaft ↔ impeller.bore moves through a full turn (24 positions) without collision`.
 - **Manufacturing** (21). Each part is checked against its process in the orientation it's made:
-  `duct: thinnest wall 1.48 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, CNC milling, sheet
-  metal and injection molding each have their own rules.
+  `duct: thinnest wall 1.48 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, resin printing, CNC
+  milling, sheet metal and injection molding each have their own rules.
 - **Requirements** (7). The brief's requirements, measured: `impeller to duct: 0.74 mm (needs ≥ 0.4)`.
   "The intake guard is finger-safe" isn't something a program can settle, so that one is yours.
 
