@@ -107,15 +107,23 @@ Open pins (resolve them with resolve_pins once addressed):
 
 ## 示例
 
+每个示例都会先拆成零件、再装回去，然后展示外壳挡住的内部。
+
 <table>
 <tr>
-<td width="33%"><a href="examples/handhold-fan"><img src="docs/images/gallery-fan.png" alt="手持涵道吹风机"></a></td>
-<td width="33%"><a href="examples/nas-case"><img src="docs/images/gallery-nas.png" alt="3D 打印的 micro-ATX NAS 机箱"></a></td>
-<td width="33%"><a href="examples/happydog"><img src="docs/images/gallery-dog.png" alt="卡通小狗摆件"></a></td>
+<td width="50%"><a href="examples/handhold-fan"><img src="docs/images/tour-fan.gif" alt="吹风机拆成零件，然后隐藏风道、护网和喷嘴，露出电机和叶轮"></a></td>
+<td width="50%"><a href="examples/nas-case"><img src="docs/images/tour-nas.gif" alt="NAS 机箱拆成各个打印件，然后隐藏后壳和侧板，露出内部"></a></td>
 </tr>
 <tr>
 <td valign="top"><a href="examples/handhold-fan"><b>手持吹风机</b></a><br>上文演示里的吹风机：围绕一台 750 W 电机的 13 个零件，算上螺钉和嵌件共 24 个实例，155 项检查。build123d。</td>
 <td valign="top"><a href="examples/nas-case"><b>NAS 机箱</b></a><br>装四块 3.5 英寸硬盘的 micro-ATX NAS，分九块打印，每块都放得进 256 mm 的打印平台，由 32 颗 M3 螺钉拧进热熔嵌件固定。97 个实例，435 项检查。build123d。</td>
+</tr>
+<tr>
+<td><a href="examples/robot-arm"><img src="docs/images/tour-robot.gif" alt="机械臂拆开，然后绕底座和肩部关节转动"></a></td>
+<td><a href="examples/happydog"><img src="docs/images/tour-dog.gif" alt="小狗摆件拆成各个打印件"></a></td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/robot-arm"><b>机械臂</b></a><br>就是顶部截图里 Codex 正在构建的那台：七个连杆、六个转动关节，每个关节都在整个行程内做过碰撞检查，并导出用于仿真的 URDF。800 × 390 × 860 mm，51 项检查。build123d。</td>
 <td valign="top"><a href="examples/happydog"><b>开心小狗</b></a><br>带配色的小狗摆件，分三块打印：头插在一根销上，销的配合直接在网格上测量；尾巴插进臀部。在 Blender 里雕刻，有调节头部倾斜、耳朵张开和尾巴摆动的滑块。</td>
 </tr>
 </table>

@@ -113,15 +113,23 @@ relations, configurations.
 
 ## Examples
 
+Each one comes apart into its parts, goes back together, and then shows what the outside hides.
+
 <table>
 <tr>
-<td width="33%"><a href="examples/handhold-fan"><img src="docs/images/gallery-fan.png" alt="A hand-held ducted blower"></a></td>
-<td width="33%"><a href="examples/nas-case"><img src="docs/images/gallery-nas.png" alt="A 3D-printed micro-ATX NAS case"></a></td>
-<td width="33%"><a href="examples/happydog"><img src="docs/images/gallery-dog.png" alt="A cartoon dog figurine"></a></td>
+<td width="50%"><a href="examples/handhold-fan"><img src="docs/images/tour-fan.gif" alt="The blower comes apart into its parts, then its duct, guard and nozzle are hidden to show the motor and impeller"></a></td>
+<td width="50%"><a href="examples/nas-case"><img src="docs/images/tour-nas.gif" alt="The NAS case comes apart into its printed pieces, then its rear shell and side panels are hidden to show what is inside"></a></td>
 </tr>
 <tr>
 <td valign="top"><a href="examples/handhold-fan"><b>Hand-held blower</b></a><br>The blower from the walkthrough: 13 parts around a 750 W motor, 24 instances with the screws and inserts, 155 checks. build123d.</td>
 <td valign="top"><a href="examples/nas-case"><b>NAS case</b></a><br>A micro-ATX NAS for four 3.5" drives, printed as nine pieces that each fit a 256 mm bed and held together by 32 M3 screws in heat-set inserts. 97 instances, 435 checks. build123d.</td>
+</tr>
+<tr>
+<td><a href="examples/robot-arm"><img src="docs/images/tour-robot.gif" alt="The robot arm comes apart, then swings on its base and shoulder joints"></a></td>
+<td><a href="examples/happydog"><img src="docs/images/tour-dog.gif" alt="The dog figurine comes apart into its printed pieces"></a></td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/robot-arm"><b>Robot arm</b></a><br>The arm Codex builds in the screenshot at the top: seven links on six revolute joints, each swept through its travel for collisions, with a URDF for simulation. 800 × 390 × 860 mm, 51 checks. build123d.</td>
 <td valign="top"><a href="examples/happydog"><b>Happy dog</b></a><br>A figurine in its colours, printed in three pieces: the head on a peg whose fit is measured on the mesh, the tail plugged into the rump. Sculpted in Blender, with sliders for head tilt, ear flare and tail wag.</td>
 </tr>
 </table>

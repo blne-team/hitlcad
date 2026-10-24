@@ -1,15 +1,13 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
+import { type Browser, expect, type Page, test } from "@playwright/test";
 import { api, openPanel, viewerReady, WORK } from "../helpers";
 
 const EXAMPLES = path.resolve(__dirname, "../../examples");
 const IMAGES = path.resolve(__dirname, "../../docs/images");
 /** The 3D editor tab. */
 const EDITOR = { width: 1280, height: 800 };
-/** A gallery tile: three side by side in the README. */
-const TILE = { width: 800, height: 800 };
 
 /** Build a copy of examples/<name> (its build/ stays out of the repository) and return its design id. */
 async function build(name: string): Promise<string> {
@@ -20,13 +18,7 @@ async function build(name: string): Promise<string> {
   return id;
 }
 
-const shot = (target: Page | Locator, file: string) => target.screenshot({ path: path.join(IMAGES, file) });
-
-async function editor(page: Page, id: string, size = EDITOR) {
-  await page.setViewportSize(size);
-  await openPanel(page, { name: "design", id });
-  await viewerReady(page);
-}
+const shot = (page: Page, file: string) => page.screenshot({ path: path.join(IMAGES, file) });
 
 /** A tab of the Design view, at the size of a roomy bottom panel. */
 async function designView(page: Page, id: string, tab: string, size: { width: number; height: number }) {
@@ -35,6 +27,21 @@ async function designView(page: Page, id: string, tab: string, size: { width: nu
   await page.locator(".tab", { hasText: tab }).click();
   await expect(page.locator(".tab.on")).toContainText(tab);
   await page.waitForTimeout(500);
+}
+
+/** Everything over the model: the tours show the model alone. */
+const BARE =
+  ".float, .review, .tcv_cad_toolbar, .tcv_cad_navigation, .tcv_cad_info_wrapper, .tcv_toggle_tools_wrapper, .tcv_shape_filter, .tcv_cad_animation, .viewport-hint, .motion-control { visibility: hidden !important; }";
+
+/** Write docs/images/<file>, a GIF `width` pixels wide at 12 frames a second, from ffmpeg's input arguments. */
+function gif(input: string[], file: string, width: number) {
+  // Playwright's own ffmpeg records only; imageio-ffmpeg brings one that writes GIFs.
+  const script = `import subprocess, sys, imageio_ffmpeg
+out, width, *inputs = sys.argv[1:]
+subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", *inputs, "-vf",
+    f"fps=12,scale={width}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer",
+    out], check=True)`;
+  execFileSync("uv", ["run", "--no-project", "--with", "imageio-ffmpeg", "python", "-c", script, path.join(IMAGES, file), String(width), ...input]);
 }
 
 /**
@@ -59,29 +66,123 @@ async function recording(browser: Browser, file: string, act: (page: Page, start
   });
   await act(page, () => (from = (Date.now() - opened) / 1000));
   await context.close();
-  const video = await page.video()!.path();
-  // Playwright's own ffmpeg records only; imageio-ffmpeg brings one that writes GIFs.
-  const gif = `import subprocess, sys, imageio_ffmpeg
-subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", sys.argv[3], "-i", sys.argv[1], "-vf",
-    "fps=12,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer",
-    sys.argv[2]], check=True)`;
-  execFileSync("uv", ["run", "--no-project", "--with", "imageio-ffmpeg", "python", "-c", gif, video, path.join(IMAGES, file), from.toFixed(2)]);
+  gif(["-ss", from.toFixed(2), "-i", await page.video()!.path()], file, 960);
 }
 
-/** The model alone, for the gallery: no grid, toolbar, tools or hints. */
-async function model(page: Page, id: string, file: string) {
-  await editor(page, id, TILE);
-  await page.locator(".tcv_button_grid").click();
-  await page.addStyleTag({
-    content: ".tcv_cad_toolbar, .tcv_cad_navigation, .tcv_cad_info_wrapper, .tcv_toggle_tools_wrapper, .tcv_shape_filter, .viewport-hint, .motion-control { visibility: hidden !important; }",
-  });
-  await page.waitForTimeout(300);
-  await shot(page.locator(".cad-stage canvas").first(), file);
+/** The editor a tour films: a smaller page draws faster in software GL. */
+const STAGE = { width: 960, height: 600 };
+const ease = (t: number) => 0.5 - Math.cos(Math.PI * t) / 2;
+
+/**
+ * A GIF made a frame at a time: each frame is taken once the view has drawn, however long software GL takes to
+ * draw a large assembly, so the GIF plays at the pace the tour sets and not at the pace it rendered.
+ */
+class Film {
+  private frames = 0;
+  constructor(
+    readonly page: Page,
+    private readonly dir: string,
+  ) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  private next = () => path.join(this.dir, `${String(this.frames++).padStart(4, "0")}.png`);
+
+  async frame() {
+    await this.page.evaluate(() => new Promise((drawn) => requestAnimationFrame(() => requestAnimationFrame(drawn))));
+    await this.page.screenshot({ path: this.next() });
+  }
+
+  /** Nothing changes for `frames` frames. */
+  hold(frames: number) {
+    const last = path.join(this.dir, `${String(this.frames - 1).padStart(4, "0")}.png`);
+    for (let i = 0; i < frames; i++) fs.copyFileSync(last, this.next());
+  }
+
+  /**
+   * Move a slider from `from` to `to` (fractions of its range). It is set the way a drag sets it (the native
+   * value setter, then an input event), so React's controlled sliders follow too.
+   */
+  async slide(slider: string, from: number, to: number, frames: number) {
+    for (let i = 1; i <= frames; i++) {
+      await this.page.locator(slider).evaluate((el: HTMLInputElement, f) => {
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        set.call(el, String(Number(el.min) + f * (Number(el.max) - Number(el.min))));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }, from + (to - from) * ease(i / frames));
+      await this.frame();
+    }
+  }
+
+  save(file: string) {
+    gif(["-framerate", "12", "-i", path.join(this.dir, "%04d.png")], file, 720);
+  }
+}
+
+/** What a tour shows after the model comes apart and goes back together. */
+type Inside = (film: Film) => Promise<void>;
+
+/** Hide `instances` with their show/hide toggles in the tree, then show them again. */
+const peel =
+  (instances: string[]): Inside =>
+  async (film) => {
+    const toggle = async () => {
+      for (const instance of instances) {
+        await film.page.locator(`.tv-tree-node[data-path$="/${instance}"] .tv-icon0`).first().dispatchEvent("click");
+      }
+      await film.frame();
+    };
+    await toggle();
+    film.hold(16);
+    await toggle();
+  };
+
+/** Move each of the first `count` mates of the motion control to `reach` of its range, and back. */
+const swing =
+  (count: number, reach = 0.25): Inside =>
+  async (film) => {
+    const slider = ".motion-control input[type=range]";
+    for (let mate = 0; mate < count; mate++) {
+      await film.page.locator(".motion-control select").evaluate((el: HTMLSelectElement, mate) => {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(el, String(mate));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }, mate);
+      await film.slide(slider, 0.5, 0.5 + reach, 8);
+      film.hold(2);
+      await film.slide(slider, 0.5 + reach, 0.5, 8);
+    }
+  };
+
+/**
+ * The model alone, in a few seconds: it comes apart into its parts (`explode` of the viewer's full explode, which
+ * moves each part 2.5 times its distance from the origin) and goes back together, then `inside` shows what the
+ * outside hides. Filmed as docs/images/<file>.
+ */
+async function tour(browser: Browser, id: string, file: string, explode: number, inside: Inside) {
+  const context = await browser.newContext({ viewport: STAGE });
+  const film = new Film(await context.newPage(), path.join(WORK, "film"));
+  await openPanel(film.page, { name: "design", id });
+  await viewerReady(film.page);
+  await film.page.locator(".tcv_button_grid").click();
+  await film.page.addStyleTag({ content: BARE });
+  await film.frame();
+  film.hold(6);
+  await film.page.locator(".tcv_button_explode").dispatchEvent("click");
+  await film.slide(".tcv_animation_slider", 0, explode, 8);
+  film.hold(10);
+  await film.slide(".tcv_animation_slider", explode, 0, 8);
+  await film.page.locator(".tcv_button_explode").dispatchEvent("click");
+  film.hold(4);
+  await inside(film);
+  film.hold(6);
+  await context.close();
+  film.save(file);
 }
 
 test("handhold-fan", async ({ page, browser }) => {
   const id = await build("handhold-fan");
-  await model(page, id, "gallery-fan.png");
+  await tour(browser, id, "tour-fan.gif", 0.4, peel(["nozzle", "intake_guard", "duct"]));
 
   await designView(page, id, "Structure", { width: 1280, height: 600 });
   await shot(page, "design-structure.png");
@@ -113,10 +214,17 @@ test("handhold-fan", async ({ page, browser }) => {
   });
 });
 
-test("happydog", async ({ page }) => {
-  await model(page, await build("happydog"), "gallery-dog.png");
+test("robot-arm", async ({ page, browser }) => {
+  const id = await build("robot-arm");
+  await tour(browser, id, "tour-robot.gif", 0.15, swing(2));
 });
 
-test("nas-case", async ({ page }) => {
-  await model(page, await build("nas-case"), "gallery-nas.png");
+test("happydog", async ({ page, browser }) => {
+  const id = await build("happydog");
+  await tour(browser, id, "tour-dog.gif", 0.4, async () => {});
+});
+
+test("nas-case", async ({ page, browser }) => {
+  const id = await build("nas-case");
+  await tour(browser, id, "tour-nas.gif", 0.25, peel(["side_left_rear", "side_right_rear", "rear_shell"]));
 });

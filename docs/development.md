@@ -48,6 +48,9 @@ npm --prefix vscode-extension run compile
 cd e2e && npm run screenshots
 ```
 
+Each example's tour GIF is filmed a frame at a time, each frame once the view has drawn, so it plays
+at the same pace however slowly software GL draws a large assembly.
+
 The one picture of the whole VS Code window (`docs/images/vscode-extension.png`) is taken by hand.
 
 ## Build a release

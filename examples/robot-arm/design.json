@@ -1,0 +1,368 @@
+{
+  "hitlcad": 2,
+  "name": "robot-arm",
+  "backend": "build123d",
+  "brief": {
+    "title": "Six-axis robot arm \u2014 800 \u00d7 390 \u00d7 860 mm",
+    "summary": "Industrial-style parametric robot arm with seven rigid envelopes and six rotary joints. Dimensions describe the zero-angle display pose, not the swept workspace.",
+    "assumptions": [
+      "Dimensions interpreted as X length \u00d7 Y width \u00d7 Z height in the display pose.",
+      "Concept geometry: drive housings are solid envelopes; motors, reducers, bearings, brakes, wiring and structural wall design are not specified.",
+      "Tool flange supplied without a gripper. Joint angles are relative to the display pose; proposed travel requires collision verification.",
+      "Material is a visual/BOM placeholder; envelope masses are not physical robot mass estimates."
+    ],
+    "features": [
+      "Six named revolute mates and six angle parameters",
+      "Four base mounting holes and six tool flange holes",
+      "STEP, STL, 3MF, BOM and URDF outputs"
+    ],
+    "open_questions": [
+      "Required payload, reach, speed, repeatability and duty cycle?",
+      "Preferred motors, reducers, fabrication method and end effector?"
+    ]
+  },
+  "parameters": [
+    {
+      "name": "length",
+      "label": "Displayed overall length",
+      "value": 800,
+      "min": 700,
+      "max": 1000,
+      "unit": "mm"
+    },
+    {
+      "name": "width",
+      "label": "Base overall width",
+      "value": 390,
+      "min": 360,
+      "max": 500,
+      "unit": "mm"
+    },
+    {
+      "name": "height",
+      "label": "Displayed overall height",
+      "value": 860,
+      "min": 750,
+      "max": 1000,
+      "unit": "mm"
+    },
+    {
+      "name": "j1_deg",
+      "label": "J1 angle relative to display pose",
+      "value": 0,
+      "min": -180,
+      "max": 180,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "j2_deg",
+      "label": "J2 angle relative to display pose",
+      "value": 0,
+      "min": -35,
+      "max": 35,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "j3_deg",
+      "label": "J3 angle relative to display pose",
+      "value": 0,
+      "min": -55,
+      "max": 55,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "j4_deg",
+      "label": "J4 angle relative to display pose",
+      "value": 0,
+      "min": -180,
+      "max": 180,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "j5_deg",
+      "label": "J5 angle relative to display pose",
+      "value": 0,
+      "min": -45,
+      "max": 45,
+      "step": 1,
+      "unit": "deg"
+    },
+    {
+      "name": "j6_deg",
+      "label": "J6 angle relative to display pose",
+      "value": 0,
+      "min": -180,
+      "max": 180,
+      "step": 1,
+      "unit": "deg"
+    }
+  ],
+  "parts": {
+    "base": {
+      "role": "Grounded mounting plate and base drive envelope",
+      "file": "parts/base.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "turret": {
+      "role": "J1 rotating pedestal and J2 shoulder drive envelope",
+      "file": "parts/turret.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "upper_arm": {
+      "role": "J2 upper arm with elbow drive envelope",
+      "file": "parts/upper_arm.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "forearm": {
+      "role": "J3 forearm and wrist drive envelope",
+      "file": "parts/forearm.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "wrist_roll": {
+      "role": "J4 wrist roll housing",
+      "file": "parts/wrist_roll.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "wrist_pitch": {
+      "role": "J5 wrist pitch housing",
+      "file": "parts/wrist_pitch.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "output": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "tool_flange": {
+      "role": "J6 rotating tool mounting flange",
+      "file": "parts/tool_flange.py",
+      "material": "aluminium_6061",
+      "connectors": {
+        "input": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    }
+  },
+  "ground": "base",
+  "mates": [
+    {
+      "type": "revolute",
+      "a": "base.output",
+      "b": "turret.input",
+      "limits": {
+        "angle": [
+          -180,
+          180
+        ]
+      }
+    },
+    {
+      "type": "revolute",
+      "a": "turret.output",
+      "b": "upper_arm.input",
+      "limits": {
+        "angle": [
+          -35,
+          35
+        ]
+      }
+    },
+    {
+      "type": "revolute",
+      "a": "upper_arm.output",
+      "b": "forearm.input",
+      "limits": {
+        "angle": [
+          -55,
+          55
+        ]
+      }
+    },
+    {
+      "type": "revolute",
+      "a": "forearm.output",
+      "b": "wrist_roll.input",
+      "limits": {
+        "angle": [
+          -180,
+          180
+        ]
+      }
+    },
+    {
+      "type": "revolute",
+      "a": "wrist_roll.output",
+      "b": "wrist_pitch.input",
+      "limits": {
+        "angle": [
+          -45,
+          45
+        ]
+      }
+    },
+    {
+      "type": "revolute",
+      "a": "wrist_pitch.output",
+      "b": "tool_flange.input",
+      "limits": {
+        "angle": [
+          -180,
+          180
+        ]
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "text": "Display pose overall X dimension 800 mm",
+      "check": {
+        "kind": "size",
+        "axis": "x",
+        "min": 799.9,
+        "max": 800.1
+      }
+    },
+    {
+      "text": "Display pose overall Y dimension 390 mm",
+      "check": {
+        "kind": "size",
+        "axis": "y",
+        "min": 389.9,
+        "max": 390.1
+      }
+    },
+    {
+      "text": "Display pose overall Z dimension 860 mm",
+      "check": {
+        "kind": "size",
+        "axis": "z",
+        "min": 859.9,
+        "max": 860.1
+      }
+    },
+    {
+      "text": "Six independent rotary joints: base yaw, shoulder, elbow, wrist roll, wrist pitch, tool roll."
+    },
+    {
+      "text": "base is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "base",
+        "count": 1
+      }
+    },
+    {
+      "text": "turret is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "turret",
+        "count": 1
+      }
+    },
+    {
+      "text": "upper_arm is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "upper_arm",
+        "count": 1
+      }
+    },
+    {
+      "text": "forearm is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "forearm",
+        "count": 1
+      }
+    },
+    {
+      "text": "wrist_roll is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "wrist_roll",
+        "count": 1
+      }
+    },
+    {
+      "text": "wrist_pitch is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "wrist_pitch",
+        "count": 1
+      }
+    },
+    {
+      "text": "tool_flange is one rigid solid",
+      "check": {
+        "kind": "bodies",
+        "target": "tool_flange",
+        "count": 1
+      }
+    }
+  ],
+  "outputs": [
+    "bom",
+    "3mf",
+    "urdf"
+  ],
+  "verification": {
+    "motion_samples": 7
+  }
+}

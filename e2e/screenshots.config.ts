@@ -6,6 +6,6 @@ import base from "./playwright.config";
 export default defineConfig({
   ...base,
   testDir: "screenshots",
-  timeout: 300_000,
+  timeout: 600_000,
   use: { ...base.use, deviceScaleFactor: 2 },
 });
