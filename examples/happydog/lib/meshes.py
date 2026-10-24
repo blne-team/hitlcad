@@ -30,7 +30,8 @@ def material(name):
     m = bpy.data.materials.get(name)
     if m is None:
         m = bpy.data.materials.new(name)
-        m.diffuse_color = (*COLORS[name], 1)
+        m.use_nodes = True
+        m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (*COLORS[name], 1)
     return m
 
 

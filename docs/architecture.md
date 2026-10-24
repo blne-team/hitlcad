@@ -41,9 +41,9 @@ flowchart LR
 | --- | --- | --- | --- |
 | Domain | `core/` | `types.py`: parameters, briefs, picks, pins. `structure.py`: connector kinds, mates, relations, fastener sets, verification tolerances. `design.py`: design.json format 2. `checks.py`: requirement checks and manufacturing processes. `report.py`: build spec, results, report, revisions. `address.py`: the address grammar. `frames.py`: 4 × 4 frames and the measurements mates make. `events.py`: the event log and its projection `DesignState` | `ConnectorSpec`, `MateSpec`, `RelationSpec`, `RequirementCheck`, `Manufacturing` unions |
 | Model runtime | `backends/runtime.py` | Runs a design's code (`interfaces.py`, part files, `assembly.py`) with `p` and `i`, evaluates interface values lazily, records what each piece of code read. Standard library only, so every backend's Python runs it | — |
-| CAD backends | `backends/` | Child processes that plan (interface values, placements) and build part files, exporting each part in its own frame (STL, a STEP on B-rep backends) with its connector frames | `CADBackend` / `SubprocessBackend`, entry points `hitlcad.backends` |
+| CAD backends | `backends/` | Child processes that plan (interface values, placements) and build part files, exporting each part in its own frame (STL, a STEP on B-rep backends) with its connector frames; Blender also writes the assembly as `model.blend` | `CADBackend` / `SubprocessBackend`, entry points `hitlcad.backends` |
 | Execution | `backends/executor.py` | Run untrusted code with limits; kill the process group on timeout or cancellation | `Executor` protocol |
-| Build | `build/` | `pipeline.py`: the build (below). `cache.py`: part files by their recorded reads. `assemble.py`: the assembly as STEP product structure, as one mesh, and as the instanced 3D view | — |
+| Build | `build/` | `pipeline.py`: the build (below). `cache.py`: part files by their recorded reads. `assemble.py`: the assembly as STEP product structure, as one mesh, as the instanced 3D view, and as the tree a backend writes its own assembly file from | — |
 | Analysis | `analysis/` | `model.py`: the built design (parts, placements, components, connector frames, bodies). `connectors.py`: measuring features. One module per analysis: structure, parts, connectors, mates, relations, fasteners, coverage, interference, motion, manufacturing (`processes.py`), requirements. `geometry.py`, `selection.py`, `anchors.py`: describing picks and carrying them across rebuilds. `cadview.py`: loose model files for the file viewer. `iso286.py`: fits | `Analysis` protocol, listed in `analysis/base.py` |
 | Catalogs | `catalogs/`, `sdk/` | Catalog providers (standard parts with their connectors and data, vendor STEP files) and the model SDK model code imports | `CatalogProvider`, entry points `hitlcad.catalogs` |
 | Materials | `materials/` | Density, processes, minimum thread engagement; projects extend it with a `materials.json` | data |
@@ -66,10 +66,10 @@ commit them. hitlcad keeps everything machine-local in `<data_dir>`:
   `pins_changed`, `feedback_delivered`. `DesignState` is a pure fold of it.
 - `designs/<id>/revisions/<n>/` holds each build, self-contained: its sources (`src/`), each part
   in its own frame (`parts/`), each component's own build (`components/<name>/`, the same layout),
-  the assembly (`model.step`, `mesh.stl`), the 3D view (`view.json`), the preview, the exporters'
-  files, `build.log` and `report.json`. `build.pipeline.load_built` reads such a directory back
-  into the model the analyses saw, so a revision reopened later answers picks and geometry
-  questions exactly as it did when it was built.
+  the assembly (`model.step`, `mesh.stl`, `model.blend`), the 3D view (`view.json`), the preview,
+  the exporters' files, `build.log` and `report.json`. `build.pipeline.load_built` reads such a
+  directory back into the model the analyses saw, so a revision reopened later answers picks and
+  geometry questions exactly as it did when it was built.
 - `cache/parts/` holds part files' outputs by the inputs they read, `cache/components/` component
   builds by their specs, `cache/results/` costly analysis results (overlaps) by what they depend on.
 
@@ -106,8 +106,10 @@ whose files differ from their latest build. Parameter edits from the panel are w
 6. **Analyses.** Each registered `Analysis` returns `Result`s naming the addresses they are about.
    A structure error met by one analysis is reported as a structure result; a bug raises.
 7. **Outputs.** Part files, the assembly STEP (when every part is B-rep), the mesh, the instanced
-   3D view (each part tessellated once, drawn per instance at `/<design>/<instance path>`), the
-   preview, and the exporters `outputs` names.
+   3D view (each part tessellated once, drawn per instance at `/<design>/<instance path>`, mesh
+   parts in their materials' colours), the preview, the exporters `outputs` names, and the assembly
+   in the own format of each backend that built parts (`CADBackend.write_assembly`: Blender's
+   `model.blend`, assembled from the parts' files in one more Blender process, alongside the rest).
 8. **Report.** Results, parts (with their reads and measured connectors), instances, components'
    reports, interface values, mass properties, ranges of motion, the bill of materials, artifacts.
 
@@ -231,7 +233,8 @@ graph, the address grammar and the tools present any member's results.
   `backends/runtime.run` with a `plan` mode (via `runtime.plan` and a function turning the kernel's
   placements into 4 × 4 matrices) and a `parts` mode (export each part's STL, and STEP if it has
   one, with its connector frames), give it an `authoring_guide()`, set `brep`, and register a
-  factory under `hitlcad.backends`; enable it with `HITLCAD_BACKENDS`.
+  factory under `hitlcad.backends`; enable it with `HITLCAD_BACKENDS`. To also write the assembly
+  in its own format, override `write_assembly` (Blender's runs an `assembly` mode).
 - **An analysis**: a class with `name` and `run(ctx) -> list[Result]`, added to
   `analysis.base.default_analyses()` (or passed to `HitlCad.create`). Cache costly results with
   `ctx.cache`.

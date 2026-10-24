@@ -6,8 +6,11 @@ import subprocess
 from functools import cached_property
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 from hitlcad.backends.subprocess_backend import SubprocessBackend
+
+ASSEMBLY_FILE = "model.blend"
 
 
 class BlenderBackend(SubprocessBackend):
@@ -47,6 +50,14 @@ class BlenderBackend(SubprocessBackend):
     def authoring_guide(self) -> str:
         guide = files("hitlcad.backends.blender").joinpath("guide.md").read_text(encoding="utf-8")
         return guide.replace("{blender_version}", self.version or "unknown")
+
+    async def write_assembly(self, tree: dict[str, Any], out_dir: Path, work: Path) -> tuple[str, str]:
+        """`model.blend`: the assembly as one Blender scene, from the parts' files, in one Blender process."""
+        target = out_dir.resolve() / ASSEMBLY_FILE
+        result, _ = await self._run(work, {"mode": "assembly", "tree": tree, "target": str(target)})
+        if not result["ok"]:
+            raise RuntimeError(f"{ASSEMBLY_FILE}: {result['error']}")
+        return ASSEMBLY_FILE, "application/x-blender"
 
     def command(self, job_file: Path) -> list[str]:
         return [

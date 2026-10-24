@@ -2,8 +2,8 @@
 
     sources → plan (interface values, placements) → components (each a build of its own, cached by its
     spec) → part files (in parallel worker processes, cached by what each read) → the built design →
-    connectors measured → every analysis → outputs (assembly STEP, mesh, 3D view, preview, exporters)
-    → report
+    connectors measured → every analysis → outputs (assembly STEP, mesh, 3D view, preview, exporters, and
+    the assembly in each backend's own format) → report
 
 A build's directory is self-contained: its sources, its parts in their own frames, its components'
 build directories, its outputs and its report. Loading it back (`load_built`) gives the same model
@@ -356,6 +356,25 @@ class BuildPipeline:
                 "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
     async def _outputs(self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any]) -> list[Artifact]:
+        # Backends write their own assembly files in their own processes, alongside the rest.
+        native = asyncio.ensure_future(self._native(built, out_dir))
+        try:
+            artifacts = await self._files(built, out_dir, fields)
+        except BaseException:
+            native.cancel()
+            raise
+        return artifacts + await native
+
+    async def _native(self, built: BuiltDesign, out_dir: Path) -> list[Artifact]:
+        """The assembly in the format of each backend that built its parts, components' included."""
+        tree = assemble.tree(built)
+        names = sorted({part.backend for part in assemble.all_parts(built)})
+        written = await asyncio.gather(*(self._backend(name).write_assembly(tree, out_dir, out_dir / "work" / name)
+                                         for name in names))  # fmt: skip
+        shutil.rmtree(out_dir / "work", ignore_errors=True)
+        return [_artifact(out_dir, rel, media_type, "native") for rel, media_type in filter(None, written)]
+
+    async def _files(self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any]) -> list[Artifact]:
         artifacts = [_artifact(out_dir, rel.relative_to(out_dir).as_posix(), "text/x-python", "source")
                      for rel in sorted((out_dir / SOURCES).rglob("*.py"))]  # fmt: skip
         for part in built.parts.values():

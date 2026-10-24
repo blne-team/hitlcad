@@ -382,11 +382,12 @@ pair's overlap by the parts' meshes and transforms, so a rebuild recomputes only
 | File | Contents |
 | --- | --- |
 | `model.step` | the assembly as a STEP product structure, instances named by path (only when every part is B-rep) |
+| `model.blend` | the assembly as one Blender scene, 1 unit = 1 mm, Z up (when a part, a component's included, is a Blender part): each part's objects with their names and materials in a collection of their own (a part of another backend as one object from its STL), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
 | `mesh.stl` | the placed assembly as one mesh |
-| `parts/<part>.step`, `.stl` (`.glb` for mesh parts) | each part once, in its own frame |
-| `view.json` | the 3D view: each part tessellated once, drawn per instance |
+| `parts/<part>.step`, `.stl` (`.glb` for mesh parts, with the objects' names and materials) | each part once, in its own frame |
+| `view.json` | the 3D view: each part tessellated once, drawn per instance; a mesh part in its materials' colours, one shape per colour |
 | `preview.png` | iso, front, right and top renders |
-| the exporters' files | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf` · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
+| the exporters' files | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 | `report.json`, `build.log` | the report, the backends' output |
 
 URDF and SDF map placed instances to links (with inertia where the material is known) and mates to

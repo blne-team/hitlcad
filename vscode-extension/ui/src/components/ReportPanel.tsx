@@ -15,6 +15,7 @@ const TITLES: Record<string, string> = {
 
 const DOWNLOADS: Record<string, string> = {
   exchange: "STEP of the assembly, for CAD tools",
+  native: "The assembly in its modelling tool's own file (a Blender scene)",
   mesh: "STL of the assembly",
   part_exchange: "STEP of one part, in its own frame",
   part_mesh: "STL of one part, in its own frame (as it is made)",

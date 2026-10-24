@@ -56,6 +56,7 @@ async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path)
     out = tmp_path / "out"
     for rel in ("model.step", "mesh.stl", "view.json", "parts/base.step", "parts/lid.3mf", "model.3mf", "bom.csv"):
         assert (out / rel).is_file(), rel
+    assert not (out / "model.blend").exists()  # no Blender part
     rows = list(csv.DictReader((out / "bom.csv").open()))
     assert {r["name"]: int(r["quantity"]) for r in rows} == {"base": 1, "lid": 1, "insert": 4, "screw": 4}
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
@@ -264,6 +265,113 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
     assert {p.name: p.backend for p in report.parts} == {"plate": "build123d", "knob": "blender"}
     assert not (tmp_path / "out" / "model.step").exists()  # an assembly with a mesh part has no B-rep STEP
     assert (tmp_path / "out" / "parts" / "knob.glb").is_file()
+    assert (tmp_path / "out" / "model.blend").is_file()  # the B-rep plate comes into it from its STL
+
+
+COLOURED_PARTS = """import bpy
+
+
+def colour(name, rgb):
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (*rgb, 1)
+    return material
+
+
+def build(p, i):
+    bpy.ops.mesh.primitive_cube_add(size=20, location=(0, 0, 10))
+    block = bpy.context.active_object
+    block.name = "block"
+    block.data.materials.append(colour("red", (1, 0, 0)))
+    block.data.materials.append(colour("white", (1, 1, 1)))
+    max(block.data.polygons, key=lambda f: f.center.z).material_index = 1
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=3, location=(0, 0, 3))
+    ball = bpy.context.active_object
+    ball.name = "ball"
+    ball.data.materials.append(colour("blue", (0, 0, 1)))
+    return {"base": (block, {}), "knob": (ball, {})}
+"""
+
+COLOURED_ASSEMBLY = """from math import pi
+
+from mathutils import Matrix
+
+
+def build(p, i):
+    return {"base": [Matrix.Identity(4)],
+            "knob": [Matrix.Translation((-5, 0, 20)), Matrix.Translation((6, 2, 20)) @ Matrix.Rotation(pi / 2, 4, "X")]}
+"""
+
+# Opens a .blend and prints its collection instances and the world bounds of the geometry they show.
+BLEND_CHECK = """import json
+import bpy
+import numpy as np
+
+points = []
+for inst in bpy.context.evaluated_depsgraph_get().object_instances:
+    if inst.is_instance and inst.object.type == "MESH":
+        co = np.empty(len(inst.object.data.vertices) * 3)
+        inst.object.data.vertices.foreach_get("co", co)
+        m = np.array(inst.matrix_world)
+        points.append(co.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3])
+points = np.vstack(points)
+print("BLEND", json.dumps({
+    "instances": sorted(o.name for o in bpy.data.objects if o.instance_type == "COLLECTION"),
+    "bounds": [points.min(0).tolist(), points.max(0).tolist()],
+    "materials": sorted(m.name for m in bpy.data.materials),
+}))
+"""
+
+
+async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_design(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    import locale
+    import subprocess
+    import zipfile
+
+    encoding = locale.getpreferredencoding(False)
+    folder = write_design(tmp_path / "toy", {
+        "design.json": {"hitlcad": 2, "name": "Toy", "backend": "blender", "ground": "base", "outputs": ["3mf"],
+                        "parts": {"base": {"role": "red block, white top", "file": "parts/toy.py", "material": "PLA"},
+                                  "knob": {"role": "blue ball", "file": "parts/toy.py", "material": "PLA"}}},
+        "parts/toy.py": COLOURED_PARTS,
+        "assembly.py": COLOURED_ASSEMBLY,
+    })  # fmt: skip
+    out = tmp_path / "out"
+    report = await build(core, folder, out)
+    assert report.status == "succeeded", report.error
+    red, white, blue = "#ff0000", "#ffffff", "#0000ff"
+
+    # The view: a part in one colour is one shape at its instance; in two, a group of a shape per colour.
+    view = json.loads((out / "view.json").read_text())
+    nodes = {node["id"]: node for node in view["shapes"]["parts"]}
+    assert {leaf["id"]: leaf["color"] for leaf in nodes["/Toy/base"]["parts"]} == {
+        "/Toy/base/red": red,
+        "/Toy/base/white": white,
+    }
+    assert nodes["/Toy/knob[0]"]["color"] == nodes["/Toy/knob[1]"]["color"] == blue
+    assert len(view["instances"]) == 3  # each colour of each part tessellated once
+
+    # 3MF: each part's colours as base materials, the assembly placed as mesh.stl is.
+    def colours(rel: str) -> set[str]:
+        model = ET.fromstring(zipfile.ZipFile(out / rel).read("3D/3dmodel.model"))
+        return {b.get("displaycolor", "")[:7].lower() for b in model.iter() if b.tag.endswith("}base")}
+
+    assert colours("parts/base.3mf") == {red, white} and colours("parts/knob.3mf") == {blue}
+    assert colours("model.3mf") == {red, white, blue}
+    mesh_bounds = trimesh.load(out / "mesh.stl").bounds
+    np.testing.assert_allclose(trimesh.load(out / "model.3mf", force="scene").bounds, mesh_bounds, atol=1e-3)
+    assert locale.getpreferredencoding(False) == encoding  # lib3mf left the process's locale as it found it
+
+    # model.blend: the parts' objects and materials, three collection instances where the assembly put them.
+    assert {a.path: a.role for a in report.artifacts}["model.blend"] == "native"
+    run = subprocess.run([core.settings.blender_binary, "-b", str(out / "model.blend"), "--factory-startup", "-noaudio",
+                          "--python-expr", BLEND_CHECK], capture_output=True, text=True, check=True)  # fmt: skip
+    blend = json.loads(next(line for line in run.stdout.splitlines() if line.startswith("BLEND "))[6:])
+    assert blend["instances"] == ["Toy/base", "Toy/knob[0]", "Toy/knob[1]"]
+    assert blend["materials"] == ["blue", "red", "white"]
+    np.testing.assert_allclose(blend["bounds"], mesh_bounds, atol=1e-3)
 
 
 def test_fixtures_are_valid_design_files() -> None:

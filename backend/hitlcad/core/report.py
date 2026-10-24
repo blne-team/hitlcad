@@ -146,7 +146,8 @@ class Artifact(Model):
     path: str
     media_type: str
     role: str = Field(
-        description="source, mesh, exchange, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name"
+        description="source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an "
+        "exporter's name"
     )
     sha256: str
     bytes: int

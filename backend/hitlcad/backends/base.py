@@ -7,8 +7,9 @@ in its own child process, in two steps:
     build_parts   run part files; export each part in its own frame (mesh.stl always, a STEP when the
                   backend is B-rep), with its connector frames and what the code read
 
-Everything after that (assembly, measurement, analyses, exports) is backend-independent. Third-party
-backends register through the ``hitlcad.backends`` entry-point group.
+Everything after that (assembly, measurement, analyses, exports) is backend-independent, except that a
+backend may also write the built assembly in its own format (`write_assembly`) from the parts' files.
+Third-party backends register through the ``hitlcad.backends`` entry-point group.
 """
 
 from __future__ import annotations
@@ -93,6 +94,12 @@ class CADBackend(ABC):
         self, src: Path, values: dict[str, Value], files: dict[str, dict[str, list[str]]], work: Path
     ) -> PartsOutcome:
         """Build `files` ({part file: {part: [declared connectors]}}) into `work`."""
+
+    async def write_assembly(self, tree: dict[str, Any], out_dir: Path, work: Path) -> tuple[str, str] | None:
+        """Write the built assembly in this backend's own format into `out_dir`, for designs with parts it
+        built: (relative path, media type), or None when it has no format of its own. `tree` is
+        `build.assemble.tree`: each design's parts by their files, its components, its placed instances."""
+        return None
 
     def fingerprint(self) -> str:
         """What cached parts built by this backend depend on besides their inputs: its code and settings."""

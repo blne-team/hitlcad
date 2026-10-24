@@ -399,7 +399,7 @@ export interface components {
             media_type: string;
             /**
              * Role
-             * @description source, mesh, exchange, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name
+             * @description source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name
              */
             role: string;
             /** Sha256 */
