@@ -23,9 +23,9 @@ dependencies = [
   "manifold3d>=3",
   "networkx>=3",  # trimesh needs it to measure meshes that are not closed
   "tomlkit>=0.15.1",
-  "bd-warehouse>=0.4.0",
-  "isofits>=1.0",
-  "lxml>=6.1.3",
+  "bd-warehouse>=0.4.0",  # the standard-parts catalog provider: ISO/ASME fasteners, inserts, bearings
+  "isofits>=1.0",  # ISO 286 tolerance tables for fits
+  "lxml>=6.1.3",  # trimesh needs it to write 3MF
 ]
 
 [project.optional-dependencies]
