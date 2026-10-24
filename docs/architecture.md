@@ -252,3 +252,8 @@ already run code on the machine. So hitlcad does not police imports. `LocalExecu
 build process with rlimits, a scrubbed environment and a timeout, and kills its process group on
 timeout or cancellation, but provides no filesystem or network isolation. Use a container executor
 before exposing the service beyond a single trusted user.
+
+The server has no authentication, so it checks where each request is addressed:
+`TrustedHostMiddleware` admits the loopback names and the host of `base_url`, and rejects the rest
+(a page that rebinds its own domain to 127.0.0.1 would otherwise call the API as its own origin,
+which CORS does not stop). The MCP SDK applies the same rule to `/mcp`.

@@ -11,9 +11,11 @@ from collections.abc import AsyncIterator
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, TypeVar
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -136,6 +138,10 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     # The panel UI runs in VS Code webviews (origin vscode-webview://…) and calls the API from there.
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=r"vscode-webview://[^/]+",
                        allow_methods=["*"], allow_headers=["*"])  # fmt: skip
+    # A web page can rebind its own domain to 127.0.0.1 and call the API as its own origin, past CORS. Only
+    # requests addressed to this machine, or to the URL agents are given, reach the API.
+    app.add_middleware(TrustedHostMiddleware,
+                       allowed_hosts=["127.0.0.1", "localhost", "::1", urlsplit(settings.base_url).hostname])  # fmt: skip
 
     @app.exception_handler(NotFoundError)
     async def not_found(_: Request, e: NotFoundError) -> JSONResponse:

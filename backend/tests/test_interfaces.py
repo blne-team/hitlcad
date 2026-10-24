@@ -24,7 +24,9 @@ pytestmark = pytest.mark.geometry
 
 @pytest.fixture
 async def api(core: HitlCad) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(core)), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(core)), base_url="http://127.0.0.1"
+    ) as client:
         yield client
 
 
@@ -83,17 +85,26 @@ async def test_panel_webviews_may_call_the_api_and_other_pages_may_not(api: http
     assert "access-control-allow-origin" not in other.headers
 
 
+async def test_only_requests_addressed_to_this_machine_reach_the_api(api: httpx.AsyncClient, tmp_path: Path) -> None:
+    assert (await api.get("/api/health", headers={"Host": "localhost:8000"})).status_code == 200
+    rebound = await api.post(
+        "/api/projects", headers={"Host": "rebound.example:8000"}, json={"path": str(tmp_path / "project")}
+    )
+    assert rebound.status_code == 400 and not (tmp_path / "project").exists()
+    assert (await api.post("/mcp", headers={"Host": "rebound.example:8000"}, json={})).status_code == 400
+
+
 def test_streams_replay_follow_and_report_builds(core: HitlCad, tmp_path: Path) -> None:
     from starlette.testclient import TestClient
 
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
-    client = TestClient(create_app(core))
-    with client.websocket_connect(f"/api/designs/{state.id}/stream") as ws:
+    client = TestClient(create_app(core), base_url="http://127.0.0.1")
+    with client.websocket_connect(f"ws://127.0.0.1/api/designs/{state.id}/stream") as ws:
         assert [json.loads(ws.receive_text())["type"] for _ in range(2)] == ["design_opened", "design_updated"]
         client.put(f"/api/designs/{state.id}/selection", json={"items": []})
         assert json.loads(ws.receive_text())["type"] == "selection_changed"
-    with client.websocket_connect("/api/activity") as ws:
+    with client.websocket_connect("ws://127.0.0.1/api/activity") as ws:
         assert client.post(f"/api/designs/{state.id}/build").status_code == 201
         build = json.loads(ws.receive_text())
     assert (build["name"], build["revision"], build["status"]) == ("Enclosure", 1, "succeeded")
