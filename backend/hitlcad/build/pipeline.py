@@ -222,7 +222,7 @@ class BuildPipeline:
             raise BuildFailed(f"assembly.py places {', '.join(unknown)}, which design.json does not declare as parts "
                               "or components", results=[result("structure", n, False, f"{n} is not declared") for n in unknown])  # fmt: skip
         components = await self._components(spec, folder, out_dir, values, interfaces, placements)
-        outcomes = await self._parts(spec, src, values, interfaces, out_dir, folder, log)
+        outcomes = await self._parts(spec, src, values, interfaces, out_dir, log)
         errors = [f"{o.file}:\n{o.error}" for o in outcomes if o.error]
         if errors:
             raise BuildFailed("\n\n".join(errors), results=[
@@ -303,9 +303,8 @@ class BuildPipeline:
         return out
 
     async def _parts(self, spec: BuildSpec, src: Path, values: dict[str, Value], interfaces: dict[str, Any],
-                     out_dir: Path, folder: Path, log: list[str]) -> list[FileOutcome]:  # fmt: skip
+                     out_dir: Path, log: list[str]) -> list[FileOutcome]:  # fmt: skip
         design = spec.design
-        scope = str(folder)
         files = design.files()
         declared = {file: {n: list(design.parts[n].connectors) for n in names} for file, names in files.items()}
         inputs: dict[str, Inputs] = {}  # by backend
@@ -315,7 +314,7 @@ class BuildPipeline:
             backend = self._backend(design.part_backend(names[0]))
             inputs.setdefault(backend.name, Inputs(fingerprint=backend.fingerprint(), sources=spec.sources,
                                                    assets=spec.assets, values=values, interfaces=interfaces))  # fmt: skip
-            hit = self.parts_cache.lookup(scope, file, declared[file], inputs[backend.name])
+            hit = self.parts_cache.lookup(file, declared[file], inputs[backend.name])
             if hit:
                 key, outcome = hit
                 self.parts_cache.restore(key, outcome, out_dir)
@@ -344,7 +343,7 @@ class BuildPipeline:
                     for rel in filter(None, (part.mesh, part.step, part.objects)):
                         (out_dir / rel).parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(work / rel, out_dir / rel)
-                self.parts_cache.store(scope, fo, declared[fo.file], work, inputs[backend.name])
+                self.parts_cache.store(fo, declared[fo.file], work, inputs[backend.name])
         return [outcomes[f] for f in files]
 
     def _geometry(self, spec: BuildSpec, out_dir: Path, outcome: FileOutcome, bp: BuiltPart) -> PartGeometry:

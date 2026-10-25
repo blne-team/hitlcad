@@ -3,7 +3,8 @@
 A part file's outputs are reused when its own text, the `lib/` modules it imported, the values of the
 parameters and interface values it read, and its backend's code and settings are all as they were.
 What a file reads is only known after it runs, so the cache remembers the read-sets each file has
-had and tries each against the current values.
+had, by its path and text, and tries each against the current values: a design copied or moved to
+another folder finds its parts too.
 """
 
 from __future__ import annotations
@@ -36,8 +37,8 @@ class PartCache:
     def __init__(self, root: Path) -> None:
         self.root = root
 
-    def _index(self, scope: str, file: str) -> Path:
-        digest = hashlib.sha256(json.dumps([scope, file]).encode()).hexdigest()
+    def _index(self, file: str, inputs: Inputs) -> Path:
+        digest = hashlib.sha256(json.dumps([file, inputs.sources.get(file)]).encode()).hexdigest()
         return self.root / "index" / f"{digest}.json"
 
     @staticmethod
@@ -53,10 +54,8 @@ class PartCache:
                 "interfaces": {n: inputs.interfaces[n] for n in reads.interfaces}}  # fmt: skip
         return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
-    def lookup(
-        self, scope: str, file: str, declared: dict[str, list[str]], inputs: Inputs
-    ) -> tuple[str, FileOutcome] | None:
-        index = self._index(scope, file)
+    def lookup(self, file: str, declared: dict[str, list[str]], inputs: Inputs) -> tuple[str, FileOutcome] | None:
+        index = self._index(file, inputs)
         if not index.is_file():
             return None
         for raw in json.loads(index.read_text(encoding="utf-8")):
@@ -65,9 +64,7 @@ class PartCache:
                 return key, FileOutcome.model_validate_json((self.root / key / OUTCOME).read_text(encoding="utf-8"))
         return None
 
-    def store(
-        self, scope: str, outcome: FileOutcome, declared: dict[str, list[str]], work: Path, inputs: Inputs
-    ) -> None:
+    def store(self, outcome: FileOutcome, declared: dict[str, list[str]], work: Path, inputs: Inputs) -> None:
         key = self.key(outcome.file, declared, inputs, outcome.reads)
         if key is None or outcome.error:
             return
@@ -82,7 +79,7 @@ class PartCache:
         (staging / OUTCOME).write_text(outcome.model_dump_json(), encoding="utf-8")
         shutil.rmtree(target, ignore_errors=True)
         staging.rename(target)
-        index = self._index(scope, outcome.file)
+        index = self._index(outcome.file, inputs)
         seen = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else []
         reads = outcome.reads.model_dump()
         if reads not in seen:
