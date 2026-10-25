@@ -7,38 +7,64 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, TypeVar
-from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
-from hitlcad import catalogs
 from hitlcad.analysis import cadview, selection
 from hitlcad.api.mcp_server import build_mcp
 from hitlcad.app import HitlCad
 from hitlcad.backends.base import BackendInfo
+from hitlcad.config import DEFAULT_BACKEND, MCP_PATH
 from hitlcad.core.events import DesignState, Event, RevisionCreated
 from hitlcad.core.report import Revision
 from hitlcad.core.types import Pick, Pin, SelectionItem
 from hitlcad.designs import agents, project
-from hitlcad.service.designs import NotFoundError
+from hitlcad.service.bus import DROPPED
+from hitlcad.service.designs import DesignError, NotFoundError
 
 T = TypeVar("T")
 log = logging.getLogger(__name__)
+
+WEBVIEW_ORIGIN = r"vscode-webview://[^/]+"  # the panel UI runs in VS Code webviews
+
+
+class OriginCheck:
+    """Refuses requests and WebSocket handshakes from a web page whose origin may not call the API. CORS only
+    keeps such a page from reading responses: it still sends them, and WebSockets are not subject to it.
+    Clients that are not browsers (the extension host, agents, the hook) send no Origin."""
+
+    def __init__(self, app: ASGIApp, origins: list[str]) -> None:
+        self.app, self.origins = app, origins
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        origin = Headers(scope=scope).get("origin") if scope["type"] in ("http", "websocket") else None
+        if origin is None or origin in self.origins or re.fullmatch(WEBVIEW_ORIGIN, origin):
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await WebSocketClose(status.WS_1008_POLICY_VIOLATION, "origin not allowed")(scope, receive, send)
+        else:
+            await PlainTextResponse("origin not allowed", status_code=403)(scope, receive, send)
 
 
 async def _until_gone(socket: WebSocket, queue: asyncio.Queue[T]) -> AsyncIterator[T]:
     """Items from `queue` until the client disconnects. Event streams are one-way: clients send nothing, so
     the socket's next message is its close. WebSockets, unlike long-lived HTTP responses, do not take one of
-    the browser's six connections per server, so any number of panels stay live."""
+    the browser's six connections per server, so any number of panels stay live. A subscriber the bus
+    dropped for falling behind is closed, and its client reconnects from the last event it saw."""
     gone = asyncio.ensure_future(socket.receive())
     try:
         while True:
@@ -47,6 +73,9 @@ async def _until_gone(socket: WebSocket, queue: asyncio.Queue[T]) -> AsyncIterat
             if gone.done():
                 item.cancel()
                 return
+            if item.result() is DROPPED:
+                await socket.close(status.WS_1013_TRY_AGAIN_LATER, "fell behind; reconnect from the last event")
+                return
             yield item.result()
     finally:
         gone.cancel()
@@ -54,7 +83,7 @@ async def _until_gone(socket: WebSocket, queue: asyncio.Queue[T]) -> AsyncIterat
 
 class CreateDesign(BaseModel):
     name: str
-    backend: str = "build123d"
+    backend: str = DEFAULT_BACKEND
 
 
 class OpenDesign(BaseModel):
@@ -114,7 +143,6 @@ class Structure(BaseModel):
 class Capabilities(BaseModel):
     version: str
     backends: list[BackendInfo]
-    mcp_url: str
 
 
 def design_summary(s: DesignState) -> dict[str, Any]:
@@ -126,7 +154,9 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     core = core or HitlCad.create()
     designs, builds, feedback, settings = core.designs, core.builds, core.feedback, core.settings
     mcp = build_mcp(core)
-    mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp", host=settings.host)
+    # The middleware below checks Host and Origin for /mcp as for every route, from one list of each.
+    unchecked = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    mcp_app = mcp.streamable_http_app(streamable_http_path=MCP_PATH, transport_security=unchecked)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -137,20 +167,19 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     app = FastAPI(title="hitlcad", version=version("hitlcad"), lifespan=lifespan)
     app.state.core = core
-    # The panel UI runs in VS Code webviews (origin vscode-webview://…) and calls the API from there.
-    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=r"vscode-webview://[^/]+",
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=WEBVIEW_ORIGIN,
                        allow_methods=["*"], allow_headers=["*"])  # fmt: skip
+    app.add_middleware(OriginCheck, origins=settings.cors_origins)
     # A web page can rebind its own domain to 127.0.0.1 and call the API as its own origin, past CORS. Only
     # requests addressed to this machine, or to the URL agents are given, reach the API.
-    app.add_middleware(TrustedHostMiddleware,
-                       allowed_hosts=["127.0.0.1", "localhost", "::1", urlsplit(settings.base_url).hostname])  # fmt: skip
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.hosts)
 
     @app.exception_handler(NotFoundError)
     async def not_found(_: Request, e: NotFoundError) -> JSONResponse:
         return JSONResponse({"detail": str(e)}, status_code=404)
 
-    @app.exception_handler(ValueError)
-    async def invalid(_: Request, e: ValueError) -> JSONResponse:
+    @app.exception_handler(DesignError)
+    async def invalid(_: Request, e: DesignError) -> JSONResponse:
         return JSONResponse({"detail": str(e)}, status_code=422)
 
     @app.get("/api/health")
@@ -159,7 +188,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.get("/api/capabilities")
     async def capabilities() -> Capabilities:
-        return Capabilities(version=version("hitlcad"), backends=core.registry.describe(), mcp_url=settings.mcp_url)
+        return Capabilities(version=version("hitlcad"), backends=core.registry.describe())
 
     # ------------------------------------------------------------------ designs
 
@@ -236,10 +265,6 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         graph = await asyncio.to_thread(core.explore.graph, design_id, configuration)
         return Structure(overview=graph.overview(), graph=graph.structure())
 
-    @app.get("/api/catalog")
-    async def catalog(query: str, limit: int = 20) -> list[catalogs.CatalogItem]:
-        return await asyncio.to_thread(catalogs.search, query, limit)
-
     @app.post("/api/designs/{design_id}/parameters", status_code=201)
     async def edit_parameters(design_id: str, body: EditParameters) -> Revision:
         return await builds.edit_parameters(design_id, body.values)
@@ -295,8 +320,11 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.post("/api/projects")
     async def init_project(body: InitProject) -> dict[str, Any]:
         path = project_path(body.path)
-        created = project.init_project(path, settings.base_url, sys.executable, core.registry.all(),
-                                       hooks=body.hooks, codex=body.codex)  # fmt: skip
+        try:
+            created = project.init_project(path, settings, sys.executable, core.registry.all(),
+                                           hooks=body.hooks, codex=body.codex)  # fmt: skip
+        except ValueError as e:  # a config file of the human's that is not plain JSON
+            raise HTTPException(422, str(e)) from None
         return {"path": str(path), "created": created}
 
     @app.get("/api/projects/agents")

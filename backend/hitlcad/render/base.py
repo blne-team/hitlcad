@@ -10,6 +10,7 @@ from typing import Protocol
 from PIL import Image, ImageDraw, ImageFont
 
 from hitlcad.backends.executor import Executor, LocalExecutor
+from hitlcad.config import Settings
 from hitlcad.core.report import MeshMetrics
 
 ENTRY = Path(__file__).with_name("blender_entry.py")
@@ -30,9 +31,7 @@ class NullRenderer:
 class BlenderWorkbenchRenderer:
     """Four orthographic views (iso, front, right, top) composed into one labelled sheet."""
 
-    def __init__(
-        self, *, binary: str = "blender", size: int = 512, executor: Executor | None = None, timeout_s: float = 120
-    ) -> None:
+    def __init__(self, *, binary: str, size: int, timeout_s: float, executor: Executor | None = None) -> None:
         self.binary, self.size, self.timeout_s = binary, size, timeout_s
         self.executor = executor or LocalExecutor()
 
@@ -55,6 +54,13 @@ class BlenderWorkbenchRenderer:
         sheet.save(target, optimize=True)
         shutil.rmtree(work, ignore_errors=True)
         return target
+
+
+def preview_renderer(settings: Settings) -> Renderer:
+    """Blender Workbench previews when Blender is installed, else none."""
+    workbench = BlenderWorkbenchRenderer(binary=settings.blender_binary, size=settings.render_size,
+                                         timeout_s=settings.render_timeout_s)  # fmt: skip
+    return workbench if workbench.available() else NullRenderer()
 
 
 def compose_sheet(views: list[tuple[str, Path]], size: int, metrics: MeshMetrics | None) -> Image.Image:

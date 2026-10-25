@@ -18,7 +18,7 @@ export default defineConfig({
     launchOptions: { args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] },
   },
   webServer: {
-    command: `rm -rf .work && mkdir -p .work && HITLCAD_DATA_DIR=.work/data HITLCAD_CORS_ORIGINS='["${HARNESS_URL}"]' uv run --project .. hitlcad serve --port ${PORT}`,
+    command: `rm -rf .work && mkdir -p .work && HITLCAD_DATA_DIR=.work/data HITLCAD_PORT=${PORT} HITLCAD_CORS_ORIGINS='["${HARNESS_URL}"]' uv run --project .. hitlcad serve`,
     url: `${BASE_URL}/api/health`,
     reuseExistingServer: false,
     timeout: 180_000,

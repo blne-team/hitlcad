@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from hitlcad.core.structure import Tolerances
+
+DEFAULT_BACKEND = "build123d"
+MCP_PATH = "/mcp"
 
 
 class Settings(BaseSettings):
@@ -17,10 +21,10 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".hitlcad")
 
     # CAD backends
-    backends: list[str] = Field(default_factory=lambda: ["build123d", "blender"])
+    backends: list[str] = Field(default_factory=lambda: [DEFAULT_BACKEND, "blender"])
     blender_binary: str = "blender"
-    build_timeout_s: float = 180.0
-    build_memory_mb: int = 4096
+    build_timeout_s: float = Field(default=180.0, gt=0)
+    build_memory_mb: int = Field(default=4096, gt=0)
     build_workers: int = Field(default=4, ge=1, description="Part files built in parallel child processes")
     mesh_tolerance_mm: float = Field(default=0.01, gt=0, description="Chordal deviation of exported meshes")
     mesh_angular_tolerance: float = Field(default=0.1, gt=0, description="Angular deviation of exported meshes, rad")
@@ -50,6 +54,7 @@ class Settings(BaseSettings):
 
     # Preview rendering
     render_size: int = 512
+    render_timeout_s: float = Field(default=120.0, gt=0)
 
     public_url: str | None = Field(default=None, description="Base URL agents and hooks use to reach this server")
     host: str = "127.0.0.1"
@@ -60,11 +65,19 @@ class Settings(BaseSettings):
 
     @property
     def base_url(self) -> str:
-        return (self.public_url or f"http://{self.host}:{self.port}").rstrip("/")
+        host = f"[{self.host}]" if ":" in self.host else self.host  # an IPv6 address
+        return (self.public_url or f"http://{host}:{self.port}").rstrip("/")
 
     @property
     def mcp_url(self) -> str:
-        return self.base_url + "/mcp"
+        return self.base_url + MCP_PATH
+
+    @property
+    def hosts(self) -> list[str]:
+        """What requests may be addressed to (their Host header, IPv6 in brackets): this machine, and the URL
+        agents are given."""
+        public = urlsplit(self.base_url).hostname or ""
+        return ["127.0.0.1", "localhost", "[::1]", f"[{public}]" if ":" in public else public]
 
     @property
     def tolerances(self) -> Tolerances:

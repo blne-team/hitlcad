@@ -161,12 +161,16 @@ three-cad-viewer and ocp-tessellate are pinned together.
 What the human points at reaches the agent with their next message, the same way for Claude Code
 and Codex. With the human's permission (`designs/agents.py`; `hitlcad init` asks on a terminal or
 takes `--hooks`/`--codex`, the extension asks in a dialog when it creates a project and offers it for
-a project that lacks it), `hitlcad init` writes a `UserPromptSubmit` hook for each: in
-`.claude/settings.json` (which also pre-approves the project's `hitlcad` MCP server) and in
-`.codex/hooks.json`. With the separate permission for Codex's user config it also adds hitlcad's MCP
-server to `~/.codex/config.toml` and trusts the project there (tomlkit, every other line kept),
-which is what makes Codex load the project's `.codex/`. Both run `<hitlcad's python> -m hitlcad.cli
-context --hook <agent> --server <url>`, so they depend on neither PATH nor environment. On each
+a project that lacks it), `hitlcad init` writes a `UserPromptSubmit` hook for each. The hook names
+this machine's interpreter, so it goes where only this machine reads it: Claude Code's per-user
+`.claude/settings.local.json` in the project (kept out of the repository by the project's
+`.gitignore`), and Codex's user `~/.codex/hooks.json`, as Codex has no per-user file for one project
+(the hook adds nothing in a folder without designs). The committed `.mcp.json` and
+`.claude/settings.json` (which pre-approves the project's `hitlcad` MCP server) name only the
+server's URL. With the separate permission for Codex's user config it also adds hitlcad's MCP
+server to `~/.codex/config.toml` (tomlkit, every other line kept). Both hooks run `<hitlcad's
+python> -m hitlcad.cli context --hook <agent> --server <url>`, so they depend on neither PATH nor
+environment. On each
 prompt the hook posts the agent's working directory and session id to `/api/context/deliveries`,
 and `ContextFeed.deliver` answers for every design under that folder:
 

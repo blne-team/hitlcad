@@ -77,13 +77,20 @@ remote side, next to the tool. The panel reaches the server through VS Code's po
    | `.vscode/settings.json` | points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d` |
    | `CLAUDE.md`, `AGENTS.md` | point Claude Code and Codex at hitlcad's skills and rules |
    | `.claude/skills/`, `.agents/skills/` | the skills: `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract of each backend) |
-   | `.gitignore` | |
+   | `.gitignore` | keeps `__pycache__/` and `.claude/settings.local.json` out of the repository |
 
 2. hitlcad asks whether your agents may see what you select and pin in the panel. Allowing it
-   adds a prompt hook to `.claude/settings.json` and `.codex/hooks.json` that puts your
-   selection and open pins in your next message. For Codex it also adds hitlcad's MCP server and
-   trusts the folder in `~/.codex/config.toml`, so Codex loads the hook; approve the hook once in
-   Codex with `/hooks`. `hitlcad init --hooks --codex` allows both without asking.
+   adds a prompt hook that puts your selection and open pins in your next message. The hook runs
+   the Python hitlcad is installed with, so it goes where only you and this machine read it:
+
+   | File | For |
+   | --- | --- |
+   | `.claude/settings.local.json` | Claude Code, in this project (its per-user settings, not committed) |
+   | `~/.codex/hooks.json` | Codex, which has no per-user file for one project: the hook runs in every project and adds nothing where there are no designs. Approve it once in Codex with `/hooks` |
+
+   For Codex it also asks to add hitlcad's MCP server to `~/.codex/config.toml`.
+   `hitlcad init --hooks --codex` allows both without asking. Everything you commit names the
+   server's URL, never a path on your machine; a teammate runs `hitlcad init` once for their own hook.
 
 3. Run **hitlcad: New Design**, name it and pick a backend, or ask your agent for one.
 
@@ -113,6 +120,7 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
 | `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
 | `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
+| `HITLCAD_RENDER_TIMEOUT_S` | `120` | Deadline of each preview render (Blender) |
 | `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build process may use, with everything it starts |
 | `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
@@ -120,6 +128,7 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_VERIFY_MOTION_STEPS` | `2000` | Most positions motion analysis checks per mate before it reports the motion unverified |
 | `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
 | `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server; the server also answers requests addressed to its host |
+| `HITLCAD_CORS_ORIGINS` | `[]` | Web origins besides VS Code's webviews that may call the API and open its event streams |
 
 ## Troubleshooting
 

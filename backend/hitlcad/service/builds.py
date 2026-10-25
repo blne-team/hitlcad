@@ -17,12 +17,11 @@ from typing import Any
 from hitlcad.backends.base import PlanOutcome
 from hitlcad.build.pipeline import BuildPipeline
 from hitlcad.config import Settings
-from hitlcad.core.design import DesignSpec
 from hitlcad.core.events import BuildStarted, ErrorRaised, RevisionCreated
 from hitlcad.core.report import BuildSpec, Result, Revision
 from hitlcad.core.types import apply_values
 from hitlcad.designs.folder import DESIGN_FILE, DesignFolder
-from hitlcad.service.designs import DesignService, NotFoundError
+from hitlcad.service.designs import DesignError, DesignService, NotFoundError, load
 from hitlcad.service.feedback import FeedbackService
 
 log = logging.getLogger(__name__)
@@ -42,35 +41,38 @@ class BuildService:
         self._pending: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
 
-    def _load(self, design_id: str, folder: DesignFolder, configuration: str | None) -> tuple[DesignSpec, BuildSpec]:
-        """design.json and the build spec, synced into the log. Invalid files are reported in the panel and raised."""
+    async def _load(self, design_id: str, folder: DesignFolder, configuration: str | None) -> BuildSpec:
+        """The build spec (reading every source and checksumming vendor files, off the event loop), its
+        design.json synced into the log. Invalid files are reported in the panel and raised."""
         try:
-            design = folder.load()
-            spec = folder.spec(self.settings.tolerances, configuration)
+            spec = await asyncio.to_thread(folder.spec, self.settings.tolerances, configuration)
         except (OSError, ValueError) as e:
             self.designs.emit(design_id, ErrorRaised(message=f"{DESIGN_FILE} or the design's code is invalid: {e}"))
-            raise ValueError(f"cannot build {folder.path}: {e}") from e
-        self.designs.sync(design_id, design)
-        return design, spec
+            raise DesignError(f"cannot build {folder.path}: {e}") from e
+        self.designs.sync(design_id, spec.design)
+        return spec
 
     async def build(self, design_id: str, summary: str = "", origin: str = "file",
                     configuration: str | None = None) -> Revision:  # fmt: skip
         """Build the folder's current files now."""
         folder = self.designs.folder(design_id)
         async with self._locks[design_id]:
-            design, spec = self._load(design_id, folder, configuration)
-            if not design.parts and not design.components:
-                raise ValueError(f"cannot build {folder.path}: design.json declares no parts yet")
+            spec = await self._load(design_id, folder, configuration)
+            if not spec.design.parts and not spec.design.components:
+                raise DesignError(f"cannot build {folder.path}: design.json declares no parts yet")
+            if configuration is not None and configuration not in spec.design.configurations:
+                raise DesignError(f"no configuration {configuration!r}; configurations: "
+                                  + (", ".join(spec.design.configurations) or "none"))  # fmt: skip
             return await self._run(design_id, folder, spec, summary or "Built on request", origin)
 
     async def build_all(self, design_id: str, summary: str = "") -> list[Revision]:
         """Every configuration: the default one, then each named one."""
-        design = self.designs.folder(design_id).load()
+        design = load(self.designs.folder(design_id))
         return [await self.build(design_id, summary, configuration=c) for c in [None, *design.configurations]]
 
     async def check_structure(self, design_id: str) -> tuple[list[Result], PlanOutcome | None]:
         folder = self.designs.folder(design_id)
-        _, spec = self._load(design_id, folder, None)
+        spec = await self._load(design_id, folder, None)
         work = self.settings.cache_dir / "structure" / design_id
         return await self.pipeline.check_structure(spec, folder.path, work)
 
@@ -78,8 +80,8 @@ class BuildService:
         """Build after the files changed; None when there are no parts yet or the spec is the last build's."""
         folder = self.designs.folder(design_id)
         async with self._locks[design_id]:
-            design, spec = self._load(design_id, folder, None)
-            if not design.parts and not design.components or self._built.get(design_id) == spec.key:
+            spec = await self._load(design_id, folder, None)
+            if not spec.design.parts and not spec.design.components or self._built.get(design_id) == spec.key:
                 return None
             return await self._run(design_id, folder, spec, "Rebuilt after the files changed", "file")
 
@@ -126,7 +128,7 @@ class BuildService:
             self._pending.discard(design_id)
             try:
                 await self.rebuild(design_id)
-            except (ValueError, NotFoundError) as e:
+            except (DesignError, NotFoundError) as e:
                 log.info("auto-build of %s skipped: %s", design_id, e)
 
         task = asyncio.get_running_loop().create_task(run())
@@ -139,25 +141,33 @@ class BuildService:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
-    def catch_up(self) -> None:
+    async def catch_up(self) -> None:
         """Build registered folders whose files differ from their latest build: new designs, and folders
         edited while hitlcad was not running."""
         for path, design_id in self.designs.folders().items():
             if latest := self.designs.get(design_id).latest(None):
                 self._built.setdefault(design_id, latest.spec.key)
             self.designs.sync(design_id)
-            try:
-                changed = DesignFolder(Path(path)).spec(self.settings.tolerances).key != self._built.get(design_id)
-            except (OSError, ValueError):  # invalid files: the build reports them in the panel
-                changed = True
-            if changed:
+            key = await asyncio.to_thread(self._spec_key, Path(path))
+            if key is None or key != self._built.get(design_id):
                 self.schedule_build(design_id)
+
+    def _spec_key(self, path: Path) -> str | None:
+        """What a build of the folder's files depends on, as a key; None when they are invalid (the build
+        reports them in the panel)."""
+        try:
+            return DesignFolder(path).spec(self.settings.tolerances).key
+        except (OSError, ValueError):
+            return None
 
     async def edit_parameters(self, design_id: str, values: dict[str, Any]) -> Revision:
         """The human tuned parameters in the panel: write them to design.json and rebuild."""
         folder = self.designs.folder(design_id)
-        design = folder.load()
-        specs = apply_values(design.parameters, values)
+        design = load(folder)
+        try:
+            specs = apply_values(design.parameters, values)
+        except ValueError as e:  # an unknown parameter, or a value out of its range
+            raise DesignError(str(e)) from None
         changed = {p.name: p.value for p, old in zip(specs, design.parameters, strict=True) if p.value != old.value}
         folder.save(design.model_copy(update={"parameters": specs}))
         return await self.build(design_id, "Parameter edit: " + ", ".join(f"{k}={v}" for k, v in changed.items()),
