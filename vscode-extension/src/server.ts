@@ -59,13 +59,16 @@ export class ServerManager implements vscode.Disposable {
     if (!resolution.ok) throw new Error(resolution.error);
     const [cmd, ...args] = resolution.command;
     const url = new URL(serverUrl());
-    const env = { ...process.env, PATH: searchPath, HITLCAD_HOST: url.hostname, HITLCAD_PORT: url.port || "80" };
+    // PYTHONUTF8: the server speaks UTF-8 (its log, which we read, and every file), whatever the code page.
+    const env = { ...process.env, PATH: searchPath, PYTHONUTF8: "1", HITLCAD_HOST: url.hostname, HITLCAD_PORT: url.port || "80" };
     this.output.appendLine(`$ ${resolution.command.join(" ")}${resolution.cwd ? `   (in ${resolution.cwd})` : ""}`);
 
     const child = spawn(cmd!, args, { cwd: resolution.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     this.child = child;
-    child.stdout?.on("data", (d: Buffer) => this.output.append(d.toString()));
-    child.stderr?.on("data", (d: Buffer) => this.output.append(d.toString()));
+    for (const stream of [child.stdout, child.stderr]) {
+      stream?.setEncoding("utf8"); // decodes across chunks: a character may arrive split in two
+      stream?.on("data", (d: string) => this.output.append(d));
+    }
     const exited = new Promise<never>((_, reject) => {
       child.once("error", (e) => reject(new Error(`Could not start ${cmd}: ${e.message}`)));
       child.once("exit", (code, signal) => {

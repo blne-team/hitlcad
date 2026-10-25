@@ -1,0 +1,55 @@
+name: Blender
+description: >
+  Install the Blender of the devcontainer (.devcontainer/Dockerfile) where hitlcad finds it: it builds the Blender
+  backend's designs and renders every preview.
+runs:
+  using: composite
+  steps:
+    - name: Blender version
+      id: version
+      shell: bash
+      run: echo "version=$(sed -n 's/^ARG BLENDER_VERSION="\(.*\)"/\1/p' .devcontainer/Dockerfile)" >> "$GITHUB_OUTPUT"
+    - name: Blender's system libraries (software OpenGL)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --no-install-recommends --yes libgl1 libegl1 libgl1-mesa-dri libglu1-mesa \
+          libxi6 libxkbcommon0 libxxf86vm1 libxrender1 libxfixes3 libsm6 libxrandr2 libxinerama1 libxcursor1 libx11-xcb1
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: ~/blender
+        key: blender-${{ steps.version.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Download Blender
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        v="${{ steps.version.outputs.version }}"
+        url="https://download.blender.org/release/Blender${v%.*}/blender-$v"
+        case "$RUNNER_OS" in
+          Linux)
+            mkdir -p ~/blender
+            curl --fail --location --silent --show-error "$url-linux-x64.tar.xz" | tar -xJ -C ~/blender --strip-components=1 ;;
+          Windows)
+            cd ~
+            curl --fail --location --silent --show-error --output blender.zip "$url-windows-x64.zip"
+            7z x -bd blender.zip > /dev/null
+            mv "blender-$v-windows-x64" blender
+            rm blender.zip ;;
+          macOS)
+            curl --fail --location --silent --show-error --output blender.dmg "$url-macos-arm64.dmg"
+            hdiutil attach -quiet -nobrowse -mountpoint /Volumes/blender blender.dmg
+            mkdir -p ~/blender
+            cp -R /Volumes/blender/Blender.app ~/blender/
+            hdiutil detach -quiet /Volumes/blender
+            rm blender.dmg ;;
+        esac
+    - name: Blender on PATH
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          Windows) (cd ~/blender && pwd -W) >> "$GITHUB_PATH" ;; # pwd -W: Git Bash's Windows path
+          macOS) echo "HITLCAD_BLENDER_BINARY=$HOME/blender/Blender.app/Contents/MacOS/Blender" >> "$GITHUB_ENV" ;;
+          *) echo "$HOME/blender" >> "$GITHUB_PATH" ;;
+        esac

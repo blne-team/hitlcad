@@ -32,6 +32,8 @@ dependencies = [
   # writes 3MF with colours (the 3MF Consortium's library; build123d uses it too, as py-lib3mf on Linux ARM)
   "lib3mf>=2.5.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
   "py-lib3mf>=2.5.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
+  "psutil>=7",  # a build's memory, measured the same way on every platform
+  "pywin32>=311; sys_platform == 'win32'",  # job objects: a build ends with everything it started
 ]
 
 [project.optional-dependencies]
@@ -43,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-hitlcad = "hitlcad.cli:main"
+hitlcad = "hitlcad.cli:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend/hitlcad"]

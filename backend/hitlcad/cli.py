@@ -84,7 +84,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     settings = get_settings()
     target = Path(args.path).expanduser().resolve()
     backends = BackendRegistry.from_settings(settings).all()
-    hook = agents.hook_command(sys.executable, "<agent>", settings.base_url)
+    hook = agents.command_line(agents.hook_argv(sys.executable, "<agent>", settings.base_url))
     hooks = _permission(args.hooks, (
         "Let Claude Code and Codex see what you select and pin in the hitlcad panel?\n"
         f"  This adds a prompt hook to {agents.CLAUDE_SETTINGS} and {agents.CODEX_HOOKS}. Before each message\n"
@@ -188,5 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     return int(args.fn(args))
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """The ``hitlcad`` command."""
+    # Reports print ✓ and ×, and the hook's JSON is UTF-8; a Windows console's own code page has neither.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8")
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    run()

@@ -31,10 +31,10 @@ def _build123d(settings: Settings) -> CADBackend:
 def _blender(settings: Settings) -> CADBackend:
     from hitlcad.backends.blender.backend import BlenderBackend
 
-    # Blender reserves large virtual address ranges at startup; an RLIMIT_AS cap breaks it.
     return BlenderBackend(
         binary=settings.blender_binary,
         timeout_s=settings.build_timeout_s,
+        memory_mb=settings.build_memory_mb,
         mesh_tolerance_mm=settings.mesh_tolerance_mm,
         mesh_angular_tolerance=settings.mesh_angular_tolerance,
     )
