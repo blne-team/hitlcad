@@ -49,11 +49,18 @@ right in fewer builds.
   fasteners and bearings and their fits, a playbook from each kind of failure to its usual fix, and
   the reference designs as worked patterns. Each change is kept only if the benchmark improves:
   requirements met on the first build, builds needed, tokens.
+- **Faster saves.** A build123d build starts fresh Python processes, and each spends about 1.7 s
+  importing build123d before it runs the design: about 3.5 s of every save goes to startup. The
+  server keeps a few build processes warm, started and imported, waiting for a job; a build takes
+  one, runs in it once, and it exits as today, while a replacement warms up. Each build still has
+  a fresh process of its own, with its own limits, and nothing it starts outlives it; the same on
+  every platform.
 
 Done when someone without Claude Code or Codex builds a reference design with the built-in agent,
 one command runs the benchmark and prints its comparison by agent and model, with the first results
-recorded here, the skills have measurably raised them, and a figurine modelled from a photo passes
-its silhouette check from that photo's view.
+recorded here, the skills have measurably raised them, a figurine modelled from a photo passes its
+silhouette check from that photo's view, and a save of a build123d design no longer waits for
+Python to start.
 
 ## v0.3: plugins and building blocks
 
