@@ -9,7 +9,8 @@ differs per platform is how a process tree is held, a process group on POSIX and
 The child writes its output to a file in its work directory, not a pipe: a pipe stays open as long as anything the
 child started holds it, so a build that left a process behind would only end at its deadline. The child inherits
 the environment, so it runs wherever the server does; hitlcad sets only its temporary folder (the work directory)
-and its UTF-8, and drops its own settings. It does not isolate the filesystem or
+and drops its own settings. The output is read as UTF-8: each backend's command makes its interpreter write it so
+(an interpreter run isolated, as backends are, ignores PYTHON* variables). It does not isolate the filesystem or
 network; swap in a container or bubblewrap executor for anything beyond local single-user use.
 """
 
@@ -123,16 +124,7 @@ class LocalExecutor:
     @staticmethod
     def _env(cwd: Path) -> dict[str, str]:
         env = {key: value for key, value in os.environ.items() if not key.startswith("HITLCAD_")}
-        return env | {
-            "TMPDIR": str(cwd),
-            "TEMP": str(cwd),
-            "TMP": str(cwd),
-            # It speaks UTF-8, whatever the platform's code page: files (UTF-8 mode) and the output read back.
-            "PYTHONUTF8": "1",
-            "PYTHONIOENCODING": "utf-8",
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONUNBUFFERED": "1",
-        }
+        return env | {"TMPDIR": str(cwd), "TEMP": str(cwd), "TMP": str(cwd)}
 
     async def run(self, argv: list[str], cwd: Path, *, timeout_s: float, memory_mb: int | None = None) -> ExecResult:
         started = time.monotonic()

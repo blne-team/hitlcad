@@ -125,17 +125,12 @@ async def test_a_build_process_over_its_memory_is_stopped(tmp_path: Path) -> Non
     assert run.duration_s < 20
 
 
-async def test_a_build_process_inherits_the_environment_and_speaks_utf8(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_a_build_process_inherits_the_environment(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("SOME_TOOL_SETTING", "kept")
     monkeypatch.setenv("HITLCAD_PORT", "1234")
-    monkeypatch.setenv("PYTHONIOENCODING", "ascii")  # what a Windows pipe amounts to, on every platform
-    probe = (
-        "import os, tempfile; "
-        "print(os.environ.get('SOME_TOOL_SETTING'), os.environ.get('HITLCAD_PORT'), tempfile.gettempdir()); "
-        "print('齿轮 ✓')"
-    )
+    probe = "import os, tempfile; print(os.environ.get('SOME_TOOL_SETTING'), os.environ.get('HITLCAD_PORT'), tempfile.gettempdir())"
     run = await LocalExecutor().run([sys.executable, "-c", probe], tmp_path, timeout_s=30)
-    assert run.output.splitlines() == [f"kept None {tmp_path}", "齿轮 ✓"]
+    assert run.output.strip() == f"kept None {tmp_path}"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")

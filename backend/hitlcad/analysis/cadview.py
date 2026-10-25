@@ -79,8 +79,10 @@ def object_meshes(scene: trimesh.Scene) -> list[ObjectMesh]:
             continue
         name = scene.graph.transforms.parents[node] if mesh.metadata.get("from_gltf_primitive") else node
         material = getattr(mesh.visual, "material", None)
-        out.append(ObjectMesh(str(name), getattr(material, "name", None), _color(mesh),
-                              mesh.copy().apply_transform(transform)))  # fmt: skip
+        # Only its geometry, placed: its colour is read here, and a copy of its visual would copy the file's
+        # textures once per primitive (a glTF has one per B-rep face).
+        placed = trimesh.Trimesh(mesh.vertices, mesh.faces, process=False).apply_transform(transform)
+        out.append(ObjectMesh(str(name), getattr(material, "name", None), _color(mesh), placed))
     return out
 
 

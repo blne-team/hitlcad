@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 #: A wall's far side faces back within this angle; a ray that leaves through anything else crossed a
 #: corner, not a wall. This defines what wall thickness means, not a tolerance.
 WALL_EXIT_DEG = 60
+#: Rays × triangles cast at once. trimesh's ray engine holds every candidate (ray, triangle) pair of a cast,
+#: a few dozen bytes each: all 4000 rays through a 100k-triangle figurine at once took 8.6 GB.
+RAY_BATCH = 10_000_000
 
 
 def _fmt(p: Any) -> str:
@@ -45,7 +48,13 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> tuple[np.ndarray, np.
     (inf: not measured, where the ray left through a face not turned back towards it)."""
     points, faces = trimesh.sample.sample_surface_even(mesh, samples, seed=0)
     inward = -mesh.face_normals[faces]
-    hit, ray, location = mesh.ray.intersects_id(points, inward, return_locations=True, multiple_hits=True)
+    step = max(1, RAY_BATCH // len(mesh.faces))
+    casts = [(start, *mesh.ray.intersects_id(points[start : start + step], inward[start : start + step],
+                                             return_locations=True, multiple_hits=True))
+             for start in range(0, len(points), step)]  # fmt: skip
+    hit = np.concatenate([h for _, h, _, _ in casts])
+    ray = np.concatenate([start + r for start, _, r, _ in casts])
+    location = np.concatenate([at for _, _, _, at in casts])
     distance = np.linalg.norm(location - points[ray], axis=1)
     beyond_start = distance > trimesh.tol.planar
     hit, ray, distance = hit[beyond_start], ray[beyond_start], distance[beyond_start]

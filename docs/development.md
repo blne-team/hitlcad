@@ -86,7 +86,7 @@ What differs per platform is kept to the process boundaries, each with one rule:
 
 - **Text is UTF-8** across every boundary. Files name their encoding (ruff's PLW1514); hitlcad's own
   processes run in Python's UTF-8 mode (the extension starts the server with `PYTHONUTF8`, the hook
-  runs `-X utf8`, builds get `PYTHONUTF8`/`PYTHONIOENCODING`), and the `hitlcad` command, which
+  runs `-X utf8`, a build123d build `-X utf8`; Blender always does), and the `hitlcad` command, which
   hitlcad does not start, sets its streams itself.
 - **Builds** (`backends/executor.py`) are limited the same way everywhere: a deadline, and memory
   measured with psutil. Only how a process tree is held differs: a process group on POSIX, a job
