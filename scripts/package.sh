@@ -6,7 +6,7 @@
 #     hitlcad-<version>.vsix               the VS Code extension, with the panel UI
 #     constraints.txt                      the dependency versions tested here (from uv.lock)
 #     python-version                       the default Python (.python-version) the tool is installed on
-#     install.sh, INSTALL.md               how to install it
+#     install.sh, install.ps1, INSTALL.md  how to install it
 #   dist/hitlcad-<version>.tar.gz          the same folder, to share
 #
 # Usage: scripts/package.sh
@@ -37,7 +37,7 @@ echo "==> VS Code extension and panel UI"
 npm --prefix vscode-extension ci --no-audit --no-fund
 (cd vscode-extension && npm run compile && npx vsce package --no-dependencies --out "$out/$name.vsix")
 
-cp scripts/dist/install.sh INSTALL.md "$out/"
+cp scripts/dist/install.sh scripts/dist/install.ps1 INSTALL.md "$out/"
 chmod +x "$out/install.sh"
 tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
 

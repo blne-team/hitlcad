@@ -58,6 +58,8 @@ async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path)
     for rel in ("model.step", "mesh.stl", "view.json", "parts/base.step", "parts/lid.3mf", "model.3mf", "bom.csv"):
         assert (out / rel).is_file(), rel
     assert not (out / "model.blend").exists()  # no Blender part
+    # A part's glTF carries names and colours; not the PBR texture maps bd_warehouse gives its fasteners.
+    assert b'"images"' not in (out / "parts/insert.glb").read_bytes()
     rows = list(csv.DictReader((out / "bom.csv").open()))
     assert {r["name"]: int(r["quantity"]) for r in rows} == {"base": 1, "lid": 1, "insert": 4, "screw": 4}
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
@@ -109,11 +111,11 @@ async def test_floating_parts_and_broken_references(core: HitlCad, tmp_path: Pat
 async def test_errors_in_a_part_file_name_its_line_and_spare_the_others(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     edit(
-        folder / "parts/hardware.py", "def build(p, i):\n", "def build(p, i):\n    raise ValueError('no such insert')\n"
+        folder / "parts/hardware.py", "def build(p, i):\n", "def build(p, i):\n    raise ValueError('没有这种嵌件 ✗')\n"
     )
     report = await build(core, folder, tmp_path / "out")
     assert report.status == "failed"
-    assert "parts/hardware.py line 5, in build" in report.error and "ValueError: no such insert" in report.error
+    assert "parts/hardware.py line 5, in build" in report.error and "ValueError: 没有这种嵌件 ✗" in report.error
     assert [r.subject for r in report.results] == ["parts/hardware.py"]
 
 

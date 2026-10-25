@@ -41,7 +41,7 @@
       "Red collar with a gold tag",
       "Prints as three parts, glued together: body (with the neck peg and the tag), head (with the socket) and tail (standing on its flat root, which plugs into the rump)",
       "Every detail prints at any height: raised lines, bumps, the ears, the tag and the neck band are at least 1 mm (two perimeters and a quarter) across; a line designed under half that is left out (the toe lines below about 33 mm tall)",
-      "Configurations cover the parameter extremes: no_collar, plain, small (30 mm), large_detailed (250 mm, fine mesh, nearly closed mouth), tilted_left and tilted_right"
+      "Configurations cover the parameter extremes: no_collar, plain, small (30 mm), large_detailed (250 mm, fine mesh, a narrow mouth: nearer closed, its corners thin past the 0.8 mm wall), tilted_left and tilted_right"
     ],
     "assumptions": [
       "Decorative figurine, 175 mm tall, faces −Y",
@@ -298,7 +298,7 @@
     "large_detailed": {
       "height": 250,
       "detail": 0.5,
-      "mouth_open": 0.5
+      "mouth_open": 0.7
     },
     "tilted_left": {
       "head_tilt_deg": -25,

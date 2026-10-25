@@ -1,0 +1,39 @@
+name: VS Code
+description: >
+  Put the `code` command of the oldest VS Code the extension supports (its engines.vscode) on PATH, so the
+  release's installer runs as it does for a user.
+runs:
+  using: composite
+  steps:
+    - name: VS Code version
+      id: version
+      shell: bash
+      run: echo "version=$(node -p "require('./vscode-extension/package.json').engines.vscode.replace(/^\D*/, '')")" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: ~/vscode
+        key: vscode-${{ steps.version.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+    - name: Download VS Code
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        url="https://update.code.visualstudio.com/${{ steps.version.outputs.version }}"
+        mkdir -p ~/vscode && cd ~/vscode
+        case "$RUNNER_OS" in
+          Linux) curl --fail --location --silent --show-error "$url/linux-x64/stable" | tar -xz --strip-components=1 ;;
+          Windows)
+            curl --fail --location --silent --show-error --output vscode.zip "$url/win32-x64-archive/stable"
+            7z x -bd vscode.zip > /dev/null && rm vscode.zip ;;
+          macOS)
+            curl --fail --location --silent --show-error --output vscode.zip "$url/darwin-arm64/stable"
+            ditto -xk vscode.zip . && rm vscode.zip ;;
+        esac
+    - name: The code command on PATH
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          Windows) (cd ~/vscode/bin && pwd -W) >> "$GITHUB_PATH" ;; # pwd -W: Git Bash's Windows path
+          macOS) echo "$HOME/vscode/Visual Studio Code.app/Contents/Resources/app/bin" >> "$GITHUB_PATH" ;;
+          *) echo "$HOME/vscode/bin" >> "$GITHUB_PATH" ;;
+        esac

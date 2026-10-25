@@ -8,7 +8,7 @@ so a component built earlier is loaded the same way as one built now.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     import trimesh
 
     from hitlcad.analysis.base import ResultCache
+    from hitlcad.analysis.processes import Walls
 
 
 @dataclass(frozen=True)
@@ -368,12 +369,11 @@ class Body:
     def holes(self) -> list[Hole]:
         return [hole for leaf in self.leaves for hole in leaf.part.features.holes()]
 
-    def thinnest_wall(self) -> float | None:
+    @cached_property
+    def walls(self) -> Walls:
         from hitlcad.analysis.processes import wall_thickness
 
-        _, thickness = wall_thickness(self.mesh, self.settings.wall_samples)
-        measured = thickness[np.isfinite(thickness)]
-        return float(measured.min()) if len(measured) else None
+        return wall_thickness(self.mesh, self.settings.wall_samples)
 
     def mass_g(self) -> tuple[float | None, str]:
         """(grams, '') or (None, why it is unknown)."""
@@ -413,6 +413,7 @@ class BuildBodies:
         self.built = built
         self.settings = settings
         self.cache = cache
+        self._bodies: dict[tuple[str, str], Body] = {}
 
     @property
     def overlap_mm3(self) -> float:
@@ -422,15 +423,18 @@ class BuildBodies:
         """A requirement's number: as written, or the parameter or interface value it names."""
         return value if value is None or not isinstance(value, str) else float(self.built.nominal(value))
 
-    def _body(self, name: str, leaves: list[Leaf]) -> Body:
-        return Body(name, leaves, self.settings)
+    def _body(self, kind: str, name: str, leaves: Callable[[], list[Leaf]]) -> Body:
+        """One body per subject, so what is measured on it (its walls, a union) is measured once per build."""
+        if (kind, name) not in self._bodies:
+            self._bodies[kind, name] = Body(name, leaves(), self.settings)
+        return self._bodies[kind, name]
 
     def whole(self) -> Body:
-        return self._body(self.built.spec.name, self.built.leaves())
+        return self._body("whole", self.built.spec.name, self.built.leaves)
 
     def part(self, name: str) -> Body:
         """A part on its own, in its own frame (the way it is made)."""
-        return self._body(name, [Leaf(name, self.built.parts[name], self.built, fr.IDENTITY)])
+        return self._body("part", name, lambda: [Leaf(name, self.built.parts[name], self.built, fr.IDENTITY)])
 
     def subject(self, target: str | None) -> Body:
         if target is None:
@@ -440,7 +444,7 @@ class BuildBodies:
         return self.placed(target)
 
     def placed(self, address: str) -> Body:
-        return self._body(address, self.built.leaves_of(address))
+        return self._body("placed", address, lambda: self.built.leaves_of(address))
 
     def moved_gap(self, a: Body, b: Body) -> tuple[float, str, bool] | None:
         """The least gap between two bodies while a mate moves one against the other, as motion analysis

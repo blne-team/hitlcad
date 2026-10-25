@@ -45,11 +45,12 @@ MIN_WALL_MM = 0.8
 
 
 def feature_min(p, i):
-    """The narrowest detail in dog units at this scale: the thinnest wall that prints and a quarter more,
-    for the facets of a mesh. A raised line or bump is drawn at least this wide, a flat ear, the tag and
-    each half of the neck band at least this thick, and the lips are rounded to it; a line designed at
-    less than half of it is left out, since widening it further would blot the face."""
-    return 1.25 * MIN_WALL_MM / i.scale
+    """The narrowest detail in dog units at this scale: the thinnest wall that prints and half as much again,
+    for the facets of a mesh and where details meet the face at a slant. A raised line or bump (the tongue
+    too) is drawn at least this wide, a flat ear, the tag and each half of the neck band at least this
+    thick, and the lips are rounded to it; a line designed at less than half of it is left out, since
+    widening it further would blot the face."""
+    return 1.5 * MIN_WALL_MM / i.scale
 
 
 def glue_gap(p, i):

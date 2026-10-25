@@ -71,5 +71,25 @@ script refuses a mismatch), then push a matching tag:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-GitHub Actions (`.github/workflows/release.yml`) runs CI, builds the release and publishes it as a
-GitHub release with the `.tar.gz`, the wheel and the `.vsix` attached.
+GitHub Actions (`.github/workflows/release.yml`) runs CI, which builds the release and installs it on
+Linux, macOS and Windows, then publishes that same build as a GitHub release with the `.tar.gz`, the wheel
+and the `.vsix` attached.
+
+## Platforms
+
+CI runs the backend tests (with Blender) and the extension's on Linux, macOS and Windows, and installs
+the release package on each the way [INSTALL.md](../INSTALL.md) says, then builds an example with the
+installed tool, after running the release's own installer (`install.sh`, `install.ps1`) against the
+oldest VS Code the extension supports.
+
+What differs per platform is kept to the process boundaries, each with one rule:
+
+- **Text is UTF-8** across every boundary. Files name their encoding (ruff's PLW1514); hitlcad's own
+  processes run in Python's UTF-8 mode (the extension starts the server with `PYTHONUTF8`, the hook
+  runs `-X utf8`, a build123d build `-X utf8`; Blender always does), and the `hitlcad` command, which
+  hitlcad does not start, sets its streams itself.
+- **Builds** (`backends/executor.py`) are limited the same way everywhere: a deadline, and memory
+  measured with psutil. Only how a process tree is held differs: a process group on POSIX, a job
+  object on Windows.
+- **Agent hooks** are started without a shell where the agent allows it (Claude Code's `args`), and
+  otherwise quoted for the shell that runs them (`agents.command_line`: cmd.exe on Windows).

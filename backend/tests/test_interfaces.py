@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
+import sys
 import urllib.request
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -119,3 +122,13 @@ def test_the_context_hook_never_fails_the_prompt(monkeypatch: Any, capsys: Any) 
     monkeypatch.setattr(urllib.request, "urlopen", down)
     assert cli.main(["context", "--hook", "claude", "--server", "http://127.0.0.1:9"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_the_cli_writes_utf8_whatever_its_pipe_would_take(tmp_path: Path) -> None:
+    # PYTHONIOENCODING=ascii stands in, on every platform, for a pipe on Windows: its code page has no ✓.
+    folder = copy_design("shelf", tmp_path / "shelf")
+    copy_design("hinge", tmp_path / "hinge")  # a component of the shelf
+    run = subprocess.run([sys.executable, "-m", "hitlcad.cli", "build", str(folder), "--out", str(tmp_path / "out"),
+                          "--no-render"], capture_output=True, env={**os.environ, "PYTHONIOENCODING": "ascii"})  # fmt: skip
+    assert run.stderr == b""
+    assert "✓" in run.stdout.decode("utf-8")

@@ -1,4 +1,4 @@
-"""build123d entry point, run as `python -I entry.py <job.json>` in hitlcad's environment (cwd = work dir).
+"""build123d entry point, run as `python -I -B -u -X utf8 entry.py <job.json>` in hitlcad's environment (cwd = work dir).
 
 Modes: `plan` (interface values and placements) and `parts` (build part files, export each part in its
 own frame as STEP and STL, with its connector frames).
@@ -66,7 +66,10 @@ def _part(
     shape.label = name
     build123d.export_step(shape, str(out / step))
     build123d.export_stl(shape, str(out / stl), tolerance=tolerance["linear"], angular_tolerance=tolerance["angular"])
-    # After the STL, with its tolerances: the glTF reuses that triangulation, adding names and colours
+    # After the STL, with its tolerances: the glTF reuses that triangulation, adding names and colours. Not the
+    # shapes' own materials (hitlcad's come from design.json): their PBR texture maps would be most of the file.
+    for node in build123d.PreOrderIter(shape):
+        node.material = None
     build123d.export_gltf(shape, str(out / glb), binary=True, linear_deflection=tolerance["linear"],
                           angular_deflection=tolerance["angular"])  # fmt: skip
     return {"name": name, "mesh": stl, "step": step, "objects": glb, "connectors": frames, "catalog": catalog,

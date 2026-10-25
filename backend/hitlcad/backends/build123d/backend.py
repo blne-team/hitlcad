@@ -34,4 +34,5 @@ class Build123dBackend(SubprocessBackend):
         return files("hitlcad.backends.build123d").joinpath("guide.md").read_text(encoding="utf-8")
 
     def command(self, job_file: Path) -> list[str]:
-        return [self.python, "-I", str(self.entry), str(job_file)]
+        # Isolated, writing no bytecode, unbuffered (a stopped build's last words reach its log), in UTF-8 mode.
+        return [self.python, "-I", "-B", "-u", "-X", "utf8", str(self.entry), str(job_file)]

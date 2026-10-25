@@ -165,7 +165,7 @@ class WallCheck(_OnTarget):
     example = {"kind": "wall", "min": 2}
 
     def verify(self, build: BuildBodies) -> Verdict:
-        thinnest = self.subject(build).thinnest_wall()
+        thinnest = self.subject(build).walls.thinnest
         if thinnest is None:
             return None, "wall thickness not measurable: the mesh is not closed"
         minimum = build.number(self.min)
