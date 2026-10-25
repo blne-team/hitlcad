@@ -4,15 +4,15 @@ both connectors' features measure as declared (a gear cut to another module or t
 from __future__ import annotations
 
 from hitlcad.analysis.base import Context, label, pair, result, structural
-from hitlcad.analysis.model import PlacedFrame, StructureError
+from hitlcad.analysis.model import BuiltDesign, PlacedFrame, StructureError
 from hitlcad.core.report import Result
 from hitlcad.core.structure import _Relation
 
 
-def relation_pairs(ctx: Context, rel: _Relation) -> list[tuple[PlacedFrame, PlacedFrame]]:
+def relation_pairs(built: BuiltDesign, rel: _Relation) -> list[tuple[PlacedFrame, PlacedFrame]]:
     """One end with a single frame meets every frame of the other (a sun and its planets); two patterns pair
     one-to-one."""
-    a, b = ctx.built.frames(rel.a), ctx.built.frames(rel.b)
+    a, b = built.frames(rel.a), built.frames(rel.b)
     for end, frames, kind in ((rel.a, a, rel.joins[0]), (rel.b, b, rel.joins[1])):
         wrong = {f.spec.kind for f in frames} - {kind}
         if wrong:
@@ -30,7 +30,7 @@ class Relations:
         out = []
         for rel in ctx.built.spec.relations:
             try:
-                pairs = relation_pairs(ctx, rel)
+                pairs = relation_pairs(ctx.built, rel)
             except StructureError as e:
                 out.append(structural(rel.address, e, [rel.a, rel.b]))
                 continue

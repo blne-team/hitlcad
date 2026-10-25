@@ -36,7 +36,7 @@ from hitlcad.analysis.base import Context, ResultCache, label, result
 from hitlcad.analysis.coverage import Link, nested_links
 from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.interference import Allowance, allowed, beyond, boxes_touch, overlap
-from hitlcad.analysis.model import AnalysisSettings, BuiltDesign, Leaf, StructureError, gap
+from hitlcad.analysis.model import SEARCH_MM, WIDEN, AnalysisSettings, BuiltDesign, Leaf, StructureError, gap
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import ClearanceCheck
 from hitlcad.core.report import Result
@@ -46,7 +46,6 @@ from hitlcad.core.types import Model
 if TYPE_CHECKING:
     import manifold3d
 
-SEARCH_MM = 1.0  # how far past what a pair must keep its first gap measurement looks; widened when nothing is there
 _UNIT = 0.01  # of the driving motion, to read a driven turn by: `Axis.of` reads turns within ±180°
 
 
@@ -167,7 +166,7 @@ def _tracked(built: BuiltDesign) -> dict[frozenset[str], float]:
         try:
             a, b = (built.leaves_of(name) for name in check.between)
             need = float(built.nominal(check.min) if isinstance(check.min, str) else check.min or 0.0)
-        except (StructureError, KeyError):  # the requirement reports it
+        except StructureError:  # the requirement reports it
             continue
         for la in a:
             for lb in b:
@@ -321,9 +320,11 @@ class _Pair:
         return self.a.transform(self.dp.at(value)[:3, :]), b
 
     def key(self) -> list[object]:
+        """What its sweep depends on, once `_Sweep._at_rest` has kept it: its leaves where they sit, how they move,
+        the gap they must keep, and what they may share where they sit (what a mate allows)."""
         return [self.p.path, self.p.part.digest, np.round(self.p.transform, 6).tolist(), self.dp.key(), self.q.path,
                 self.q.part.digest, np.round(self.q.transform, 6).tolist(), self.dq.key() if self.dq else None,
-                self.need, self.tracked]  # fmt: skip
+                self.need, self.tracked, round(self.sitting_mm3, 6)]  # fmt: skip
 
 
 @dataclass
@@ -348,7 +349,10 @@ class _Sweep:
         self.turned: dict[tuple[object, ...], manifold3d.Manifold] = {}
 
     def run(self) -> Swept:
-        prepared = []
+        """The sweep, cached by the pairs it moves. Which pairs it moves, and what each may share where it sits,
+        follow from the mates' allowances (`overlap`, `fit` and the measured diameters); they are settled first,
+        outside the cache, so an edit to a mate's allowance sweeps again."""
+        prepared, settled = [], Swept()
         for kind, lo, hi, continuous in self.plan.ranges:
             drives, stuck = _drives(self.plan, kind)
             if stuck:
@@ -359,25 +363,26 @@ class _Sweep:
                 if continuous
                 else [*([hi] if hi > rest else []), *([lo] if lo < rest else [])]
             )
-            prepared.append((kind, rest, ends, self._pairs(drives, [end - rest for end in ends])))
+            pairs = self._at_rest(self._pairs(drives, [end - rest for end in ends]), settled)
+            prepared.append((kind, rest, ends, pairs))
         key = self.cache.key("motion", [[kind, rest, ends, [p.key() for p in pairs]] for kind, rest, ends, pairs in prepared],
                              self.settings.overlap_mm3, self.settings.mesh_tolerance_mm, self.tol.position_mm,
                              self.tol.motion_steps)  # fmt: skip
-        return Swept.model_validate(self.cache.get_or(key, lambda: self._swept(prepared).model_dump()))
+        swept = Swept.model_validate(self.cache.get_or(key, lambda: self._swept(prepared).model_dump()))
+        return swept.model_copy(update={
+            "resting": sorted(set(settled.resting)), "unmeasurable": sorted(set(settled.unmeasurable)),
+            "least": [least.model_copy(update={"complete": least.complete and not settled.unmeasurable})
+                      for least in swept.least],
+        })  # fmt: skip
 
     def _swept(self, prepared: list[tuple[str, float, list[float], list[_Pair]]]) -> Swept:
         out = Swept()
-        for kind, rest, ends, candidates in prepared:
-            pairs = [
-                p for p in self._at_rest(candidates, out) if self._shaped(p) and not self._clear_in_a_turn(p, kind)
-            ]
+        for kind, rest, ends, kept in prepared:
+            pairs = [p for p in kept if self._shaped(p) and not self._clear_in_a_turn(p, kind)]
             for end in ends:
                 if not out.stopped:
                     self._advance(kind, rest, end, pairs, out)
-        complete = not (out.stopped or out.unmeasurable)
-        out.least = [least.model_copy(update={"complete": complete}) for least in self.least.values()]
-        out.resting = sorted(set(out.resting))
-        out.unmeasurable = sorted(set(out.unmeasurable))
+        out.least = [least.model_copy(update={"complete": not out.stopped}) for least in self.least.values()]
         return out
 
     def _pairs(self, drives: dict[str, Drive], deltas: list[float]) -> list[_Pair]:
@@ -410,7 +415,7 @@ class _Sweep:
                 continue
             allowance = self.plan.world.ok_pairs.get(frozenset((pair.p.path, pair.q.path)))
             if shared <= self.settings.overlap_mm3 or (
-                allowance and not beyond(allowance, pair.p, pair.q, shared, self.settings)
+                allowance and not beyond(allowance, pair.p, pair.q, shared, self.settings, self.tol)
             ):
                 pair.sitting_mm3 = shared if shared > self.settings.overlap_mm3 else 0.0
                 keep.append(pair)
@@ -487,7 +492,7 @@ class _Sweep:
                     if t.search >= reach:
                         t.next = math.inf  # it cannot close the gap before the end
                         continue
-                    lower, t.search = t.search, min(t.search * 4, reach)
+                    lower, t.search = t.search, min(t.search * WIDEN, reach)
                 else:
                     lower = t.gap = found
                     if t.pair.tracked:
@@ -576,11 +581,8 @@ def _swept_bounds(leaf: Leaf, drive: Drive, deltas: list[float]) -> np.ndarray:
 
 
 def _axis_frame(axis: Axis) -> np.ndarray:
-    """The axis' own frame (3 × 4): X and Y across it, Z along it, the origin on it."""
-    z = axis.direction / np.linalg.norm(axis.direction)
-    u = np.cross(z, [1.0, 0.0, 0.0] if abs(z[0]) < 0.9 else [0.0, 1.0, 0.0])
-    u /= np.linalg.norm(u)
-    return np.column_stack([u, np.cross(z, u), z, axis.origin])
+    """The axis' own frame (3 × 4, as manifold3d takes it): X and Y across it, Z along it, the origin on it."""
+    return fr.on_axis(axis.origin, axis.direction)[:3]
 
 
 def _local(solid: manifold3d.Manifold, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

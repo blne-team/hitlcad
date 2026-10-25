@@ -89,7 +89,6 @@ changed for small models.
 
 **Checks no one has yet**
 
-- A material declared for a process it cannot be made by (PLA for CNC, sheet metal).
 - Printer build volume: the NAS case's front shell (249 × 251 mm) does not fit common
   250 × 210 mm beds.
 - Sheet metal: flange length, hole-to-bend distance, bend relief.

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -104,15 +103,14 @@ def _color(mesh: trimesh.Trimesh) -> str | None:
 
 
 def geometry(objects: list[ObjectMesh]) -> trimesh.Trimesh:
-    """Objects' meshes as one triangle mesh: their vertices merged (glTF repeats them where normals differ),
-    and the triangles that merging collapses dropped, as the analyses' meshes are."""
+    """Objects' meshes as one triangle mesh, cleaned as the analyses' meshes are (`mesh.clean`): glTF repeats
+    vertices where normals differ."""
     import trimesh
 
+    from hitlcad.analysis.mesh import clean
+
     whole = trimesh.util.concatenate([trimesh.Trimesh(o.mesh.vertices, o.mesh.faces, process=False) for o in objects])
-    mesh = trimesh.Trimesh(whole.vertices, whole.faces)
-    mesh.update_faces(mesh.nondegenerate_faces())
-    mesh.remove_unreferenced_vertices()
-    return mesh
+    return clean(trimesh.Trimesh(whole.vertices, whole.faces))
 
 
 def open_model(path: Path) -> list[tuple[str, Features]]:
@@ -230,20 +228,11 @@ def cached_view(source: Path, cache_dir: Path) -> Path:
 
 
 def quaternion(m: fr.Frame) -> tuple[float, float, float, float]:
-    """(x, y, z, w) of a rotation matrix, by Shepperd's method: stable for every rotation, half turns included."""
-    r = m[:3, :3]
-    trace = r[0, 0] + r[1, 1] + r[2, 2]
-    if trace > 0:
-        s = math.sqrt(trace + 1) * 2
-        return ((r[2, 1] - r[1, 2]) / s, (r[0, 2] - r[2, 0]) / s, (r[1, 0] - r[0, 1]) / s, s / 4)
-    if r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
-        s = math.sqrt(1 + r[0, 0] - r[1, 1] - r[2, 2]) * 2
-        return (s / 4, (r[0, 1] + r[1, 0]) / s, (r[0, 2] + r[2, 0]) / s, (r[2, 1] - r[1, 2]) / s)
-    if r[1, 1] > r[2, 2]:
-        s = math.sqrt(1 + r[1, 1] - r[0, 0] - r[2, 2]) * 2
-        return ((r[0, 1] + r[1, 0]) / s, s / 4, (r[1, 2] + r[2, 1]) / s, (r[0, 2] - r[2, 0]) / s)
-    s = math.sqrt(1 + r[2, 2] - r[0, 0] - r[1, 1]) * 2
-    return ((r[0, 2] + r[2, 0]) / s, (r[1, 2] + r[2, 1]) / s, s / 4, (r[1, 0] - r[0, 1]) / s)
+    """(x, y, z, w) of a rotation matrix, as the view takes it (trimesh's are (w, x, y, z))."""
+    import trimesh
+
+    w, x, y, z = trimesh.transformations.quaternion_from_matrix(m)
+    return x, y, z, w
 
 
 def _loc(m: fr.Frame) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:

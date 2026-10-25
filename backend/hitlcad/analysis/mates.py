@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from hitlcad.analysis import iso286
 from hitlcad.analysis.base import Context, label, pair, result, structural
 from hitlcad.analysis.model import PlacedFrame, StructureError
+from hitlcad.core import iso286
 from hitlcad.core.report import Result
 from hitlcad.core.structure import ROUND_KINDS, _Mate, symmetry_of
 
@@ -43,10 +43,11 @@ def fit_check(ctx: Context, mate: _Mate, fa: PlacedFrame, fb: PlacedFrame) -> tu
     if mate.fit.iso:
         basic = round((made_hole + made_shaft) / 2, 3)
         try:
-            (hole_hi, hole_lo), (shaft_hi, shaft_lo) = iso286.limits(mate.fit.iso, basic)
+            hole_limits, shaft_limits = iso286.limits(mate.fit.iso, basic)
         except ValueError as e:
             return False, f"fit {mate.fit.iso}: {e}", values
-        lo, hi = hole_lo - shaft_hi, hole_hi - shaft_lo
+        (hole_hi, hole_lo), (shaft_hi, shaft_lo) = hole_limits, shaft_limits
+        lo, hi = iso286.clearance(hole_limits, shaft_limits)
         values |= {"basic_mm": basic, "least_clearance_mm": lo, "greatest_clearance_mm": hi}
         ok = abs(clearance) <= slack
         detail = (f"fit {mate.fit.iso} at Ø{basic:g}: hole {_mm(hole_hi)}/{_mm(hole_lo)}, shaft {_mm(shaft_hi)}/"

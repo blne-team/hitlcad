@@ -226,7 +226,8 @@ of supply (bought or made elsewhere as one item) or scale.
 
 `configuration` picks one of the component's configurations; `bind` sets its parameters from this
 design's parameters or interface values, over that configuration. Each component is built as its
-own design with those values, cached by them, and kept in the build's `components/<name>/`. It
+own design with those values, cached by them (and by its backends' code, the materials it sees and the
+analyses that judged it), and kept in the build's `components/<name>/`. It
 exposes only what its `exports` name (`{"output": "carrier.output"}`); the parent mates to
 `tilt.output`, never inside. An export of a connector of a part placed several times is a pattern.
 A `flexible` component's internal mates take part in the parent's motion analysis; a rigid one
@@ -259,7 +260,7 @@ Optional fields:
   parts. An ISO fit's hole and shaft are modelled at one basic size, which the build checks, and its
   result gives the classes' limits there, for the drawing (`fit H7/g6 at Ø8: hole +0.015/0, shaft
   -0.005/-0.014, clearance 0.005 … 0.029 mm`). The limits come from ISO 286-1's tables, kept in
-  `analysis/iso286.py` and checked against every value ISO 286-2 tabulates: holes A … ZC and shafts
+  `core/iso286.py` and checked against every value ISO 286-2 tabulates: holes A … ZC and shafts
   a … zc in grades 1 to 18, at sizes above 0 up to 3150 mm, as far as the standard defines each; a
   class it does not define at the size fails the mate, saying what it does define. A mate that moves
   (revolute, slider, cylindrical) fails with a fit whose greatest clearance is 0 or less. A fit that allows interference lets the parts
@@ -430,7 +431,7 @@ motion slider moves.
 
 | Analysis | On | Reports |
 | --- | --- | --- |
-| Structure | design.json, the plan | unknown names and connectors, relations joining the wrong kinds, fasteners that are not catalog parts, unknown materials, parts declared but not placed, ground |
+| Structure | design.json, the plan | unknown names and connectors, relations joining the wrong kinds, fasteners that are not catalog parts, unknown materials, materials their parts' process cannot make, parts declared but not placed, ground |
 | Parts | each part | empty meshes, meshes that do not close a solid (manifold3d's test, the one volume, mass, overlaps and gaps all use), the kernel's validity check |
 | Connectors | each part | frame counts, measured features (holes, shafts, faces, gears; not datums) |
 | Mates | each pair of frames | residuals in what the type fixes, limits, fits |
@@ -442,7 +443,8 @@ motion slider moves.
 | Manufacturing | each made part, in its own frame | the process's checks: FDM (walls; overhangs, each region bridged between two supports up to `max_bridge_mm` or held at its edge, reported, not failed, with `supports`; bed contact, the base's outline against the part's seen from above and its height against the base's narrowest width, unless `brim`), resin (walls, hollows without a drain at least `min_drain_mm` across), CNC milling (inside corners against the tool, pocket depth against the cutter that finishes each corner, faces with no clear path up), sheet metal (thickness, the inside radius of each bend), injection molding (draft, undercuts along the pull, thick sections against the median wall); each failure lists where |
 | Requirements | as declared | pass, fail or unverified |
 
-Wall thickness (the process checks and the `wall` requirement) is measured once per body. At points
+Wall thickness (the process checks and the `wall` requirement) is measured once per body, and only on
+closed meshes: an open one has no inside to measure across, so its walls are not measured. At points
 spread evenly over the surface (`wall_samples`) it is the chord straight through the part to a face
 turned back within 60°, capped where that chord runs along a shell or meets a wall at a slant by the
 largest ball that fits the wall at the chord's middle (or, beside an edge, the narrowest line across
@@ -452,7 +454,8 @@ an area, is found, and one ray glancing off a crease is not. The taper of a knif
 meeting at under 60° (a hole leaving a chamfer), is no wall: a slicer rounds it off at any size.
 Rays and nearest points go through libigl's AABB tree. Inside corners and bends are read on the
 B-rep: an edge is concave by the normals there, turning about it as it runs in its first face, and
-faces meeting tangentially (a fillet's edges) make no corner; a bend is a pair of coaxial cylinders,
+faces meeting tangentially (a fillet's edges) make no corner; coaxial cylindrical faces of one radius are one
+wall (a hole a CAD exporter split into half-faces is one hole, not two corners); a bend is a pair of coaxial cylinders,
 inside r and outside r + the sheet, or a sharp concave edge with the sheet's other side behind both
 faces, so a cut-out's corners are not bends.
 

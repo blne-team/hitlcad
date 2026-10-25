@@ -23,6 +23,7 @@ import numpy as np
 
 from hitlcad.analysis import cadview
 from hitlcad.analysis.cadview import ObjectMesh
+from hitlcad.analysis.mesh import Probe
 from hitlcad.core import frames as fr
 from hitlcad.core.structure import Measured, Tolerances
 
@@ -88,6 +89,11 @@ class Features(ABC):
     @cached_property
     def mesh(self) -> trimesh.Trimesh:
         return self._load_mesh()
+
+    @cached_property
+    def probe(self) -> Probe:
+        """Rays and nearest points on its mesh."""
+        return Probe(self.mesh)
 
     @cached_property
     def objects(self) -> list[ObjectMesh]:
@@ -296,50 +302,44 @@ class BrepFeatures(Features):
         return out
 
     def _cylinders(self) -> list[tuple[InsideCorner, bool, tuple[Any, Any]]]:
-        """Each cylindrical face short of a full round hole: as a corner, whether it is convex (faces away from
+        """Each cylindrical wall short of a full round hole: as a corner, whether it is convex (faces away from
         its axis), and its axis (a point and a direction)."""
-        out = []
+        return [(InsideCorner(w.radius, tuple(_vec(w.axis.direction)), w.extent,
+                              tuple(_vec(w.faces[0].position_at(0.5, 0.5)))), not w.inward, (w.axis.position, w.axis.direction))
+                for w in self._walls if not (w.inward and w.full)]  # fmt: skip
+
+    @cached_property
+    def _walls(self) -> list[_Wall]:
+        """The cylindrical faces as round walls: coaxial faces of one radius facing the same way are one wall, so a
+        hole a CAD exporter split into half-faces is still one hole."""
+        groups: dict[tuple[float, tuple[float, ...], bool], list[Any]] = defaultdict(list)
         for face in self.shape.faces():
-            if face.geom_type.name != "CYLINDER":
-                continue
-            axis = face.axis_of_rotation
-            p = face.position_at(0.5, 0.5)
-            radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
-            convex = face.normal_at(p).dot(radial) >= 0
-            along = [(v.center() - axis.position).dot(axis.direction) for v in face.vertices()] or [0.0]
-            extent = max(along) - min(along)
-            if not convex and extent > 0 and face.area / (face.radius * extent) >= FULL_CIRCLE * 2 * math.pi:
-                continue  # a full round hole
-            corner = InsideCorner(face.radius, tuple(_vec(axis.direction)), extent, tuple(_vec(p)))
-            out.append((corner, convex, (axis.position, axis.direction)))
-        return out
+            if face.geom_type.name == "CYLINDER":
+                groups[(round(face_radius(face), 6), _axis_key(face.axis_of_rotation), _faces_axis(face))].append(face)
+        return [
+            _Wall(radius, faces[0].axis_of_rotation, inward, faces) for (radius, _, inward), faces in groups.items()
+        ]
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)
-        walls: dict[tuple[float, tuple[float, ...]], list[tuple[float, float, float]]] = defaultdict(list)
-        placed: dict[tuple[float, ...], tuple[float, float]] = {}  # each wall's axis: (offset, tilt) from the frame's
         reach = []  # extents along the axis of the coaxial faces of revolution: what leads from the origin to a feature
         for face in self.shape.faces():
             if face.geom_type.name not in REVOLVED:
                 continue
-            axis = face.axis_of_rotation
-            d = _vec(axis.direction)
-            offset, tilt = fr.distance_to_line(o, _vec(axis.position), d), min(fr.angle_deg(d, z), fr.angle_deg(d, -z))
+            offset, tilt = _off_axis(face.axis_of_rotation, o, z)
             ts = [fr.along(_vec(v.center()), o, z) for v in face.vertices()]
-            if not ts:
-                continue
-            if offset <= tol.position_mm and tilt <= tol.angle_deg:
+            if ts and offset <= tol.position_mm and tilt <= tol.angle_deg:
                 reach.append((min(ts), max(ts), 0.0))
-            if face.geom_type.name == "CYLINDER" and _faces_axis(face) == inward:
-                key = _axis_key(axis)
-                placed[key] = (offset, tilt)
-                walls[(round(face.radius, 6), key)].append((min(ts), max(ts), face.area))
-        found = [
-            _Found(2 * r, hi - lo, -hi if inward else lo, *placed[key], area / (2 * math.pi * r * (hi - lo)))
-            for (r, key), extents in walls.items()
-            for lo, hi, area in _touching(extents, tol.position_mm)
-            if hi > lo
-        ]
+        found = []
+        for wall in self._walls:
+            if wall.inward != inward:
+                continue
+            offset, tilt = _off_axis(wall.axis, o, z)
+            extents = [(min(ts), max(ts), face.area) for face in wall.faces
+                       if (ts := [fr.along(_vec(v.center()), o, z) for v in face.vertices()])]  # fmt: skip
+            found += [_Found(2 * wall.radius, hi - lo, -hi if inward else lo, offset, tilt,
+                             area / (2 * math.pi * wall.radius * (hi - lo)))
+                      for lo, hi, area in _touching(extents, tol.position_mm) if hi > lo]  # fmt: skip
         merged = _touching(reach, tol.position_mm)
 
         def leads(gap: float) -> bool:
@@ -368,20 +368,44 @@ class BrepFeatures(Features):
 
     @cached_property
     def _holes(self) -> list[Hole]:
-        from build123d import Vector
+        return [Hole(diameter=2 * w.radius, depth=w.extent) for w in self._walls if w.inward and w.full]
 
-        groups: dict[tuple[float, tuple[float, ...]], list] = defaultdict(list)
-        for face in self.shape.faces():
-            if face.geom_type.name == "CYLINDER" and _faces_axis(face):  # not a boss or a rounded outside corner
-                groups[(round(face.radius, 4), _axis_key(face.axis_of_rotation))].append(face)
-        holes = []
-        for (radius, key), faces in groups.items():
-            origin, direction = Vector(*key[3:]), Vector(*key[:3])
-            along = [(v.center() - origin).dot(direction) for f in faces for v in f.vertices()]
-            depth = max(along) - min(along)
-            if depth > 0 and sum(f.area for f in faces) / (radius * depth) >= FULL_CIRCLE * 2 * math.pi:
-                holes.append(Hole(diameter=2 * radius, depth=depth))
-        return holes
+
+@dataclass
+class _Wall:
+    """A round wall: coaxial cylindrical faces of one radius, facing their axis (a hole's) or away (a shaft's)."""
+
+    radius: float
+    axis: Any
+    inward: bool
+    faces: list[Any]
+
+    @cached_property
+    def extent(self) -> float:
+        """Its length along its axis."""
+        along = [(v.center() - self.axis.position).dot(self.axis.direction) for f in self.faces for v in f.vertices()]
+        return max(along, default=0.0) - min(along, default=0.0)
+
+    @property
+    def full(self) -> bool:
+        """Whether it goes round its axis: a round hole or shaft, not a fillet or a slot's end."""
+        area = sum(f.area for f in self.faces)
+        return self.extent > 0 and area / (self.radius * self.extent) >= FULL_CIRCLE * 2 * math.pi
+
+
+def face_radius(face: Any) -> float:
+    """A cylindrical or spherical face's radius, also where its surface is stored trimmed (as STEP exporters
+    often write it), where build123d's `Face.radius` is None."""
+    from OCP.BRepAdaptor import BRepAdaptor_Surface
+
+    surface = BRepAdaptor_Surface(face.wrapped)
+    return (surface.Cylinder() if face.geom_type.name == "CYLINDER" else surface.Sphere()).Radius()
+
+
+def _off_axis(axis: Any, o: np.ndarray, z: np.ndarray) -> tuple[float, float]:
+    """How far a face's axis lies from a frame's (its origin `o` and Z `z`), and how far it is turned from it."""
+    d = _vec(axis.direction)
+    return fr.distance_to_line(o, _vec(axis.position), d), min(fr.angle_deg(d, z), fr.angle_deg(d, -z))
 
 
 def _faces_axis(face: Any) -> bool:

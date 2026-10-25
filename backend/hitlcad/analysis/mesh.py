@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import igl
 import numpy as np
 import trimesh
 
@@ -15,11 +16,16 @@ if TYPE_CHECKING:
 
 
 def load_mesh(path: Path) -> trimesh.Trimesh:
-    """A mesh file, its vertices merged and its zero-area triangles (a mesher's apexes and seams) dropped, as
-    the solid it is (`solid`)."""
+    """A mesh file, cleaned (`clean`)."""
     mesh = trimesh.load(path, force="mesh", process=True)
     if not isinstance(mesh, trimesh.Trimesh):
         raise ValueError(f"{path.name} did not load as a triangle mesh")
+    return clean(mesh)
+
+
+def clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """A mesh with its vertices merged and its zero-area triangles (a mesher's apexes and seams) dropped, as the
+    solid it is (`solid`): what every analysis measures."""
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
     mesh.merge_vertices()
@@ -36,7 +42,7 @@ def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     shells = mesh.split(only_watertight=False)
     if len(shells) < 2 or not all(s.is_watertight for s in shells) or not _overlapping([s.bounds for s in shells]):
         return mesh
-    volumes = [_signed_volume(s) for s in shells]
+    volumes = [s.volume for s in shells]  # negative for a shell facing inwards
 
     def body(shell: trimesh.Trimesh, volume: float) -> manifold3d.Manifold:
         faces = shell.faces if volume > 0 else shell.faces[:, ::-1]
@@ -49,12 +55,6 @@ def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     whole = add - manifold3d.Manifold.batch_boolean(hollows, manifold3d.OpType.Add) if hollows else add
     out = whole.to_mesh()
     return trimesh.Trimesh(out.vert_properties[:, :3], out.tri_verts)
-
-
-def _signed_volume(shell: trimesh.Trimesh) -> float:
-    """A closed shell's volume, negative when it faces inwards: the sum of its triangles' signed tetrahedra."""
-    a, b, c = shell.triangles[:, 0], shell.triangles[:, 1], shell.triangles[:, 2]
-    return float(np.einsum("ij,ij->i", a, np.cross(b, c)).sum() / 6)
 
 
 def _overlapping(bounds: list[np.ndarray]) -> bool:
@@ -75,8 +75,8 @@ def closed(mesh: trimesh.Trimesh) -> manifold3d.Manifold | None:
     return None if solid.status() != manifold3d.Error.NoError or solid.is_empty() else solid
 
 
-def measure(mesh: trimesh.Trimesh, solid: manifold3d.Manifold | None) -> MeshMetrics:
-    """A part's mesh, and the solid it bounds (`closed`)."""
+def measure(mesh: trimesh.Trimesh, solid: manifold3d.Manifold | None, bodies: int) -> MeshMetrics:
+    """A part's mesh, the solid it bounds (`closed`), and its bodies as its representation counts them."""
     if mesh.is_empty:
         zero = (0.0, 0.0, 0.0)
         return MeshMetrics(bbox_min=zero, bbox_max=zero, size=zero, volume=None, surface_area=0.0,
@@ -89,7 +89,7 @@ def measure(mesh: trimesh.Trimesh, solid: manifold3d.Manifold | None) -> MeshMet
         volume=round(float(solid.volume()), 4) if solid else None,
         surface_area=round(float(mesh.area), 4),
         triangles=len(mesh.faces),
-        bodies=len(mesh.split(only_watertight=False)),
+        bodies=bodies,
         watertight=solid is not None,
         winding_consistent=bool(mesh.is_winding_consistent),
     )
@@ -115,3 +115,37 @@ def measure_union(bounds: np.ndarray, parts: list[MeshMetrics]) -> MeshMetrics:
 
 def _size(bounds: np.ndarray) -> tuple[float, float, float]:
     return tuple(round(float(v), 4) for v in bounds[1] - bounds[0])  # type: ignore[return-value]
+
+
+class Probe:
+    """Rays and nearest points on a mesh, through libigl's AABB tree of its triangles."""
+
+    def __init__(self, mesh: trimesh.Trimesh) -> None:
+        self.mesh = mesh
+        self.vertices = np.ascontiguousarray(mesh.vertices, dtype=np.float64)
+        self.faces = np.ascontiguousarray(mesh.faces, dtype=np.int64)
+        self.tree = igl.AABB()
+        self.tree.init(self.vertices, self.faces)
+        # rays start this far along their direction, off the face they start on
+        self.offset = 1e-6 * float(np.linalg.norm(mesh.extents))
+
+    def first_hit(self, origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Each ray's first face (-1: none) and how far from its origin it meets it."""
+        face, t, _ = self.tree.intersect_ray_first(self.vertices, self.faces, origins + directions * self.offset,
+                                                   directions)  # fmt: skip
+        return face, t + self.offset
+
+    def nearest(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Each point's distance to the surface, the face nearest it and the point on that face."""
+        squared, face, at = self.tree.squared_distance(self.vertices, self.faces, points)
+        return np.sqrt(squared), face, at
+
+    def entering(self, origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
+        """How far each ray runs from its origin to the first face it enters the part through (one facing against
+        it), past any it leaves through first; inf where it enters none."""
+        hits = self.tree.intersect_ray(self.vertices, self.faces, origins + directions * self.offset, directions)
+        out = np.full(len(origins), np.inf)
+        for k, (ray, direction) in enumerate(zip(hits, directions, strict=True)):
+            entered = [t for face, t, *_ in ray if self.mesh.face_normals[face] @ direction < 0]
+            out[k] = min(entered, default=np.inf) + self.offset
+        return out

@@ -103,10 +103,9 @@ class BuildPipeline:
         self.results_cache = ResultCache(settings.cache_dir / "results")
         self.components_dir = settings.cache_dir / "components"
         self._component_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self.analysis_settings = AnalysisSettings(
-            tolerances=settings.tolerances, overlap_mm3=settings.overlap_mm3,
-            mesh_tolerance_mm=settings.mesh_tolerance_mm, wall_samples=settings.wall_samples,
-        )  # fmt: skip
+        self.analysis_settings = AnalysisSettings(overlap_mm3=settings.overlap_mm3,
+                                                  mesh_tolerance_mm=settings.mesh_tolerance_mm,
+                                                  wall_samples=settings.wall_samples)  # fmt: skip
 
     # ------------------------------------------------------------------ entry points
 

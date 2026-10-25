@@ -101,6 +101,23 @@ def translation(v: Any) -> Frame:
     return m
 
 
+def across(directions: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Two unit vectors square to each of `directions` (n × 3, unit) and to each other: (u, v), with u × v along
+    the direction."""
+    u = np.cross(directions, np.where(np.abs(directions[:, :1]) < 0.9, [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]]))
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    return u, np.cross(directions, u)
+
+
+def on_axis(point: Any, direction: Any) -> Frame:
+    """A frame on a line: its origin at `point`, Z along `direction`, X and Y across it."""
+    z = _unit(direction)
+    (u,), (v,) = across(z[None])
+    m = np.eye(4)
+    m[:3, :4] = np.column_stack([u, v, z, np.asarray(point, dtype=float)])
+    return m
+
+
 def flip_x() -> Frame:
     """Half a turn about X: the frame a mating connector has when it faces this one."""
     return np.diag([1.0, -1.0, -1.0, 1.0])

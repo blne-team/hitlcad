@@ -26,12 +26,16 @@ Number = float | str
 AXES = {"x": 0, "y": 1, "z": 2}
 
 
-def _bounds(value: float, low: float | None, high: float | None, unit: str) -> Verdict:
-    need = " and ".join(
-        part for part in (f"≥ {low:g}" if low is not None else "", f"≤ {high:g}" if high is not None else "") if part
+def _need(low: float | None, high: float | None) -> str:
+    """'≥ 2 and ≤ 5': what bounds ask."""
+    return " and ".join(
+        p for p in (f"≥ {low:g}" if low is not None else "", f"≤ {high:g}" if high is not None else "") if p
     )
+
+
+def _bounds(value: float, low: float | None, high: float | None, unit: str) -> Verdict:
     ok = (low is None or value >= low) and (high is None or value <= high)
-    return ok, f"{value:.2f} {unit} (needs {need})"
+    return ok, f"{value:.2f} {unit} (needs {_need(low, high)})"
 
 
 class _Check(Model):
@@ -125,9 +129,8 @@ class MassCheck(_Bounded, _OnTarget):
 
     def verify(self, build: BuildBodies) -> Verdict:
         mass, unknown = self.subject(build).mass_g()
-        if unknown:
+        if mass is None:
             return None, f"mass unknown: {unknown}"
-        assert mass is not None
         return self.bounds(mass, build, "g")
 
 
@@ -165,9 +168,12 @@ class WallCheck(_OnTarget):
     example = {"kind": "wall", "min": 2}
 
     def verify(self, build: BuildBodies) -> Verdict:
-        thinnest = self.subject(build).walls.thinnest
-        if thinnest is None:
-            return None, "wall thickness not measurable: the mesh is not closed"
+        from hitlcad.analysis.features import Unmeasurable
+
+        try:
+            thinnest = self.subject(build).walls.thinnest
+        except Unmeasurable as e:
+            return None, f"wall thickness not measurable: {e}"
         minimum = build.number(self.min)
         return thinnest >= minimum, f"thinnest wall {thinnest:.2f} mm (needs ≥ {minimum:g})"
 
@@ -259,10 +265,8 @@ class StackCheck(_Bounded, _Check):
         low, high = nominal - worst, nominal + worst
         least, most = build.number(self.min), build.number(self.max)
         ok = (least is None or low >= least) and (most is None or high <= most)
-        need = " and ".join(p for p in (f"≥ {least:g}" if least is not None else "",
-                                         f"≤ {most:g}" if most is not None else "") if p)  # fmt: skip
         return ok, (f"{nominal:.3f} mm nominal, {low:.3f} … {high:.3f} worst case (± {worst:.3f}), ± {rss:.3f} RSS "
-                    f"over {len(self.tolerances)} parts (needs {need})")  # fmt: skip
+                    f"over {len(self.tolerances)} parts (needs {_need(least, most)})")  # fmt: skip
 
 
 RequirementCheck = Annotated[
@@ -310,7 +314,17 @@ class _Process(Model):
         return 0.0
 
 
-class FdmProcess(_Process):
+class _Printed(_Process):
+    """A printing process: printed holes come out smaller, and shafts larger, than modelled."""
+
+    hole_allowance_mm: float = Field(default=0.0, ge=0)
+    shaft_allowance_mm: float = Field(default=0.0, ge=0)
+
+    def allowance(self, feature: Literal["hole", "shaft"]) -> float:
+        return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
+
+
+class FdmProcess(_Printed):
     """FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
     Z): wall thickness, overhangs and bed contact. An overhang prints where it bridges between two supports
     no more than `max_bridge_mm` apart (the top of a horizontal hole is such a bridge) or lies within a
@@ -337,8 +351,6 @@ class FdmProcess(_Process):
     )
     supports: bool = Field(default=False, description="Printed with support under its overhangs")
     brim: bool = Field(default=False, description="Printed with a brim round its base")
-    hole_allowance_mm: float = Field(default=0.0, ge=0)
-    shaft_allowance_mm: float = Field(default=0.0, ge=0)
     example = {"process": "fdm", "hole_allowance_mm": 0.15}
 
     def checks(self, body: Body) -> list[ProcessFinding]:
@@ -346,11 +358,8 @@ class FdmProcess(_Process):
 
         return fdm_checks(body, self)
 
-    def allowance(self, feature: Literal["hole", "shaft"]) -> float:
-        return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
 
-
-class ResinProcess(_Process):
+class ResinProcess(_Printed):
     """Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and every hollow
     inside the part drained through an opening at least `min_drain_mm` across, or it traps uncured resin
     (Formlabs' design specifications ask for 3.5 mm). `hole_allowance_mm` / `shaft_allowance_mm` as for FDM."""
@@ -358,17 +367,12 @@ class ResinProcess(_Process):
     process: Literal["resin"]
     min_wall_mm: float = Field(default=0.6, gt=0, description="Thinnest wall that prints and survives washing")
     min_drain_mm: float = Field(default=3.5, gt=0, description="Narrowest opening resin drains out of a hollow by")
-    hole_allowance_mm: float = Field(default=0.0, ge=0)
-    shaft_allowance_mm: float = Field(default=0.0, ge=0)
     example = {"process": "resin", "min_wall_mm": 0.6}
 
     def checks(self, body: Body) -> list[ProcessFinding]:
         from hitlcad.analysis.processes import resin_checks
 
         return resin_checks(body, self)
-
-    def allowance(self, feature: Literal["hole", "shaft"]) -> float:
-        return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
 
 
 class CncMillingProcess(_Process):

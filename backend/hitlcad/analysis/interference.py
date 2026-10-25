@@ -24,6 +24,7 @@ from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result
+from hitlcad.core.structure import Tolerances
 
 if TYPE_CHECKING:
     import manifold3d
@@ -100,9 +101,11 @@ def _depth(piece: manifold3d.Manifold) -> float:
     mesh = piece.to_mesh()
     solid = trimesh.Trimesh(mesh.vert_properties[:, :3], mesh.tri_verts)
     across = float(trimesh.bounds.oriented_bounds(solid)[1].min())
-    walls = wall_thickness(solid, DEPTH_SAMPLES)
-    measured = walls.thin[: walls.even][walls.measured]
-    return min(across, float(np.median(measured))) if len(measured) else across
+    try:
+        walls = wall_thickness(solid, DEPTH_SAMPLES)
+    except Unmeasurable:
+        return across
+    return min(across, float(np.median(walls.thin[: walls.even][walls.measured])))
 
 
 class Interference:
@@ -128,7 +131,7 @@ class Interference:
                 if shared <= ctx.settings.overlap_mm3:
                     continue
                 allowance = ok_pairs.get(frozenset((a.path, b.path)))
-                excess = allowance and beyond(allowance, a, b, shared, ctx.settings)
+                excess = allowance and beyond(allowance, a, b, shared, ctx.settings, ctx.tol)
                 if allowance and not excess:
                     out.append(result(self.name, f"{a.path}+{b.path}", True, f"overlap {shared:.2f} mm³, expected: "
                                       f"{allowance.why}", [a.path, b.path], {"overlap_mm3": shared}, severity="info"))  # fmt: skip
@@ -143,9 +146,9 @@ class Interference:
         return out
 
 
-def beyond(allowance: Allowance, a: Leaf, b: Leaf, shared: float, settings: AnalysisSettings) -> str:
+def beyond(allowance: Allowance, a: Leaf, b: Leaf, shared: float, settings: AnalysisSettings, tol: Tolerances) -> str:
     """How an expected overlap of two leaves goes beyond what declares it, or '' when it does not."""
-    link, tol = allowance.link, settings.tolerances
+    link = allowance.link
     if allowance.kind in ("fit", "touch"):
         hole, shaft = (link.a, link.b) if link.a.spec.kind == "hole" else (link.b, link.a)
         d, big = hole.measured.values["diameter"], shaft.measured.values["diameter"]
@@ -182,7 +185,5 @@ def _axis_core(frame: fr.Frame, inserted: Leaf, radius: float) -> manifold3d.Man
     z = fr.z_axis(frame)
     along = (inserted.vertices - fr.origin(frame)) @ z
     lo, hi = float(along.min()), float(along.max())
-    u = np.cross(z, [1.0, 0.0, 0.0] if abs(z[0]) < 0.9 else [0.0, 1.0, 0.0])
-    u /= np.linalg.norm(u)
-    placed = np.column_stack([u, np.cross(z, u), z, fr.origin(frame) + lo * z])
-    return manifold3d.Manifold.cylinder(hi - lo, radius, radius, 16).transform(placed)
+    placed = fr.on_axis(fr.origin(frame) + lo * z, z)
+    return manifold3d.Manifold.cylinder(hi - lo, radius, radius, 16).transform(placed[:3])

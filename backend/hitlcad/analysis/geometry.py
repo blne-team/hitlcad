@@ -11,8 +11,8 @@ import re
 from typing import Any
 
 from hitlcad.analysis import cadview
+from hitlcad.analysis.features import face_radius
 
-TOPOS = {"faces": "face", "edges": "edge", "vertices": "vertex"}
 _REF = re.compile(r"^(face|edge|vertex)\s+(\d+)(?:\s+of\s+(\S+))?$", re.IGNORECASE)
 _PART = re.compile(r"^part\s+(\S+)$", re.IGNORECASE)
 _NUMBER = r"\s*(-?\d+(?:\.\d+)?)\s*"
@@ -53,8 +53,8 @@ def face_text(face: Any, details: dict[str, Any]) -> str:
         return f"Planar face, normal {fmt(n)}, area {face.area:.1f} mm²"
     label = f"{kind.title()} face"
     if kind in ("CYLINDER", "SPHERE"):
-        details["radius_mm"] = round(face.radius, 4)
-        label += f" r={face.radius:.2f} mm"
+        details["radius_mm"] = round(radius := face_radius(face), 4)
+        label += f" r={radius:.2f} mm"
     if kind in ("CYLINDER", "CONE", "TORUS"):
         axis = face.axis_of_rotation
         details["axis"] = {"point": vec(axis.position), "direction": vec(axis.direction, 4)}
@@ -89,7 +89,7 @@ def solid_text(part: Any, details: dict[str, Any]) -> str:
     bb = part.bounding_box()
     size, center = vec(bb.max - bb.min), vec((bb.min + bb.max) * 0.5)
     details.update(volume_mm3=round(part.volume, 3), area_mm2=round(part.area, 3), bbox=[vec(bb.min), vec(bb.max)],
-                   size=size, center=center, **{name: len(getattr(part, name)()) for name in ("solids", *TOPOS)})  # fmt: skip
+                   size=size, center=center, **{name: len(getattr(part, name)()) for name in ("solids", *cadview.TOPO_LISTS.values())})  # fmt: skip
     dims = " × ".join(f"{c:.2f}" for c in size)
     return f"Whole part, volume {part.volume:.1f} mm³, size {dims} mm, center {fmt(center)}"
 
@@ -160,12 +160,13 @@ class Resolver:
 def list_geometry(built: Any, target: str, kind: str = "faces") -> str:
     """Every face, edge or vertex of a part (its own frame: "part lid") or an instance (placed: "lid[0]"),
     numbered as picks and the measuring tool number them."""
-    if kind not in TOPOS:
-        raise ValueError(f"kind must be one of {', '.join(TOPOS)}")
+    topos = {plural: topo for topo, plural in cadview.TOPO_LISTS.items()}
+    if kind not in topos:
+        raise ValueError(f"kind must be one of {', '.join(topos)}")
     name, shape, _ = Resolver(built).resolve(target)
-    counts = ", ".join(f"{len(getattr(shape, k)())} {k}" for k in TOPOS)
+    counts = ", ".join(f"{len(getattr(shape, k)())} {k}" for k in topos)
     lines = [f"{name}: {counts}"]
-    topo = TOPOS[kind]
+    topo = topos[kind]
     lines += [f"  {topo} {i}: {DESCRIBE[topo](item, {})}" for i, item in enumerate(getattr(shape, kind)())]
     return "\n".join(lines)
 

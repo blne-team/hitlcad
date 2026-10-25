@@ -139,17 +139,19 @@ def parse(fit: str) -> tuple[str, str]:
     if not m:
         raise ValueError(f"{fit!r} is not an ISO 286 fit like 'H7/g6' (hole class / shaft class)")
     for cls in m.groups():
-        letter, grade = _split(cls)
-        if letter.lower() not in LETTERS or not 1 <= grade <= 18:
-            raise ValueError(f"{cls} is not an ISO 286 tolerance class; ISO 286 defines {SUPPORTED}")
+        _split(cls)
     return m.group(1), m.group(2)
 
 
 def _split(cls: str) -> tuple[str, int]:
+    """A tolerance class's (letter, grade); `ValueError` for one ISO 286 does not define."""
     m = _CLASS.match(cls)
     if not m:
         raise ValueError(f"{cls!r} is not an ISO 286 tolerance class like 'H7' or 'g6'")
-    return m.group(1), int(m.group(2))
+    letter, grade = m.group(1), int(m.group(2))
+    if letter.lower() not in LETTERS or not 1 <= grade <= 18:
+        raise ValueError(f"{cls} is not an ISO 286 tolerance class; ISO 286 defines {SUPPORTED}")
+    return letter, grade
 
 
 def _at(table: dict[int, float | None], size: float) -> float | None:
@@ -161,8 +163,6 @@ def deviations(cls: str, size_mm: float) -> tuple[float, float]:
     letter, grade = _split(cls)
     if not 0 < size_mm <= MAX_SIZE_MM:
         raise ValueError(f"Ø{size_mm:g} is outside ISO 286's sizes, above 0 up to {MAX_SIZE_MM} mm")
-    if letter.lower() not in LETTERS or not 1 <= grade <= 18:
-        raise ValueError(f"{cls} is not an ISO 286 tolerance class; ISO 286 defines {SUPPORTED}")
     if grade >= 14 and size_mm <= 1:
         raise ValueError(f"{cls}: grades IT14 to IT18 are not used at 1 mm or less")
     it = _at(IT, size_mm)[grade - 1]  # type: ignore[index]
@@ -226,7 +226,13 @@ def limits(fit: str, size_mm: float) -> tuple[tuple[float, float], tuple[float, 
     return deviations(hole, size_mm), deviations(shaft, size_mm)
 
 
+def clearance(hole: tuple[float, float], shaft: tuple[float, float]) -> tuple[float, float]:
+    """(least, greatest) diametral clearance in mm between a hole's and a shaft's (upper, lower) limit deviations;
+    negative is interference."""
+    (hole_hi, hole_lo), (shaft_hi, shaft_lo) = hole, shaft
+    return round(hole_lo - shaft_hi, 5), round(hole_hi - shaft_lo, 5)
+
+
 def fit_clearance(fit: str, size_mm: float) -> tuple[float, float]:
     """(least, greatest) diametral clearance in mm of `fit` at a basic size; negative is interference."""
-    (hole_hi, hole_lo), (shaft_hi, shaft_lo) = limits(fit, size_mm)
-    return round(hole_lo - shaft_hi, 5), round(hole_hi - shaft_lo, 5)
+    return clearance(*limits(fit, size_mm))

@@ -17,6 +17,8 @@ import trimesh
 from scipy.spatial import ConvexHull, cKDTree
 
 from hitlcad.analysis.features import Features, InsideCorner, Unmeasurable
+from hitlcad.analysis.mesh import Probe
+from hitlcad.core import frames as fr
 from hitlcad.core.checks import (
     CncMillingProcess,
     FdmProcess,
@@ -50,6 +52,12 @@ BALL_PRECISION = 0.01
 ACROSS = 8
 #: Knife edges are traced at points this share of the part's size apart.
 KNIFE_STEP = 1e-4
+#: A reading up to this many times a knife edge's wedge thickness near it is the wedge's taper: rays and balls
+#: meet a wedge's faces at a slant, so they read it somewhat thicker than straight across.
+KNIFE_SLACK = 1.25
+#: Samples within this many sample spacings of each other are one place: on an even sampling, neighbours lie
+#: about a spacing apart, and diagonal ones √2 spacings.
+LINK = 1.5
 #: A failure names this many places, the worst first.
 PLACES = 3
 
@@ -70,38 +78,14 @@ def _listed(places: list[str], one: str, many: str | None = None) -> str:
 logging.getLogger("trimesh.sample").setLevel(logging.ERROR)
 
 
-class Probe:
-    """Rays and nearest points on a mesh, through libigl's AABB tree of its triangles."""
-
-    def __init__(self, mesh: trimesh.Trimesh) -> None:
-        self.mesh = mesh
-        self.vertices = np.ascontiguousarray(mesh.vertices, dtype=np.float64)
-        self.faces = np.ascontiguousarray(mesh.faces, dtype=np.int64)
-        self.tree = igl.AABB()
-        self.tree.init(self.vertices, self.faces)
-        # rays start this far along their direction, off the face they start on
-        self.offset = 1e-6 * float(np.linalg.norm(mesh.extents))
-
-    def first_hit(self, origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Each ray's first face (-1: none) and how far from its origin it meets it."""
-        face, t, _ = self.tree.intersect_ray_first(self.vertices, self.faces, origins + directions * self.offset,
-                                                   directions)  # fmt: skip
-        return face, t + self.offset
-
-    def nearest(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Each point's distance to the surface, the face nearest it and the point on that face."""
-        squared, face, at = self.tree.squared_distance(self.vertices, self.faces, points)
-        return np.sqrt(squared), face, at
-
-
 # --------------------------------------------------------------------------- walls
 
 
 @dataclass(frozen=True)
 class Walls:
     """Wall thickness over a part's surface, at points spread evenly over it (the first `even`, `spacing` mm
-    apart) and then at points sampled densely round the thinnest of them (inf: not measured, where the part is
-    not closed). Each point reads, of the NEIGHBOURS samples nearest it, the AGREE-th thinnest (`thin`) and
+    apart) and then at points sampled densely round the thinnest of them (inf: not measured, where no line
+    through the part leaves by a wall). Each point reads, of the NEIGHBOURS samples nearest it, the AGREE-th thinnest (`thin`) and
     the AGREE-th thickest (`thick`): the thickness at least AGREE of them go under, or over. The thinnest
     wall, `thinnest`, is at `at`."""
 
@@ -110,8 +94,8 @@ class Walls:
     thick: np.ndarray
     even: int
     spacing: float
-    thinnest: float | None
-    at: np.ndarray | None
+    thinnest: float
+    at: np.ndarray
 
     @property
     def measured(self) -> np.ndarray:
@@ -124,14 +108,15 @@ class Walls:
         index = np.flatnonzero(where)
         worst = np.argmax if thickest else np.argmin
         picks = [
-            index[group[worst(readings[index[group]])]] for group in _groups(self.points[index], 1.5 * self.spacing)
+            index[group[worst(readings[index[group]])]] for group in _groups(self.points[index], LINK * self.spacing)
         ]
         picks.sort(key=lambda i: readings[i], reverse=thickest)
         return [f"{readings[i]:.2f} mm at {_fmt(self.points[i])}" for i in picks]
 
 
 def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
-    """The part's walls at `samples` points spread evenly over its surface, and densely round the thinnest."""
+    """The walls of a closed mesh at `samples` points spread evenly over its surface, and densely round the
+    thinnest; `Unmeasurable` where no line through it leaves by a wall."""
     probe = Probe(mesh)
     points, faces = trimesh.sample.sample_surface_even(mesh, samples, seed=0)
     normals = mesh.face_normals[faces]
@@ -153,7 +138,7 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
     thin = np.sort(nearby, axis=1)[:, AGREE - 1]
     thick = np.sort(np.where(np.isfinite(nearby), nearby, -np.inf), axis=1)[:, -AGREE]  # of those measured
     if not np.isfinite(thin).any():
-        return Walls(points, thin, thick, even, spacing, None, None)
+        raise Unmeasurable("no line through it leaves by a wall: it has no wall to measure")
     thinnest = int(np.argmin(thin))
     return Walls(points, thin, thick, even, spacing, float(thin[thinnest]), points[thinnest])
 
@@ -170,7 +155,7 @@ def _at_knife_edge(mesh: trimesh.Trimesh, points: np.ndarray, readings: np.ndarr
     along = [np.linspace(a, b, int(np.ceil(np.linalg.norm(b - a) / step)) + 1) for a, b in ends]
     distance, nearest = cKDTree(np.concatenate(along)).query(points)
     wedge = 2 * np.tan((math.pi - np.repeat(mesh.face_adjacency_angles[knife], [len(x) for x in along])) / 2)
-    return readings <= 1.25 * wedge[nearest] * (distance + step)
+    return readings <= KNIFE_SLACK * wedge[nearest] * (distance + step)
 
 
 def _thickness(probe: Probe, points: np.ndarray, inward: np.ndarray) -> np.ndarray:
@@ -207,9 +192,7 @@ def _across(probe: Probe, points: np.ndarray, chords: np.ndarray) -> np.ndarray:
     """The narrowest the part is through each point across its chord: of ACROSS lines through it,
     perpendicular to the chord and evenly turned, the shortest between two faces turned away from each other
     (a line through a corner leaves through two faces at an angle)."""
-    u = np.cross(chords, np.where(np.abs(chords[:, 2:]) < 0.9, [[0, 0, 1.0]], [[1.0, 0, 0]]))
-    u /= np.linalg.norm(u, axis=1, keepdims=True)
-    v = np.cross(chords, u)
+    u, v = fr.across(chords)
     widths = []
     for angle in np.arange(ACROSS) * math.pi / ACROSS:
         line = math.cos(angle) * u + math.sin(angle) * v
@@ -250,7 +233,10 @@ def _around(
         vertices, triangles, index = trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces[near], radius,
                                                                       return_index=True)  # fmt: skip
         patch = trimesh.Trimesh(vertices, triangles, process=False)
-        keep = np.flatnonzero(np.linalg.norm(patch.triangles_center - centre, axis=1) <= 1.5 * radius)
+        # a triangle no longer than the radius that reaches into the circle has its centre within radius / √3 more
+        keep = np.flatnonzero(
+            np.linalg.norm(patch.triangles_center - centre, axis=1) <= radius * (1 + 1 / math.sqrt(3))
+        )
         patch = patch.submesh([keep], append=True)
         at, face = trimesh.sample.sample_surface_even(patch, int(min(PATCH, np.ceil(patch.area / step**2))), seed=0)
         inside = np.linalg.norm(at - centre, axis=1) <= radius
@@ -307,21 +293,27 @@ def _spacing(body: Body) -> float:
     return math.sqrt(body.mesh.area / body.settings.wall_samples)
 
 
+def _on_bed(body: Body, mesh: trimesh.Trimesh) -> np.ndarray:
+    """Whether each face of `mesh` (the body's surface, or a finer split of it) lies on the bed or the machine
+    table: none of it higher than the body's lowest point by more than the mesh's chordal deviation, which is
+    how far the facets of a flat base can lie off the face they stand for."""
+    return mesh.triangles[:, :, 2].max(axis=1) <= body.mesh.bounds[0][2] + body.settings.mesh_tolerance_mm
+
+
 # --------------------------------------------------------------------------- FDM
 
 
 def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
-    if body.mesh.is_empty:
-        return []
     walls = _walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))
     return [walls, _fdm_overhangs(body, rules), _fdm_bed(body, rules)]
 
 
 def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | None = None) -> ProcessFinding:
     """No wall thinner than `minimum`; under `cannot` (a size and what it is), the wall does not form at all."""
-    walls = body.walls
-    if walls.thinnest is None:
-        return ProcessFinding(name=name, passed=None, detail="not measurable: the mesh is not closed")
+    try:
+        walls = body.walls
+    except Unmeasurable as e:
+        return _unverified(name, e)
     value = walls.thinnest
     if value >= minimum:
         return ProcessFinding(name=name, passed=True, detail=f"thinnest wall {value:.2f} mm (minimum {minimum:g} mm)")
@@ -336,16 +328,12 @@ def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | No
                                  f"({f'{share:.0%}' if share >= 0.01 else 'under 1%'} of the surface)")  # fmt: skip
 
 
-def _on_bed(mesh: trimesh.Trimesh, tolerance: float) -> np.ndarray:
-    return mesh.triangles[:, :, 2].max(axis=1) <= mesh.bounds[0][2] + tolerance
-
-
 def _fdm_overhangs(body: Body, rules: FdmProcess) -> ProcessFinding:
     """Faces turned down more steeply than the steepest overhang print only on what holds them: a bridge between
     two supports up to `max_bridge_mm` long (the top of a horizontal hole is one), an edge within a nozzle's
     width of what is under it, or else support."""
     mesh, tolerance = body.mesh, body.settings.mesh_tolerance_mm
-    on_bed = _on_bed(mesh, tolerance)
+    on_bed = _on_bed(body, mesh)
     steep = (mesh.face_normals[:, 2] < -math.sin(math.radians(rules.max_overhang_deg))) & ~on_bed
     angle = f"more than {rules.max_overhang_deg:g}° from vertical"
     if rules.supports:
@@ -408,8 +396,8 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
     """It stands on its flat base on the bed: a base that covers enough of its outline seen from above, and is
     wide enough for its height (or a brim holds it)."""
     mesh = body.mesh
-    flat_down = mesh.face_normals[:, 2] < -math.cos(math.radians(body.settings.tolerances.angle_deg))
-    contact = flat_down & _on_bed(mesh, body.settings.mesh_tolerance_mm)
+    flat_down = mesh.face_normals[:, 2] < -math.cos(math.radians(body.tolerances.angle_deg))
+    contact = flat_down & _on_bed(body, mesh)
     if not contact.any():
         lowest = mesh.vertices[np.argmin(mesh.vertices[:, 2])]
         return ProcessFinding(name="fdm_bed_contact", passed=False,
@@ -443,13 +431,13 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
 
 
 def resin_checks(body: Body, rules: ResinProcess) -> list[ProcessFinding]:
-    if body.mesh.is_empty:
-        return []
     return [_walls(body, "resin_wall_thickness", rules.min_wall_mm), _resin_drains(body, rules)]
 
 
 #: Most grid points resin drains are traced on; a larger part is traced on a coarser grid.
 DRAIN_GRID = 2_000_000
+#: Grid steps across the narrowest drain, at least: what a drain's width is traced to.
+DRAIN_STEPS = 8
 
 
 def _resin_drains(body: Body, rules: ResinProcess) -> ProcessFinding:
@@ -461,7 +449,7 @@ def _resin_drains(body: Body, rules: ResinProcess) -> ProcessFinding:
     mesh, drain = body.mesh, rules.min_drain_mm
     sealed = [shell for shell in mesh.split(only_watertight=False) if shell.is_watertight and shell.volume < 0]
     lo, hi = mesh.bounds[0] - drain, mesh.bounds[1] + drain
-    step = max(drain / 8, float(np.prod(hi - lo) / DRAIN_GRID) ** (1 / 3))
+    step = max(drain / DRAIN_STEPS, float(np.prod(hi - lo) / DRAIN_GRID) ** (1 / 3))
     axes = [np.arange(a, b + step, step) for a, b in zip(lo, hi, strict=True)]
     grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
     probe = Probe(mesh)
@@ -516,13 +504,11 @@ def _corners(corners: list[InsideCorner], what: Callable[[InsideCorner], str], o
 
 
 def cnc_milling_checks(body: Body, rules: CncMillingProcess) -> list[ProcessFinding]:
-    mesh, tol = body.mesh, body.settings.tolerances
+    mesh, tol = body.mesh, body.tolerances
     # A cutter from +Z reaches a face only along a clear path up from it: not one facing down (the top of a
     # horizontal hole), nor one under an overhang. The bottom is the face the part is held by.
     split = _split(mesh, _spacing(body))
-    bottom = (split.face_normals[:, 2] < 0) & (
-        split.triangles[:, :, 2].max(axis=1) <= mesh.bounds[0][2] + tol.position_mm
-    )
+    bottom = (split.face_normals[:, 2] < 0) & _on_bed(body, split)
     hidden = [r for r in _regions(split, ~_open(Probe(mesh), split, (0, 0, 1)) & ~bottom)
               if split.area_faces[r].sum() > rules.ignored_area_mm2]  # fmt: skip
     setups = ProcessFinding(name="cnc_setups", passed=not hidden,
@@ -566,9 +552,10 @@ def cnc_milling_checks(body: Body, rules: CncMillingProcess) -> list[ProcessFind
 
 
 def sheet_metal_checks(body: Body, rules: SheetMetalProcess) -> list[ProcessFinding]:
-    walls = body.walls
-    if walls.thinnest is None:
-        thickness = ProcessFinding(name="sheet_thickness", passed=None, detail="not measurable: the mesh is not closed")
+    try:
+        walls = body.walls
+    except Unmeasurable as e:
+        thickness = _unverified("sheet_thickness", e)
     else:
         median = float(np.median(walls.thin[: walls.even][walls.measured]))
         off = np.abs(walls.thin - rules.thickness_mm) > rules.thickness_tolerance_mm
@@ -579,7 +566,7 @@ def sheet_metal_checks(body: Body, rules: SheetMetalProcess) -> list[ProcessFind
                                           + ("" if ok else f"; off the sheet's thickness "
                                              f"in {_listed(walls.places(walls.thin, off), 'place')}"))  # fmt: skip
     try:
-        bends = _features(body).bends(rules.thickness_mm, rules.thickness_tolerance_mm, body.settings.tolerances)
+        bends = _features(body).bends(rules.thickness_mm, rules.thickness_tolerance_mm, body.tolerances)
     except Unmeasurable as e:
         return [thickness, _unverified("sheet_bend_radius", e)]
     sharp = [b for b in bends if b.radius == 0]
@@ -645,9 +632,10 @@ def _molding_undercuts(body: Body, rules: InjectionMoldingProcess) -> ProcessFin
 
 def _molding_walls(body: Body, rules: InjectionMoldingProcess) -> ProcessFinding:
     """Walls stay within `max_wall_ratio` of the typical (median) wall; thicker sections cool late, sink and warp."""
-    walls = body.walls
-    if walls.thinnest is None:
-        return ProcessFinding(name="molding_walls", passed=None, detail="not measurable: the mesh is not closed")
+    try:
+        walls = body.walls
+    except Unmeasurable as e:
+        return _unverified("molding_walls", e)
     median = float(np.median(walls.thin[: walls.even][walls.measured]))
     limit = rules.max_wall_ratio * median
     measured = np.isfinite(walls.thick)

@@ -259,6 +259,41 @@ async def test_motion_finds_what_the_paddle_meets_between_any_two_positions(core
     assert motion.status == "unverified" and "paddle and base already overlap by 1.5" in motion.detail
 
 
+PRESSED = {
+    "design.json": {
+        "hitlcad": 2, "name": "Pressed", "backend": "build123d", "ground": "base",
+        "parts": {"base": {"role": "a plate with a Ø4 hole", "file": "parts/pressed.py", "material": "PLA",
+                           "connectors": {"hole": {"kind": "frame"}}},
+                  "knob": {"role": "a Ø4.2 pin with an arm, turning in the hole", "file": "parts/pressed.py",
+                           "material": "PLA", "connectors": {"pin": {"kind": "frame"}}}},
+        "mates": [{"type": "revolute", "a": "base.hole", "b": "knob.pin"}],
+    },
+    "parts/pressed.py": """from build123d import Align, Box, Cylinder, Pos, Rot
+
+LOW = (Align.CENTER, Align.CENTER, Align.MIN)
+
+
+def build(p, i):
+    base = Box(30, 30, 4, align=LOW) - Cylinder(2, 4, align=LOW)
+    knob = Cylinder(2.1, 5, align=LOW) + Pos(5, 0, 4.5) * Box(14, 2, 2, align=LOW)
+    return {"base": (base, {"hole": Pos(0, 0, 4)}), "knob": (knob, {"pin": Pos(0, 0, 4) * Rot(180, 0, 0)})}
+""",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'base': [Pos()], 'knob': [Pos()]}\n",
+}  # fmt: skip
+
+
+async def test_a_mate_s_allowance_reaches_the_motion_it_moves(core: HitlCad, tmp_path: Path) -> None:
+    """The sweep is cached by what it moves; what a mate allows its parts to share where they sit changes that."""
+    folder = write_design(tmp_path / "pressed", PRESSED)
+    report = await build(core, folder, tmp_path / "a")
+    (motion,) = results(report, "motion")
+    assert motion.status == "unverified" and "knob and base already overlap" in motion.detail, motion.detail
+    edit_json(folder / "design.json", lambda d: d["mates"][0].update(overlap=True))  # the pin is pressed in
+    report = await build(core, folder, tmp_path / "b")
+    (motion,) = results(report, "motion")
+    assert motion.status == "pass" and "moves through a full turn without collision" in motion.detail, motion.detail
+
+
 async def test_a_turn_past_a_part_that_cannot_be_measured_is_not_called_clear(core: HitlCad, tmp_path: Path) -> None:
     # A Blender cube with a face deleted, in the paddle's way, and the pin low enough to pass under it
     post = "import bmesh\nimport bpy\n\n\ndef build(p, i):\n    bpy.ops.mesh.primitive_cube_add(size=1, location=(18, 3, 6))\n" \

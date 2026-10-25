@@ -24,7 +24,7 @@ import numpy as np
 from hitlcad.analysis import cadview
 from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.geometry import vec
-from hitlcad.analysis.model import BuiltDesign, Leaf, StructureError
+from hitlcad.analysis.model import BuiltDesign, Leaf
 from hitlcad.analysis.selection import connector_of, leaf_of, topology
 from hitlcad.core import frames as fr
 from hitlcad.core.types import ComponentRef, Pick, Vec
@@ -114,14 +114,12 @@ def _carry_instance(old: Leaf, new: Leaf, ref: ComponentRef, local: Vec) -> Pick
 def _carry_point(
     old: BuiltDesign, new: BuiltDesign, pick: Pick, instance: str, settings: AnchorSettings
 ) -> Pick | None:
-    import trimesh
-
     try:
         before, after = leaf_of(old, instance), leaf_of(new, instance)
-    except (StructureError, LookupError):
+    except LookupError:
         return None
     local = _to(np.linalg.inv(before.transform), pick.point)
-    closest, distance, _ = trimesh.proximity.closest_point(after.part.mesh, [local])
+    distance, _, closest = after.part.features.probe.nearest(np.array([local]))
     reach = settings.reach * float(math.dist(*after.part.mesh.bounds))
     if float(distance[0]) > reach:
         return None
@@ -139,7 +137,7 @@ def carry(old: BuiltDesign, new: BuiltDesign, picks: list[tuple[Pick, str | None
             continue
         try:
             before, after = leaf_of(old, ref.instance), leaf_of(new, ref.instance)
-        except (StructureError, LookupError):
+        except LookupError:
             out.append(None)
             continue
         local = _to(np.linalg.inv(before.transform), pick.point)

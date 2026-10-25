@@ -1,6 +1,7 @@
 """Structure: what design.json declares refers to what exists. Every mate, relation and fastener end names a
 declared part's connector or a component's export, relations join the connector kinds they need,
-fasteners are catalog parts, materials are in the registry, and assembly.py places what is declared.
+fasteners are catalog parts, materials are in the registry and suit their parts' processes, and assembly.py
+places what is declared.
 
 It needs no geometry, so it also runs alone, right after the plan, as the agent's plan check
 (`build_design(scope="structure")`).
@@ -86,6 +87,11 @@ def structure_results(design: DesignSpec, placed: Iterable[str], exports: dict[s
         if part.material and part.material not in materials:
             out.append(result(NAME, name, False, f"material {part.material!r} is not in the material registry "
                               f"(add it to a materials.json)", [name]))  # fmt: skip
+        process = design.process(name)
+        if part.material in materials and process and process.process not in materials[part.material].processes:
+            suits = ", ".join(materials[part.material].processes) or "no process"
+            out.append(result(NAME, name, False, f"{name} is {part.material}, which {process.process} cannot make "
+                              f"({part.material} suits {suits}): change its material or its process", [name]))  # fmt: skip
         if part.catalog is None and part.material is None:
             out.append(result(NAME, name, False, f"{name} is made but has no material: mass and thread engagement "
                               "cannot be judged", [name], severity="warning"))  # fmt: skip

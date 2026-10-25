@@ -63,3 +63,14 @@ def test_placement_ground_and_materials_are_checked() -> None:
 def test_a_sound_structure_has_nothing_to_say() -> None:
     ok = spec(mates=[{"type": "rigid", "a": "a.top", "b": "b.bottom"}, {"type": "rigid", "a": "a.top", "b": "sub.out"}])
     assert details(structure_results(ok, ["a", "b", "nut", "sub"], {"sub": {"out": "x.y"}}, materials.builtin())) == []
+
+
+def test_a_material_must_suit_its_part_s_process() -> None:
+    milled = spec(manufacturing={"process": "cnc_milling"},
+                  parts={"a": {"role": "x", "file": "parts/a.py", "material": "PLA"},
+                         "b": {"role": "y", "file": "parts/a.py", "material": "aluminium_6061"},
+                         "c": {"role": "z", "file": "parts/a.py", "material": "PLA",
+                               "manufacturing": {"process": "fdm"}}})  # fmt: skip
+    assert details(structure_results(milled, ["a", "b", "c", "sub"], {}, materials.builtin())) == [
+        "a: a is PLA, which cnc_milling cannot make (PLA suits fdm): change its material or its process"
+    ]

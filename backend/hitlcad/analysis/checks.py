@@ -67,9 +67,9 @@ class Manufacturing:
 
     def run(self, ctx: Context) -> list[Result]:
         out = []
-        for name in ctx.built.parts:
+        for name, part in ctx.built.parts.items():
             process = ctx.built.spec.process(name)
-            if process is None:
+            if process is None or part.mesh.is_empty:  # an empty part fails as a part
                 continue
             for finding in process.checks(ctx.bodies.part(name)):
                 out.append(result(self.name, f"{name}: {finding.name}", finding.passed, finding.detail, [name],
@@ -88,7 +88,7 @@ class Requirements:
                 continue
             try:
                 passed, detail = req.check.verify(ctx.bodies)
-            except (StructureError, KeyError) as e:
+            except StructureError as e:
                 passed, detail = False, f"{e}"
             out.append(result(self.name, req.text, passed, detail, req.check.targets()))
         return out
