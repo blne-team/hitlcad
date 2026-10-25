@@ -7,6 +7,7 @@ import { Api } from "./api";
 import { registerCommands } from "./commands";
 import { DesignUiHub } from "./designUi";
 import { DesignInspector, INSPECTOR_VIEW } from "./inspector";
+import { DESIGN_FILE, PROJECT_DESIGNS } from "./lib/designLookup";
 import { isHitlcadPyproject } from "./lib/serverCommand";
 import { MODEL_VIEW_TYPE, ModelViewerProvider } from "./modelViewer";
 import { DesignPanels } from "./panels";
@@ -14,12 +15,10 @@ import { config, ServerManager, serverUrl } from "./server";
 import { registerStatusBar } from "./statusBar";
 import { SelectionStore } from "./webview";
 
-let server: ServerManager | null = null;
-
 export function activate(ctx: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("hitlcad");
   const api = new Api(serverUrl);
-  server = new ServerManager(api, output, ctx.extension.packageJSON.version as string);
+  const server = new ServerManager(api, output, ctx.extension.packageJSON.version as string);
   const selections = new SelectionStore();
   const hub = new DesignUiHub(() => inspector.reveal());
   const inspector = new DesignInspector(hub, ctx.extensionUri);
@@ -34,9 +33,6 @@ export function activate(ctx: vscode.ExtensionContext): void {
   );
 
   registerCommands(ctx, { api, server, panels, selections });
-  const activity = new ActivityWatcher(serverUrl, (build) => void onBuild(build, panels));
-  ctx.subscriptions.push(activity);
-  activity.start();
   registerStatusBar(ctx);
   ctx.subscriptions.push(
     vscode.window.registerCustomEditorProvider(MODEL_VIEW_TYPE, new ModelViewerProvider(server, selections, ctx.extensionUri), {
@@ -45,21 +41,23 @@ export function activate(ctx: vscode.ExtensionContext): void {
     }),
   );
 
-  // In workspaces that use hitlcad: start the server if needed, then offer the agent setup a design
-  // project lacks (it changes agent config, so only with the human's permission).
+  // In workspaces that use hitlcad: follow builds, start the server if needed, then offer the agent setup a
+  // design project lacks (it changes agent config, so only with the human's permission).
   void (async () => {
     if (!(await usesHitlcad())) return;
-    if (!(await api.health()) && !config().get<boolean>("autoStart", true)) return;
-    await server?.ensure({ quiet: true });
+    const activity = new ActivityWatcher(serverUrl, (build) => void onBuild(build, panels));
+    ctx.subscriptions.push(activity);
+    activity.start();
+    await server.ensure();
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!root || !fs.existsSync(path.join(root, "designs"))) return;
+    if (!root || !fs.existsSync(path.join(root, PROJECT_DESIGNS))) return;
     await offerAgentSetup(ctx, await api.agentSetup(root), () => vscode.commands.executeCommand("hitlcad.configureAgents"));
   })().catch((e: Error) => output.appendLine(`Startup: ${e.message}`));
 }
 
 /** Bring a fresh build of a design in this workspace into view, as `hitlcad.autoOpenPanel` says. */
 async function onBuild(build: BuildActivity, panels: DesignPanels): Promise<void> {
-  const mode = config().get<string>("autoOpenPanel", "open");
+  const mode = config().get<string>("autoOpenPanel");
   if (mode === "off" || !vscode.workspace.getWorkspaceFolder(vscode.Uri.file(build.path))) return;
   if (panels.isVisible(build.path)) return; // it updates live
   const design = { path: build.path, id: build.id, name: build.name };
@@ -72,15 +70,10 @@ async function onBuild(build: BuildActivity, panels: DesignPanels): Promise<void
   if (choice) await panels.show(design);
 }
 
-export function deactivate(): void {
-  server?.dispose();
-  server = null;
-}
-
 async function usesHitlcad(): Promise<boolean> {
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const root = folder.uri.fsPath;
-    if (fs.existsSync(path.join(root, "design.json")) || fs.existsSync(path.join(root, "designs"))) return true;
+    if (fs.existsSync(path.join(root, DESIGN_FILE)) || fs.existsSync(path.join(root, PROJECT_DESIGNS))) return true;
     try {
       const mcp = fs.readFileSync(path.join(root, ".mcp.json"), "utf8");
       if (mcp.includes('"hitlcad"')) return true;
@@ -93,6 +86,6 @@ async function usesHitlcad(): Promise<boolean> {
       // no pyproject
     }
   }
-  const found = await vscode.workspace.findFiles("**/design.json", "**/node_modules/**", 1);
+  const found = await vscode.workspace.findFiles(`**/${DESIGN_FILE}`, "**/node_modules/**", 1);
   return found.length > 0;
 }

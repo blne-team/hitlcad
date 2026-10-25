@@ -31,9 +31,9 @@ export function FileView({ path }: { path: string }) {
       ),
     [path],
   );
-  const toText = useCallback((items: SelectionItem[]) => selectionText(`In ${name}`, items), [name]);
-  const sel = useSelection(describe, toText);
-  useEffect(() => notifyHost(sel.text), [sel.text]); // "Copy for chat" in VS Code includes it
+  const sel = useSelection(describe);
+  const text = selectionText(`In ${name}`, sel.items);
+  useEffect(() => notifyHost(text), [text]); // "Copy for chat" in VS Code includes it
   const markers = useMemo(() => sel.items.map(selectionMarker), [sel.items]);
 
   const size = bounds ? bounds.max.map((v, i) => v - bounds.min[i]!) : null;
@@ -65,7 +65,7 @@ export function FileView({ path }: { path: string }) {
           </p>
         )}
         <div className="side">
-          <SelectionBox items={sel.items} text={sel.text} busy={sel.busy} error={sel.error} onClear={sel.clear} />
+          <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} />
         </div>
       </div>
     </div>

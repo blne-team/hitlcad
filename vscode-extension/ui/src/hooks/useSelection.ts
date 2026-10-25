@@ -7,7 +7,7 @@ type Describe = (picks: Pick[]) => Promise<SelectionItem[]>;
  * Selection state for a viewer. `describe` turns clicks into labelled items (the design
  * endpoint stores them; the file endpoint only describes). `initial` re-syncs from the server.
  */
-export function useSelection(describe: Describe, text: (items: SelectionItem[]) => string, initial?: SelectionItem[]) {
+export function useSelection(describe: Describe, initial?: SelectionItem[]) {
   const [items, setItems] = useState<SelectionItem[]>(initial ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,8 +54,6 @@ export function useSelection(describe: Describe, text: (items: SelectionItem[]) 
   const select = useCallback((pick: Pick, additive: boolean) => void run(additive ? [...picks.current, pick] : [pick]), [run]);
   const clear = useCallback(() => void run([]), [run]);
 
-  const message = text(items);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && latest.current.length && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) clear();
@@ -65,5 +63,5 @@ export function useSelection(describe: Describe, text: (items: SelectionItem[]) 
     return () => window.removeEventListener("keydown", onKey, true);
   }, [clear]);
 
-  return { items, busy, error, select, clear, text: message };
+  return { items, busy, error, select, clear };
 }

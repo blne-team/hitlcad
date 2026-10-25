@@ -29,9 +29,10 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onStartupFinished",
     "workspaceContains:**/design.json",
-    "onCustomEditor:hitlcad.modelViewer"
+    "workspaceContains:designs",
+    "workspaceContains:.mcp.json",
+    "workspaceContains:pyproject.toml"
   ],
   "contributes": {
     "commands": [
@@ -216,49 +217,25 @@
             "filenamePattern": "*.stl"
           },
           {
-            "filenamePattern": "*.STL"
-          },
-          {
             "filenamePattern": "*.glb"
-          },
-          {
-            "filenamePattern": "*.GLB"
           },
           {
             "filenamePattern": "*.gltf"
           },
           {
-            "filenamePattern": "*.GLTF"
-          },
-          {
             "filenamePattern": "*.step"
-          },
-          {
-            "filenamePattern": "*.STEP"
           },
           {
             "filenamePattern": "*.stp"
           },
           {
-            "filenamePattern": "*.STP"
-          },
-          {
             "filenamePattern": "*.3mf"
-          },
-          {
-            "filenamePattern": "*.3MF"
           },
           {
             "filenamePattern": "*.obj"
           },
           {
-            "filenamePattern": "*.OBJ"
-          },
-          {
             "filenamePattern": "*.ply"
-          },
-          {
-            "filenamePattern": "*.PLY"
           }
         ],
         "priority": "default"
@@ -308,6 +285,7 @@
     "@types/vscode": "1.90.0",
     "@vitejs/plugin-react": "4.7.0",
     "@vscode/vsce": "4.0.0",
+    "diff": "9.0.0",
     "eslint": "10.12.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "openapi-typescript": "7.13.0",

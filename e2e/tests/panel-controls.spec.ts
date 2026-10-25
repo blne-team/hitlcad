@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
-import { api, clickModel, openPanel, sentToExtension, viewerReady, WORK, writeDesign } from "../helpers";
+import { api, BASE_URL, clickModel, openPanel, sentToExtension, viewerReady, WORK, writeDesign } from "../helpers";
 
 /** Every control of the 3D editor tab and the Design view does what it says, on a design of its own. */
 
@@ -102,6 +102,12 @@ test("parameters: reset restores, rebuild writes design.json and builds", async 
   await expect(width).toHaveValue("30");
   await expect(rebuild).toBeDisabled();
 
+  await width.fill(""); // an emptied field is no value: it stays empty and holds back rebuilding
+  await expect(width).toHaveValue("");
+  await expect(rebuild).toBeDisabled();
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect(width).toHaveValue("30");
+
   const before = (await state()).revisions.length;
   await page.getByLabel("Width slider").fill("35.3"); // the slider moves in round 0.1 mm steps
   await rebuild.click();
@@ -124,12 +130,22 @@ test("changes: compare the revision on screen with any earlier one", async ({ pa
   await expect(page.locator(".changes .metrics").first()).not.toContainText("Height");
 });
 
-test("results: every listed file is served", async ({ page, request }) => {
+test("results: each listed file asks the extension to save it, and is served", async ({ page, request }) => {
   await openPanel(page, { name: "inspector", id });
   await tab(page, "Results");
-  const links = await page.locator(".files a").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).href));
-  expect(links.length).toBeGreaterThan(0);
-  for (const href of links) expect((await request.get(href)).status(), href).toBe(200);
+  const files = page.locator(".files button");
+  const count = await files.count();
+  expect(count).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) await files.nth(i).click();
+  const asked = await page.evaluate(() =>
+    (window as unknown as { sent: { type: string; design: string; revision: number; path: string }[] }).sent.filter((m) => m.type === "hitlcad.saveFile"),
+  );
+  expect(asked.map((m) => m.path)).toEqual(await files.allTextContents());
+  for (const m of asked) {
+    expect(m.design).toBe(id);
+    const url = `${BASE_URL}/api/designs/${m.design}/revisions/${m.revision}/files/${m.path}`;
+    expect((await request.get(url)).status(), url).toBe(200);
+  }
 });
 
 test("the editor: revision arrows, selection copy and clear", async ({ page }) => {

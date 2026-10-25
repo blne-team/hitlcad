@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
 import { findDesignDir, isWithin } from "../lib/designLookup";
-import { isHitlcadPyproject, resolveServerCommand } from "../lib/serverCommand";
+import { isHitlcadPyproject, resolveServerCommand, whichSync } from "../lib/serverCommand";
 import { panelHtml } from "../lib/panelHtml";
 import { slugify } from "../lib/slug";
 import { parseUiMessage, UiStates } from "../lib/uiState";
@@ -28,7 +28,7 @@ test("finds the nearest design.json above a file", () => {
   const hook = path.resolve("/ws/designs/hook"); // a drive letter and backslashes on Windows
   assert.equal(findDesignDir("/ws/designs/hook/parts/hook.py", "/ws", exists), hook);
   assert.equal(findDesignDir("/ws/designs/hook/lib/util.py", "/ws", exists), hook);
-  assert.equal(findDesignDir("/ws/designs/hook", "/ws", exists), hook);
+  assert.equal(findDesignDir("/ws/designs/hook/design.json", "/ws", exists), hook);
 });
 
 test("stops at the workspace root", () => {
@@ -67,19 +67,27 @@ test("pyproject detection", () => {
 test("server command: installed tool first, then the dev checkout, else a clear error", () => {
   const dev = { path: "/src/hitlcad", pyproject: '[project]\nname = "hitlcad"\n' };
   const plain = { path: "/ws", pyproject: null };
-  const has = (...exes: string[]) => (e: string) => exes.includes(e);
-  assert.deepEqual(resolveServerCommand({ configured: ["hitlcad", "serve"], configuredCwd: "", folders: [plain], onPath: has("hitlcad") }), {
-    ok: true, command: ["hitlcad", "serve"], cwd: undefined, source: "installed",
+  const has = (...exes: string[]) => (e: string) => (exes.includes(e) ? `/bin/${e}.exe` : null);
+  assert.deepEqual(resolveServerCommand({ configured: ["hitlcad", "serve"], configuredCwd: "", folders: [plain], which: has("hitlcad") }), {
+    ok: true, command: ["/bin/hitlcad.exe", "serve"], cwd: undefined,
   });
-  assert.deepEqual(resolveServerCommand({ configured: undefined, configuredCwd: "", folders: [plain, dev], onPath: has("uv") }), {
-    ok: true, command: ["uv", "run", "hitlcad", "serve"], cwd: "/src/hitlcad", source: "dev",
+  assert.deepEqual(resolveServerCommand({ configured: undefined, configuredCwd: "", folders: [plain, dev], which: has("uv") }), {
+    ok: true, command: ["/bin/uv.exe", "run", "hitlcad", "serve"], cwd: "/src/hitlcad",
   });
-  const missing = resolveServerCommand({ configured: undefined, configuredCwd: "", folders: [plain], onPath: has("uv") });
+  const missing = resolveServerCommand({ configured: undefined, configuredCwd: "", folders: [plain], which: has("uv") });
   assert.equal(missing.ok, false);
   assert.match(missing.ok ? "" : missing.error, /uv tool install/);
-  assert.deepEqual(resolveServerCommand({ configured: ["python", "-m", "hitlcad"], configuredCwd: "/x", folders: [], onPath: has() }), {
-    ok: true, command: ["python", "-m", "hitlcad"], cwd: "/x", source: "configured",
+  assert.deepEqual(resolveServerCommand({ configured: ["python", "-m", "hitlcad"], configuredCwd: "/x", folders: [], which: has() }), {
+    ok: true, command: ["python", "-m", "hitlcad"], cwd: "/x",
   });
+});
+
+test("whichSync finds only what runs without a shell: on Windows an .exe, never a .cmd", () => {
+  const dirs = [path.resolve("/a"), path.resolve("/b")].join(path.delimiter);
+  const exists = fakeFs(["/a/hitlcad.cmd", "/a/hitlcad", "/b/hitlcad.exe"]);
+  assert.equal(whichSync("hitlcad", dirs, exists, true), path.join(path.resolve("/b"), "hitlcad.exe"));
+  assert.equal(whichSync("hitlcad", dirs, exists, false), path.join(path.resolve("/a"), "hitlcad"));
+  assert.equal(whichSync("uv", dirs, exists, false), null);
 });
 
 // ------------------------------------------------------------------ shared design UI state
@@ -91,7 +99,9 @@ test("parses only well-formed hitlcad page messages", () => {
   assert.deepEqual(parseUiMessage({ type: "hitlcad.selection", text: "In x I selected" }), { kind: "selection", text: "In x I selected" });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.copy" }), { kind: "copy" });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.fullscreen" }), { kind: "fullscreen" });
-  for (const bad of [null, "hitlcad.ui", [], { type: "hitlcad.ui", patch: [1] }, { type: "hitlcad.ui", patch: null }, { type: "hitlcad.selection", text: 3 }, { type: "other" }]) {
+  const file = { design: "dsg_a", revision: 3, path: "parts/lid.step", name: "lid.step" };
+  assert.deepEqual(parseUiMessage({ type: "hitlcad.saveFile", ...file }), { kind: "save", file });
+  for (const bad of [null, "hitlcad.ui", [], { type: "hitlcad.ui", patch: [1] }, { type: "hitlcad.ui", patch: null }, { type: "hitlcad.selection", text: 3 }, { type: "hitlcad.saveFile", ...file, revision: "3" }, { type: "other" }]) {
     assert.equal(parseUiMessage(bad), null);
   }
 });

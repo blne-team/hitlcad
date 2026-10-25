@@ -1,15 +1,16 @@
 import * as path from "node:path";
 
 export const DESIGN_FILE = "design.json";
+/** The folder a design project keeps its designs in (the server's layout: backend/hitlcad/designs/project.py). */
+export const PROJECT_DESIGNS = "designs";
 
 /**
- * Walk up from `file` (a file or folder) to the nearest folder containing design.json.
+ * Walk up from `file` to the nearest folder containing design.json.
  * Never goes above `stopDir` (the workspace root) when the file is inside it; otherwise
  * walks to the filesystem root. Returns the design folder or null.
  */
 export function findDesignDir(file: string, stopDir: string | null, exists: (p: string) => boolean): string | null {
-  let dir = path.resolve(file);
-  if (!exists(dir) || !isDirLike(dir, exists)) dir = path.dirname(dir);
+  let dir = path.dirname(path.resolve(file));
   const stop = stopDir ? path.resolve(stopDir) : null;
   const inside = stop !== null && isWithin(dir, stop);
   for (;;) {
@@ -27,7 +28,3 @@ export function isWithin(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-function isDirLike(p: string, exists: (p: string) => boolean): boolean {
-  // A path is treated as a folder if it has a design.json or no extension; callers pass files normally.
-  return exists(path.join(p, DESIGN_FILE)) || path.extname(p) === "";
-}

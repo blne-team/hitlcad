@@ -36,13 +36,13 @@ export function CadCanvas(props: Props) {
     let cad: CadView;
     try {
       cad = new CadView(stage.current, props.data, now.dark, (pick, additive) => latest.current.onPick(pick, additive));
-      cad.setMarkers(now.markers);
-      cad.setGhost(now.ghost ?? null);
-      cad.setMotion(now.motion ?? null);
     } catch (e) {
-      now.onError(e instanceof Error ? e.message : String(e));
+      now.onError(e instanceof Error ? e.message : String(e)); // a view JSON the viewer cannot show
       return;
     }
+    cad.setMarkers(now.markers);
+    cad.setGhost(now.ghost ?? null);
+    cad.setMotion(now.motion ?? null);
     view.current = cad;
     now.onReady?.(cad.bounds);
     return () => {
