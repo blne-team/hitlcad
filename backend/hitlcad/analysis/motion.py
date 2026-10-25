@@ -16,7 +16,8 @@ contact is placed to that much. What is round about the axis of a turn, of eithe
 its shaft, a knuckle in its hinge, a duct's wall), turns within itself and keeps its gap, so only the
 rest of each is moved against the other; and an instance that meets nothing anywhere in a full turn (a
 blade inside its duct) needs no positions at all: what it passes through in a full turn is the solid of
-revolution of its profile. Instances that overlap where they sit are the interference analysis's to
+revolution of its profile. Instances that overlap where they sit beyond what a mate allows (an ISO
+clearance fit modelled at its basic size touches, to its facets) are the interference analysis's to
 report: motion leaves them out and says so. The least gap of each pair a clearance requirement names is
 kept for the requirement.
 """
@@ -34,7 +35,7 @@ from pydantic import Field
 from hitlcad.analysis.base import Context, ResultCache, label, result
 from hitlcad.analysis.coverage import Link, nested_links
 from hitlcad.analysis.features import Unmeasurable
-from hitlcad.analysis.interference import Allowance, allowed, boxes_touch, overlap
+from hitlcad.analysis.interference import Allowance, allowed, beyond, boxes_touch, overlap
 from hitlcad.analysis.model import AnalysisSettings, BuiltDesign, Leaf, StructureError, gap
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import ClearanceCheck
@@ -312,6 +313,7 @@ class _Pair:
     a: manifold3d.Manifold | None = None
     b: manifold3d.Manifold | None = None
     speed: float = 0.0
+    sitting_mm3: float = 0.0  # what they share where they sit, as a mate allows: more than that is a contact
 
     def solids(self, value: float) -> tuple[manifold3d.Manifold, manifold3d.Manifold]:
         assert self.a is not None and self.b is not None
@@ -379,8 +381,7 @@ class _Sweep:
         return out
 
     def _pairs(self, drives: dict[str, Drive], deltas: list[float]) -> list[_Pair]:
-        """Each moving leaf with every other leaf its motion may bring it near, but those that move with it
-        or may overlap it."""
+        """Each moving leaf with every other leaf its motion may bring it near, but those that move with it."""
         w = self.plan.world
         moving = {p: drives[c] for p in w.leaves if (c := w.clusters.find(p)) in drives}
         boxes = {p: _swept_bounds(w.leaves[p], d, [0.0, *deltas]) for p, d in moving.items()}
@@ -388,7 +389,7 @@ class _Sweep:
         for p, dp in moving.items():
             for q, other in w.leaves.items():
                 dq = moving.get(q)
-                if q == p or dq is dp or (dq is not None and q < p) or frozenset((p, q)) in w.ok_pairs:
+                if q == p or dq is dp or (dq is not None and q < p):
                     continue
                 need = w.tracked.get(frozenset((p, q)))
                 if boxes_touch(
@@ -398,7 +399,8 @@ class _Sweep:
         return out
 
     def _at_rest(self, pairs: list[_Pair], out: Swept) -> list[_Pair]:
-        """The pairs to sweep: not those overlapping where they sit, nor those that cannot be measured."""
+        """The pairs to sweep: not those overlapping where they sit beyond what a mate allows (interference
+        reports them), nor those that cannot be measured."""
         keep = []
         for pair in pairs:
             try:
@@ -406,10 +408,14 @@ class _Sweep:
             except Unmeasurable as e:
                 out.unmeasurable.append((pair.p.path, pair.q.path, str(e)))
                 continue
-            if shared > self.settings.overlap_mm3:
-                out.resting.append((pair.p.path, pair.q.path, round(shared, 6)))
-            else:
+            allowance = self.plan.world.ok_pairs.get(frozenset((pair.p.path, pair.q.path)))
+            if shared <= self.settings.overlap_mm3 or (
+                allowance and not beyond(allowance, pair.p, pair.q, shared, self.settings)
+            ):
+                pair.sitting_mm3 = shared if shared > self.settings.overlap_mm3 else 0.0
                 keep.append(pair)
+            else:
+                out.resting.append((pair.p.path, pair.q.path, round(shared, 6)))
         return keep
 
     def _shaped(self, pair: _Pair) -> bool:
@@ -425,7 +431,10 @@ class _Sweep:
             return True
         (pair.a, radius), (pair.b, _) = self._shape(pair.p, pair.dp), self._shape(pair.q, pair.dp)
         pair.speed = pair.dp.speed(radius)
-        return not (pair.a.is_empty() or pair.b.is_empty())
+        if pair.a.is_empty() or pair.b.is_empty():
+            return False
+        pair.sitting_mm3 = float((pair.a ^ pair.b).volume()) if pair.sitting_mm3 else 0.0
+        return True
 
     def _shape(self, leaf: Leaf, drive: Drive) -> tuple[manifold3d.Manifold, float]:
         """The leaf less what is round about the drive's axis (all of it, along a travel), and how far that
@@ -449,7 +458,7 @@ class _Sweep:
             frame = _axis_frame(pair.dp.axis)
             self.turned[key] = _revolve(_profile(pair.a, frame, 0.0), frame, self.tol.position_mm)
         turned = self.turned[key]
-        if (turned ^ pair.b).volume() > self.settings.overlap_mm3:
+        if (turned ^ pair.b).volume() > pair.sitting_mm3 + self.settings.overlap_mm3:
             return False
         if not pair.tracked:
             return True
@@ -484,7 +493,10 @@ class _Sweep:
                     if t.pair.tracked:
                         self._record(t.pair, found, kind, rest + sign * x)
                     t.need = t.need if found >= t.need else 0.0  # its clearance is broken here: now only contact
-                    if found < step_mm and (shared := float((a ^ b).volume())) > self.settings.overlap_mm3:
+                    if (
+                        found < step_mm
+                        and (shared := float((a ^ b).volume())) > t.pair.sitting_mm3 + self.settings.overlap_mm3
+                    ):
                         hit = (t.pair, shared) if hit is None or shared > hit[1] else hit
                     t.search = max(2 * found, t.need + SEARCH_MM)
                 t.next = x + max(lower - t.need, step_mm) / t.pair.speed

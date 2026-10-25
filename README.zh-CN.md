@@ -169,6 +169,7 @@ handhold-fan/
 - [docs/assembly-model.md](docs/assembly-model.md)：一个设计包含哪些内容，每部分怎么检查
 - [docs/architecture.md](docs/architecture.md)：hitlcad 内部是怎么工作的
 - [docs/development.md](docs/development.md)：参与 hitlcad 本身的开发
+- [docs/roadmap.md](docs/roadmap.md)：接下来的计划
 
 ## 许可证
 

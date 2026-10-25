@@ -350,8 +350,9 @@ def build(p, i):
     above.data.transform(joint.inverted())
     tail.data.transform(root.inverted())
     flip = Matrix.Rotation(pi, 4, "X")  # a connector facing the one it mates with
+    glue = Matrix.Translation((0, 0, i.glue_gap / 2))  # from the joint to each part's face of the glue line
     return {
-        "body": (below, {"neck": joint, "tail": root}),
-        "head": (above, {"neck": flip}),
+        "body": (below, {"neck": joint @ glue.inverted(), "tail": root}),
+        "head": (above, {"neck": glue @ flip}),
         "tail": (tail, {"root": flip}),
     }

@@ -68,6 +68,8 @@ class _Connector(Model):
     description: str = ""
 
     example: ClassVar[dict[str, Any]]
+    #: Whether its frames have a feature to measure; a datum has none, so it has no result of its own.
+    measures: ClassVar[bool] = True
 
     def nominal_refs(self) -> dict[str, Ref]:
         """Nominal values the kind takes from parameters or interface values, by field."""
@@ -83,6 +85,7 @@ class FrameConnector(_Connector):
 
     kind: Literal["frame"]
     example = {"kind": "frame", "symmetry": "axial"}
+    measures = False
 
     def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
         return Measured(status="pass", detail="datum")
@@ -122,8 +125,9 @@ class ShaftConnector(_Connector):
 
 
 class GearConnector(_Connector):
-    """A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Tooth geometry is
-    verified by its relations and by interference; the nominal values name parameters or interface values."""
+    """A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Measured: across its face
+    width, its tip diameter, m(z + 2) (m(z − 2) for an internal gear), and its teeth; its mesh is verified by its
+    relations and by interference. The nominal values name parameters or interface values."""
 
     kind: Literal["gear"]
     teeth: Ref
@@ -136,9 +140,8 @@ class GearConnector(_Connector):
         return {"teeth": self.teeth, "module": self.module, "width": self.width}
 
     def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        kind = "internal" if self.internal else "external"
-        return Measured(status="pass", detail=f"{kind} gear m{nominals['module']:g}, {nominals['teeth']:g} teeth, "
-                        f"{nominals['width']:g} mm wide (nominal)", values=nominals)  # fmt: skip
+        return features.gear(frame, tol, module=nominals["module"], teeth=round(nominals["teeth"]),
+                             width=nominals["width"], internal=self.internal)  # fmt: skip
 
 
 ConnectorSpec = Annotated[
@@ -217,11 +220,21 @@ class ComponentSpec(Model):
 
 
 class Fit(Model):
-    """How a round shaft sits in a round hole: a diametral clearance range in mm (negative is
-    interference), or an ISO 286 fit evaluated at the measured nominal size."""
+    """How a round shaft sits in a round hole: a diametral clearance range in mm (negative is interference), or
+    an ISO 286 fit: its hole and shaft are modelled at one basic size, and its classes' limits there, reported
+    with the fit, go on the drawing. A mate that moves needs a fit that leaves room to move."""
 
     clearance: tuple[float, float] | None = None
     iso: str | None = Field(default=None, description="e.g. 'H7/g6'")
+
+    @field_validator("iso")
+    @classmethod
+    def _iso(cls, v: str | None) -> str | None:
+        if v is not None:
+            from hitlcad.analysis.iso286 import parse
+
+            parse(v)
+        return v
 
     @model_validator(mode="after")
     def _one(self) -> Fit:
@@ -232,6 +245,8 @@ class Fit(Model):
         return self
 
     def limits(self, nominal_mm: float) -> tuple[float, float]:
+        """(least, greatest) diametral clearance in mm; `ValueError` where ISO 286 does not define the fit at this
+        size."""
         if self.clearance:
             return self.clearance
         from hitlcad.analysis.iso286 import fit_clearance
@@ -240,7 +255,11 @@ class Fit(Model):
         return fit_clearance(self.iso, nominal_mm)
 
     def allows_interference(self, nominal_mm: float) -> bool:
-        return self.limits(nominal_mm)[0] < 0
+        """Whether the fit lets the parts overlap; not where ISO 286 does not define it (the mate's fit fails)."""
+        try:
+            return self.limits(nominal_mm)[0] < 0
+        except ValueError:
+            return False
 
 
 class Limits(Model):
@@ -590,7 +609,11 @@ RELATION_TYPES: tuple[type[_Relation], ...] = members(RelationSpec)
 class FastenerSet(Model):
     """A catalog fastener through clearance-hole patterns (head side first) into a threaded or insert hole.
     `fastener` names the fastener's seat connector (under the head, Z along the shank); the fastener part's
-    catalog provider must give its `thread_diameter` and `length`."""
+    catalog provider must give its `thread`, `thread_diameter`, `thread_pitch`, `length` and its ISO 273
+    clearance holes `clearance_fine` and `clearance_medium`. Verified per stack: the holes share an axis, the
+    fastener is seated, its shank clears every through hole (ISO 273 fine, after the process allowance), its
+    thread is the into thread's (a catalog insert's or nut's size; a made hole between 0.7 and 1 × its
+    diameter), it engages the material minimum and the space along its axis past the into hole is free."""
 
     fastener: str = Field(description="The fastener's seat connector, e.g. 'lid_screw.seat'")
     through: list[str] = Field(min_length=1, description="Clearance-hole connectors, head side first")

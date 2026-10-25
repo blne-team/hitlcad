@@ -32,6 +32,17 @@ if TYPE_CHECKING:
     import trimesh
 
 FULL_CIRCLE = 0.95  # of 2π: a cylindrical cut that goes this far round is a hole, not a fillet or slot end
+#: Of the circle, the share a connector's hole or shaft must go round: a slot or a teardrop's point may open its
+#: wall, a half-round notch at an edge is not a hole.
+ON_CIRCLE = 0.6
+#: B-rep surfaces of revolution: coaxial with a frame, they lead from its origin to its feature (a countersink's
+#: cone, a chamfer or a fillet at the edge).
+REVOLVED = frozenset({"CYLINDER", "CONE", "TORUS", "SPHERE", "REVOLUTION"})
+#: Where across its face width a gear is measured, as shares of the width.
+GEAR_SECTIONS = (0.1, 0.5, 0.9)
+#: A gear's tip diameter agrees with m(z ± 2) to this share of its module: its teeth were cut for that module and
+#: count, not merely near the pitch circle.
+TIP_SHARE = 0.1
 
 
 class Unmeasurable(ValueError):
@@ -123,6 +134,46 @@ class Features(ABC):
     def face(self, frame: fr.Frame, tol: Tolerances) -> Measured:
         """The planar face whose outward normal is the frame's Z, with the origin on its plane and inside its
         outline (a mate connector may sit at the centre of a rim or an annulus, where there is no material)."""
+
+    def gear(
+        self, frame: fr.Frame, tol: Tolerances, *, module: float, teeth: int, width: float, internal: bool
+    ) -> Measured:
+        """The spur gear whose axis is the frame's Z, its teeth from the origin along Z for `width`, measured on its
+        mesh in sections across the axis over the face width: its tip diameter (how far it reaches from the axis, how
+        near for an internal gear) and its teeth, counted where the section crosses the circle a module inside the tip
+        (outside, for an internal gear), about the pitch circle: twice per tooth."""
+        import trimesh
+
+        o, z = fr.origin(frame), fr.z_axis(frame)
+        across = np.column_stack([fr.x_axis(frame), np.cross(z, fr.x_axis(frame))])
+        tips, counts = [], []
+        for share in GEAR_SECTIONS:
+            segments = trimesh.intersections.mesh_plane(self.mesh, z, o + z * width * share)
+            r = np.linalg.norm((segments - o) @ across, axis=2)  # each segment's ends' distances from the axis
+            tip = float(r.min() if internal else r.max()) if len(r) else math.nan
+            circle = tip + module if internal else tip - module
+            count = int(np.count_nonzero((r[:, 0] > circle) != (r[:, 1] > circle))) // 2
+            counts.append(count)
+            tips.append(2 * tip)
+        kind = "internal" if internal else "external"
+        if not any(counts):
+            return Measured(status="fail", detail=f"no {kind} gear teeth round the frame's axis over the {width:g} mm "
+                            "face width above its origin")  # fmt: skip
+        tip = min(tips) if internal else max(tips)
+        needs = module * (teeth - 2 if internal else teeth + 2)
+        limit = max(tol.position_mm, TIP_SHARE * module)
+        problems = []
+        if any(c != teeth for c in counts):
+            found = " / ".join(str(c) for c in dict.fromkeys(counts))
+            problems.append(f"{found} teeth across the face width, {teeth} declared")
+        if abs(tip - needs) > limit:
+            sign = "−" if internal else "+"
+            problems.append(f"tip Ø{tip:.3f}, m{module:g} × ({teeth} {sign} 2) needs Ø{needs:.3f} ± {limit:g}")
+        detail = f"{kind} gear m{module:g}, {teeth} teeth, {width:g} mm wide"
+        return Measured(status="fail" if problems else "pass",
+                        detail="; ".join(problems) or f"{detail}: tip Ø{tip:.3f}",
+                        values={"tip_diameter": tip, "teeth": float(counts[len(counts) // 2]), "module": module,
+                                "width": width})  # fmt: skip
 
     @abstractmethod
     def holes(self) -> list[Hole]:
@@ -227,35 +278,37 @@ class BrepFeatures(Features):
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)
-        faces: dict[float, list[tuple[float, float]]] = defaultdict(list)
+        walls: dict[tuple[float, tuple[float, ...]], list[tuple[float, float, float]]] = defaultdict(list)
+        placed: dict[tuple[float, ...], tuple[float, float]] = {}  # each wall's axis: (offset, tilt) from the frame's
+        reach = []  # extents along the axis of the coaxial faces of revolution: what leads from the origin to a feature
         for face in self.shape.faces():
-            if face.geom_type.name != "CYLINDER":
+            if face.geom_type.name not in REVOLVED:
                 continue
             axis = face.axis_of_rotation
             d = _vec(axis.direction)
-            if min(fr.angle_deg(d, z), fr.angle_deg(d, -z)) > tol.angle_deg:
-                continue
-            if fr.distance_to_line(o, _vec(axis.position), d) > tol.position_mm:
-                continue
-            p = face.position_at(0.5, 0.5)
-            radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
-            if (face.normal_at(p).dot(radial) < 0) != inward:
-                continue
+            offset, tilt = fr.distance_to_line(o, _vec(axis.position), d), min(fr.angle_deg(d, z), fr.angle_deg(d, -z))
             ts = [fr.along(_vec(v.center()), o, z) for v in face.vertices()]
-            if ts:
-                faces[round(face.radius, 6)].append((min(ts), max(ts)))
-        spans = [(r, s) for r, extents in faces.items() for s in _touching(extents, tol.position_mm)]
-        if inward:
-            near = [(r, s, -s[1]) for r, s in spans if s[1] <= tol.position_mm]
-        else:
-            near = [(r, s, s[0]) for r, s in spans if s[0] >= -tol.position_mm]
-        closest = min((gap for _, _, gap in near), default=None)
-        tied = [(r, s) for r, s, gap in near if closest is not None and gap <= closest + tol.position_mm]
-        hit = (min if inward else max)(tied, key=lambda rs: rs[0], default=None)
-        if hit is None:
-            return _no_round(inward)
-        radius, (t0, t1) = hit
-        return _round(inward, 2 * radius, t1 - t0, -t1 if inward else t0, 0.0, tol)
+            if not ts:
+                continue
+            if offset <= tol.position_mm and tilt <= tol.angle_deg:
+                reach.append((min(ts), max(ts), 0.0))
+            if face.geom_type.name == "CYLINDER" and _faces_axis(face) == inward:
+                key = _axis_key(axis)
+                placed[key] = (offset, tilt)
+                walls[(round(face.radius, 6), key)].append((min(ts), max(ts), face.area))
+        found = [
+            _Found(2 * r, hi - lo, -hi if inward else lo, *placed[key], area / (2 * math.pi * r * (hi - lo)))
+            for (r, key), extents in walls.items()
+            for lo, hi, area in _touching(extents, tol.position_mm)
+            if hi > lo
+        ]
+        merged = _touching(reach, tol.position_mm)
+
+        def leads(gap: float) -> bool:
+            lo, hi = (-gap, 0.0) if inward else (0.0, gap)
+            return any(a <= lo + tol.position_mm and b >= hi - tol.position_mm for a, b, _ in merged)
+
+        return _pick(found, leads, inward, tol)
 
     def face(self, frame: fr.Frame, tol: Tolerances) -> Measured:
         from build123d import Face, Vertex
@@ -279,66 +332,91 @@ class BrepFeatures(Features):
     def _holes(self) -> list[Hole]:
         from build123d import Vector
 
-        groups: dict[tuple[float, tuple[float, ...], tuple[float, ...]], list] = defaultdict(list)
+        groups: dict[tuple[float, tuple[float, ...]], list] = defaultdict(list)
         for face in self.shape.faces():
-            if face.geom_type.name != "CYLINDER":
-                continue
-            axis = face.axis_of_rotation
-            d = axis.direction.normalized()
-            p = face.position_at(0.5, 0.5)
-            radial = (p - axis.position) - d * (p - axis.position).dot(d)
-            if face.normal_at(p).dot(radial) >= 0:
-                continue  # faces away from its axis: a boss or a rounded outside corner
-            direction = tuple(round(c, 6) + 0.0 for c in (d.X, d.Y, d.Z))
-            if next(c for c in direction if c != 0) < 0:
-                direction = tuple(-c + 0.0 for c in direction)
-            origin = axis.position - d * axis.position.dot(d)
-            groups[
-                (round(face.radius, 4), direction, tuple(round(c, 3) + 0.0 for c in (origin.X, origin.Y, origin.Z)))
-            ].append(face)
+            if face.geom_type.name == "CYLINDER" and _faces_axis(face):  # not a boss or a rounded outside corner
+                groups[(round(face.radius, 4), _axis_key(face.axis_of_rotation))].append(face)
         holes = []
-        for (radius, direction, origin), faces in groups.items():
-            along = [(v.center() - Vector(*origin)).dot(Vector(*direction)) for f in faces for v in f.vertices()]
+        for (radius, key), faces in groups.items():
+            origin, direction = Vector(*key[3:]), Vector(*key[:3])
+            along = [(v.center() - origin).dot(direction) for f in faces for v in f.vertices()]
             depth = max(along) - min(along)
             if depth > 0 and sum(f.area for f in faces) / (radius * depth) >= FULL_CIRCLE * 2 * math.pi:
                 holes.append(Hole(diameter=2 * radius, depth=depth))
         return holes
 
 
-def _touching(extents: list[tuple[float, float]], tol: float) -> list[tuple[float, float]]:
-    """Extents along an axis, those that touch merged: one coaxial feature each, not every hole on the axis."""
+def _faces_axis(face: Any) -> bool:
+    """Whether a face of revolution faces its axis: the wall of a hole, not the skin of a shaft."""
+    axis = face.axis_of_rotation
+    p = face.position_at(0.5, 0.5)
+    radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
+    return face.normal_at(p).dot(radial) < 0
+
+
+def _axis_key(axis: Any) -> tuple[float, ...]:
+    """A line by value: its direction (pointing up its first nonzero coordinate) and its point nearest the origin."""
+    d = axis.direction.normalized()
+    direction = [round(c, 6) + 0.0 for c in (d.X, d.Y, d.Z)]
+    if next(c for c in direction if c != 0) < 0:
+        direction = [-c + 0.0 for c in direction]
+    p = axis.position - d * axis.position.dot(d)
+    return (*direction, *(round(c, 3) + 0.0 for c in (p.X, p.Y, p.Z)))
+
+
+def _touching(extents: list[tuple[float, float, float]], tol: float) -> list[tuple[float, float, float]]:
+    """Extents along an axis with an area each, those that touch merged: one coaxial feature each, not every hole on
+    the axis."""
     merged: list[list[float]] = []
-    for lo, hi in sorted(extents):
+    for lo, hi, area in sorted(extents):
         if merged and lo <= merged[-1][1] + tol:
             merged[-1][1] = max(merged[-1][1], hi)
+            merged[-1][2] += area
         else:
-            merged.append([lo, hi])
-    return [(lo, hi) for lo, hi in merged]
+            merged.append([lo, hi, area])
+    return [(lo, hi, area) for lo, hi, area in merged]
 
 
 # --------------------------------------------------------------------------- mesh
 
 #: Rays cast round the axis at each station along it.
 RAYS = 32
-#: Of those, the share that must land on the circle: the rest may leave through an opening in its wall
-#: (a teardrop's point, a slot, a screw hole beside a shaft).
-ON_CIRCLE = 0.6
-#: Rays land on the circle when their distances to the axis spread less than this share of the radius:
-#: a polygon of 12 or more sides passes, a square or an off-axis bore does not.
+#: Rays land on a round surface when their distances to the axis spread less than this share of the radius.
 ROUNDNESS = 0.05
-#: Stations along the axis are this far apart (mm): a run shorter than two of them is the slice of a
-#: cone or a chamfer, not a feature.
+#: Stations along the axis are this far apart (mm).
 STEP_MM = 0.2
-#: Bisections that place where a feature starts and ends.
-BISECTIONS = 20
+#: Bisections that place where a feature starts and ends: to within STEP_MM / 2⁸.
+BISECTIONS = 8
+
+
+@dataclass(frozen=True)
+class _Station:
+    """Where the rays at one station along a frame's axis land, as a circle fitted through the vertices of the facets
+    they land on, in the plane across the axis: so it is the same however the frame is turned."""
+
+    radius: float
+    centre: np.ndarray  # from the frame's axis
+    residual: float  # how far the farthest of those vertices lies off the circle: none on a cylinder, more on a cone
+    sagitta: float  # how far inside the circle the facets' chords cut
+    share: float  # of the rays, those that land on the circle
+
+
+def _circle(points: np.ndarray) -> tuple[np.ndarray, float]:
+    """The least-squares circle through 2D points: (centre, radius)."""
+    a = np.column_stack([2 * points, np.ones(len(points))])
+    (cx, cy, k), *_ = np.linalg.lstsq(a, (points**2).sum(axis=1), rcond=None)
+    centre = np.array([cx, cy])
+    return centre, math.sqrt(max(k + cx * cx + cy * cy, 0.0))
 
 
 class MeshFeatures(Features):
-    """Round features are probed with rays at stations along the frame's axis. A hole is probed from the
-    axis outwards: the rays land on its wall, facing the axis. A shaft is probed from outside inwards: the
-    rays land on its skin, facing away, even where it is a tube. Where most land at one distance from the
-    axis, the station is on the feature; a feature runs while its stations do. Faces are trimesh's facets
-    (coplanar neighbouring triangles) and the single triangles outside them."""
+    """Round features are probed with rays in sections across the frame's axis, at stations along it. A hole is
+    probed from the axis outwards: the rays land on its wall, facing the axis. A shaft is probed from outside
+    inwards: the rays land on its skin, facing away, even where it is a tube. Where most land at one distance from
+    the axis, the station is on a round surface; where the vertices of the facets they land on lie on one circle,
+    on a cylinder, whose diameter and centre that circle gives, and whose uncertainty is the facets' sagitta. A
+    feature runs while its stations stay on one cylinder. Faces are trimesh's facets (coplanar neighbouring
+    triangles) and the single triangles outside them."""
 
     representation = "mesh"
 
@@ -365,71 +443,102 @@ class MeshFeatures(Features):
         raise Unmeasurable(f"{self.name} is a mesh: it has no exact shape")
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
-        o, z = fr.origin(frame), fr.z_axis(frame)
-        x = fr.x_axis(frame)
-        angles = np.linspace(0, 2 * np.pi, RAYS, endpoint=False)
-        out = np.outer(np.cos(angles), x) + np.outer(np.sin(angles), np.cross(z, x))
-        along = -z if inward else z
-        reach = float(np.linalg.norm(self.mesh.extents))
+        import trimesh
 
-        def station(t: float) -> np.ndarray | None:
-            """The distances to the axis of the rays that land on a circle at `t` along it, or None where
-            too few do."""
-            centre = o + along * t
-            origins = np.tile(centre, (RAYS, 1)) if inward else centre + out * reach
-            with np.errstate(divide="ignore", invalid="ignore"):  # trimesh's test of sliver triangles, never hit
-                hit, ray, at = self.mesh.ray.intersects_id(origins, out if inward else -out, multiple_hits=False,
-                                                           return_locations=True)  # fmt: skip
-            if len(ray) < ON_CIRCLE * RAYS:
+        o, z = fr.origin(frame), fr.z_axis(frame)
+        across = np.column_stack([fr.x_axis(frame), np.cross(z, fr.x_axis(frame))])
+        angles = np.linspace(0, 2 * np.pi, RAYS, endpoint=False)
+        rays = np.column_stack([np.cos(angles), np.sin(angles)])
+        mesh, close = self.mesh, tol.position_mm
+        heights = (mesh.vertices - o) @ z
+        lowest, highest = heights[mesh.faces].min(axis=1), heights[mesh.faces].max(axis=1)
+        reach = float(highest.max() if not inward else -lowest.min())
+
+        def station(t: float) -> _Station | None:
+            """The round surface the rays from the axis (a hole's) or from outside (a shaft's) land on at `t` along
+            it, in the section across the axis there, or None where they do not land at one distance from it."""
+            h = -t if inward else t
+            near = np.flatnonzero((lowest <= h) & (highest >= h))
+            lines, faces = trimesh.intersections.mesh_plane(mesh, z, o + z * h, return_faces=True, local_faces=near,
+                                                            cached_dots=heights - h)  # fmt: skip
+            if not len(lines):
                 return None
-            radial = at - centre
-            facing = np.einsum("ij,ij->i", self.mesh.face_normals[hit], radial)
-            distance = np.linalg.norm(radial, axis=1)[facing < 0 if inward else facing > 0]
-            if len(distance) < ON_CIRCLE * RAYS:
+            # where each ray meets each segment of the section: r·u = p + w·(q − p), in the plane
+            p, d = (lines[:, 0] - o) @ across, (lines[:, 1] - lines[:, 0]) @ across
+            with np.errstate(divide="ignore", invalid="ignore"):  # segments parallel to a ray never meet it
+                det = np.outer(rays[:, 0], d[:, 1]) - np.outer(rays[:, 1], d[:, 0])
+                r = (p[:, 0] * d[:, 1] - p[:, 1] * d[:, 0]) / det
+                w = (np.outer(rays[:, 1], p[:, 0]) - np.outer(rays[:, 0], p[:, 1])) / det
+            r = np.where((w >= 0) & (w <= 1) & (r > 0), r, np.nan)
+            landed = ~np.isnan(r).all(axis=1)
+            if np.count_nonzero(landed) < ON_CIRCLE * RAYS:
                 return None
-            # A hole's wall is the nearest the rays land, a shaft's skin the farthest; facets bring their
-            # landings in by at most their sagitta, an opening's flanks take a hole's out.
+            # the first surface each ray meets: from the axis outwards for a hole, from outside inwards for a shaft
+            pick = (np.nanargmin if inward else np.nanargmax)(r[landed], axis=1)
+            hit, distance = faces[pick], r[landed][np.arange(len(pick)), pick]
+            flat = rays[landed] * distance[:, None]
+            facing = np.einsum("ij,ij->i", mesh.face_normals[hit] @ across, rays[landed])
+            keep = facing < 0 if inward else facing > 0
+            hit, flat, distance = hit[keep], flat[keep], distance[keep]
+            if len(hit) < ON_CIRCLE * RAYS:
+                return None
+            # A hole's wall is the nearest the rays land, a shaft's skin the farthest; an opening's flanks take a
+            # hole's landings out.
             if inward:
-                band = distance[distance <= distance.min() * (1 + ROUNDNESS)]
-                band = band[band <= np.percentile(band, 100 * ON_CIRCLE)]
+                band = distance <= distance.min() * (1 + ROUNDNESS)
+                band &= distance <= np.percentile(distance[band], 100 * ON_CIRCLE)
             else:
-                band = distance[distance >= distance.max() * (1 - ROUNDNESS)]
-            return band if len(band) >= ON_CIRCLE**2 * RAYS else None
+                band = distance >= distance.max() * (1 - ROUNDNESS)
+            if np.count_nonzero(band) < ON_CIRCLE**2 * RAYS:
+                return None
+            corners = (mesh.vertices[mesh.faces[np.unique(hit[band])]] - o) @ across  # (facets, 3, 2)
+            c, r = _circle(corners.reshape(-1, 2))
+            off = np.abs(np.linalg.norm(corners - c, axis=2) - r).max(axis=1)
+            if (off > close).any() and (off <= close).any():  # an opening's flank facets: fit the wall alone
+                corners = corners[off <= close]
+                c, r = _circle(corners.reshape(-1, 2))
+                off = np.abs(np.linalg.norm(corners - c, axis=2) - r).max(axis=1)
+            ends = (corners - c) / r
+            chord = float(np.linalg.norm(ends - np.roll(ends, 1, axis=1), axis=2).max())  # longest, on a unit circle
+            sagitta = r * (1 - math.sqrt(max(1 - chord * chord / 4, 0.0)))
+            on = np.abs(np.linalg.norm(flat - c, axis=1) - r) <= sagitta + close
+            return _Station(r, c, float(off.max()), sagitta, np.count_nonzero(on) / RAYS)
+
+        def wall(s: _Station | None) -> bool:
+            return s is not None and s.residual <= close and s.share >= ON_CIRCLE
 
         step = STEP_MM
+        start, first = next(((t, s) for t in np.arange(step / 2, reach, step) if wall(s := station(t))), (0.0, None))
+        if first is None:
+            return _no_round(inward, None, tol)
 
-        def run(start: float) -> tuple[float, float, np.ndarray] | None:
-            """The feature found at `start`, as (where it starts, where it ends, its first station)."""
-            first = station(start)
-            assert first is not None
-            radius = float(first.max())
+        def on(t: float) -> bool:
+            """Still the first station's wall."""
+            s = station(t)
+            if s is None or not wall(s):
+                return False
+            return abs(s.radius - first.radius) <= close and float(np.linalg.norm(s.centre - first.centre)) <= close
 
-            def on(t: float) -> bool:
-                d = station(t)
-                return d is not None and abs(float(d.max()) - radius) <= max(float(np.ptp(first)), tol.position_mm)
+        def edge(inside: float, outside: float) -> float:
+            for _ in range(BISECTIONS):
+                middle = (inside + outside) / 2
+                inside, outside = (middle, outside) if on(middle) else (inside, middle)
+            return inside
 
-            def edge(inside: float, outside: float) -> float:
-                for _ in range(BISECTIONS):
-                    middle = (inside + outside) / 2
-                    inside, outside = (middle, outside) if on(middle) else (inside, middle)
-                return inside
+        end = start
+        while end + step < reach and on(end + step):
+            end += step
+        t0, t1 = edge(start, max(start - step, 0.0)), edge(end, end + step)
+        last = station(end)
+        drift = float(np.linalg.norm(last.centre - first.centre)) if last and end > start else 0.0
+        found = _Found(2 * first.radius, t1 - t0, t0, float(np.linalg.norm(first.centre)),
+                       math.degrees(math.atan2(drift, end - start)), first.share, 2 * first.sagitta)  # fmt: skip
 
-            end = start
-            while end + step < reach and on(end + step):
-                end += step
-            if end == start:
-                return None  # a slice of a cone or a chamfer, not a feature
-            return edge(start, max(start - step, 0.0)), edge(end, end + step), first
+        def leads(gap: float) -> bool:
+            """Round surfaces about the axis all the way from the origin to the feature: a countersink, a chamfer."""
+            return all(station(t) is not None for t in np.linspace(0, gap, math.ceil(gap / step) + 2)[1:-1])
 
-        found = next(
-            (r for t in np.arange(step / 2, reach, step) if station(t) is not None and (r := run(t)) is not None), None
-        )
-        if found is None:
-            return _no_round(inward)
-        t0, t1, first = found
-        if t0 <= tol.position_mm:
-            t0 = 0.0
-        return _round(inward, 2 * float(first.max()), t1 - t0, t0, 2 * float(np.ptp(first)), tol)
+        return _pick([found], leads, inward, tol)
 
     def face(self, frame: fr.Frame, tol: Tolerances) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)
@@ -484,19 +593,63 @@ def _inside(segments: np.ndarray, tol: float) -> bool:
 # --------------------------------------------------------------------------- results
 
 
-def _round(inward: bool, diameter: float, length: float, gap: float, uncertainty: float, tol: Tolerances) -> Measured:
-    detail = f"Ø{diameter:.3f} × {length:.2f} {'deep' if inward else 'long'}"
-    if uncertainty:
-        detail += f" (on the mesh, ±{uncertainty:.3f})"
-    if gap > tol.position_mm:
+@dataclass(frozen=True)
+class _Found:
+    """A round feature by a frame's axis: its diameter, its length along the axis from where it starts (`gap` past the
+    origin, into the part), how far its axis lies from the frame's and how much of the circle its wall goes round."""
+
+    diameter: float
+    length: float
+    gap: float
+    offset: float
+    tilt: float
+    share: float
+    uncertainty: float = 0.0
+
+
+def _pick(found: list[_Found], leads: Callable[[float], bool], inward: bool, tol: Tolerances) -> Measured:
+    """The frame's feature among those found: coaxial, round, the one that starts closest past the origin (of those
+    starting equally close, the innermost hole or the outermost shaft). It starts at the origin, or farther only
+    where coaxial surfaces of revolution lead to it from the origin (`leads`: a countersink, a chamfer). With none,
+    the result names the nearest feature found and what keeps it from being the frame's."""
+    fits = [f for f in found if f.offset <= tol.position_mm and f.tilt <= tol.angle_deg and f.share >= ON_CIRCLE
+            and f.gap >= -tol.position_mm]  # fmt: skip
+    if fits:
+        closest = min(f.gap for f in fits)
+        tied = [f for f in fits if f.gap <= closest + tol.position_mm]
+        hit = (min if inward else max)(tied, key=lambda f: f.diameter)
+        if hit.gap <= tol.position_mm or leads(hit.gap):
+            return _round(inward, hit, tol)
+        return _no_round(inward, hit, tol)
+    return _no_round(inward, min(found, key=lambda f: f.offset + abs(f.gap), default=None), tol)
+
+
+def _round(inward: bool, f: _Found, tol: Tolerances) -> Measured:
+    gap = f.gap if f.gap > tol.position_mm else 0.0
+    detail = f"Ø{f.diameter:.3f} × {f.length:.2f} {'deep' if inward else 'long'}"
+    if f.uncertainty:
+        detail += f" (on the mesh, ±{f.uncertainty:.3f})"
+    if gap:
         detail += f", starting {gap:.2f} mm from the origin"
-    return Measured(status="pass", detail=detail, values={"diameter": diameter, "length": length, "offset": gap},
-                    uncertainty_mm=uncertainty)  # fmt: skip
+    return Measured(status="pass", detail=detail, values={"diameter": f.diameter, "length": f.length, "offset": gap},
+                    uncertainty_mm=f.uncertainty)  # fmt: skip
 
 
-def _no_round(inward: bool) -> Measured:
+def _no_round(inward: bool, nearest: _Found | None, tol: Tolerances) -> Measured:
     what, side = ("hole", "below") if inward else ("shaft", "above")
-    return Measured(status="fail", detail=f"no {what} on the frame's axis {side} its origin")
+    detail = f"no {what} on the frame's axis {side} its origin"
+    if nearest is not None:
+        f, limit = nearest, tol.position_mm
+        notes = [f"axis {f.offset:.3f} mm off" + (f" (allowed {limit:g})" if f.offset > limit else ""),
+                 f"{f.tilt:.2f}° tilt" + (f" (allowed {tol.angle_deg:g})" if f.tilt > tol.angle_deg else "")]  # fmt: skip
+        if f.share < ON_CIRCLE:
+            notes.append(f"its wall goes {360 * f.share:.0f}° round, not a full circle")
+        if f.gap > limit:
+            notes.append(f"starts {f.gap:.2f} mm {side} the origin with no coaxial surface leading to it")
+        elif f.gap < -limit:
+            notes.append(f"lies {'above' if inward else 'below'} the origin")
+        detail += f"; nearest: Ø{f.diameter:.3f} {what}, {', '.join(notes)}"
+    return Measured(status="fail", detail=detail)
 
 
 def _face(area: float) -> Measured:

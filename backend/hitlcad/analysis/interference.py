@@ -1,13 +1,14 @@
-"""Interference: no two placed part instances overlap, except where a mate (a fit that allows interference,
-or `overlap`) or a fastener set (a thread in its into hole) declares the overlap it expects. Pairs inside
-one component instance are the component's own build's to check.
+"""Interference: no two placed part instances overlap, except where a mate (a fit, or `overlap`) or a
+fastener set (a thread in its into hole) declares the overlap it expects. Pairs inside one component
+instance are the component's own build's to check.
 
 What a mate declares bounds the overlap. An interference fit makes at most the ring its measured
-diameters predict, π/4·(D² − d²) over the engaged length, give or take their facets. An `overlap` mate sets
-b's part into a hole of a's part (an insert, a thread, a pressed pin): the overlap is where b presses
-into the hole's wall, and a has no material on the hole's axis where b sits (nor within the hole's
-radius, when a's end is a measured hole). A part set into solid material, where its hole was never cut or
-is too shallow, overlaps it there too, and that overlap is reported."""
+diameters predict, π/4·(D² − d²) over the engaged length, give or take their facets; a clearance fit
+modelled without a gap (an ISO fit at its basic size) only what those facets make. An `overlap` mate
+sets b's part into a hole of a's part (an insert, a thread, a pressed pin): the overlap is where b
+presses into the hole's wall, and a has no material on the hole's axis where b sits (nor within the
+hole's radius, when a's end is a measured hole). A part set into solid material, where its hole was
+never cut or is too shallow, overlaps it there too, and that overlap is reported."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import numpy as np
 from hitlcad.analysis.base import Context, ResultCache, result
 from hitlcad.analysis.coverage import Link, links, top
 from hitlcad.analysis.features import Unmeasurable
-from hitlcad.analysis.model import Leaf
+from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result
 
@@ -38,7 +39,7 @@ class Allowance:
 
     why: str
     link: Link
-    kind: str  # "fit": an interference fit; "set": an `overlap` mate; "thread": a fastener in its into hole
+    kind: str  # "fit", "touch" (a clearance fit), "set" (an `overlap` mate) or "thread" (a fastener's into hole)
 
 
 def allowed(found: list[Link]) -> dict[frozenset[str], Allowance]:
@@ -53,6 +54,9 @@ def allowed(found: list[Link]) -> dict[frozenset[str], Allowance]:
             measured = [f.measured.values.get("diameter") for f in (link.a, link.b)]
             if all(measured) and fit.allows_interference(sum(measured) / 2):  # type: ignore[arg-type]
                 out[pair] = Allowance(f"the {link.source.address} fit is an interference fit", link, "fit")
+            elif all(measured):
+                out[pair] = Allowance(f"the {link.source.address} clearance fit's parts touch, to their facets", link,
+                                      "touch")  # fmt: skip
         if link.role == "into":
             out[pair] = Allowance(f"{link.a.instance} is threaded into {link.b.instance}", link, "thread")
     return out
@@ -124,46 +128,51 @@ class Interference:
                 if shared <= ctx.settings.overlap_mm3:
                     continue
                 allowance = ok_pairs.get(frozenset((a.path, b.path)))
-                beyond = allowance and self._beyond(ctx, allowance, a, b, shared)
-                if allowance and not beyond:
+                excess = allowance and beyond(allowance, a, b, shared, ctx.settings)
+                if allowance and not excess:
                     out.append(result(self.name, f"{a.path}+{b.path}", True, f"overlap {shared:.2f} mm³, expected: "
                                       f"{allowance.why}", [a.path, b.path], {"overlap_mm3": shared}, severity="info"))  # fmt: skip
                     continue
                 text, values = where(a.manifold ^ b.manifold)
                 out.append(result(self.name, f"{a.path}+{b.path}", False, f"{a.path} and {b.path} overlap by "
-                                  f"{shared:.2f} mm³{text}" + (f"; {beyond}" if beyond else ""), [a.path, b.path],
+                                  f"{shared:.2f} mm³{text}" + (f"; {excess}" if excess else ""), [a.path, b.path],
                                   {"overlap_mm3": shared, **values}))  # fmt: skip
         if not any(r.status == "fail" for r in out):
             out.append(result(self.name, "interference", True, f"no unexpected overlaps among {len(leaves)} instances "
                               f"({checked} pairs close enough to check)", [], {"pairs_checked": checked}))  # fmt: skip
         return out
 
-    @staticmethod
-    def _beyond(ctx: Context, allowance: Allowance, a: Leaf, b: Leaf, shared: float) -> str:
-        """How an expected overlap goes beyond what declares it, or '' when it does not."""
-        link = allowance.link
+
+def beyond(allowance: Allowance, a: Leaf, b: Leaf, shared: float, settings: AnalysisSettings) -> str:
+    """How an expected overlap of two leaves goes beyond what declares it, or '' when it does not."""
+    link, tol = allowance.link, settings.tolerances
+    if allowance.kind in ("fit", "touch"):
+        hole, shaft = (link.a, link.b) if link.a.spec.kind == "hole" else (link.b, link.a)
+        d, big = hole.measured.values["diameter"], shaft.measured.values["diameter"]
+        length = min(hole.measured.values["length"], shaft.measured.values["length"])
+        facets = hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm + settings.mesh_tolerance_mm
         if allowance.kind == "fit":
-            hole, shaft = (link.a, link.b) if link.a.spec.kind == "hole" else (link.b, link.a)
-            d, big = hole.measured.values["diameter"], shaft.measured.values["diameter"]
-            length = min(hole.measured.values["length"], shaft.measured.values["length"])
-            facets = hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm
-            ring = math.pi / 4 * max((big + facets) ** 2 - (d - facets) ** 2, 0.0) * length
-            if shared <= ring + ctx.settings.overlap_mm3:
-                return ""
-            return (f"more than the {ring:.2f} mm³ the {link.source.address} interference fit makes (Ø{big:.3f} shaft "
-                    f"in a Ø{d:.3f} hole over {length:.2f} mm)")  # fmt: skip
-        if allowance.kind != "set":
+            ring, what = (
+                math.pi / 4 * max((big + facets) ** 2 - (d - facets) ** 2, 0.0) * length,
+                "interference fit makes",
+            )
+        else:
+            ring, what = math.pi * (d + big) / 2 * facets * length, "clearance fit's facets make where its parts touch"
+        if shared <= ring + settings.overlap_mm3:
             return ""
-        host, inserted = (a, b) if a.path == link.a.instance else (b, a)
-        radius = AXIS_MM
-        if link.a.spec.kind == "hole" and "diameter" in link.a.measured.values:
-            radius = max(link.a.measured.values["diameter"] / 2 - link.a.measured.uncertainty_mm - ctx.tol.position_mm,
-                         AXIS_MM)  # fmt: skip
-        if (host.manifold ^ _axis_core(link.a.frame, inserted, radius)).volume() <= ctx.settings.overlap_mm3:
-            return ""
-        return (f"the {link.source.address} mate sets {inserted.path} into a hole of {host.path}, but {host.path} has "
-                f"material within {radius:.2f} mm of that hole's axis where {inserted.path} sits: the hole is not cut "
-                "there, or not deep enough")  # fmt: skip
+        return (f"more than the {ring:.2f} mm³ the {link.source.address} {what} (Ø{big:.3f} shaft in a Ø{d:.3f} "
+                f"hole over {length:.2f} mm)")  # fmt: skip
+    if allowance.kind != "set":
+        return ""
+    host, inserted = (a, b) if a.path == link.a.instance else (b, a)
+    radius = AXIS_MM
+    if link.a.spec.kind == "hole" and "diameter" in link.a.measured.values:
+        radius = max(link.a.measured.values["diameter"] / 2 - link.a.measured.uncertainty_mm - tol.position_mm, AXIS_MM)
+    if (host.manifold ^ _axis_core(link.a.frame, inserted, radius)).volume() <= settings.overlap_mm3:
+        return ""
+    return (f"the {link.source.address} mate sets {inserted.path} into a hole of {host.path}, but {host.path} has "
+            f"material within {radius:.2f} mm of that hole's axis where {inserted.path} sits: the hole is not cut "
+            "there, or not deep enough")  # fmt: skip
 
 
 def _axis_core(frame: fr.Frame, inserted: Leaf, radius: float) -> manifold3d.Manifold:
