@@ -99,6 +99,7 @@ async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad,
 
 
 @pytest.mark.geometry
+@pytest.mark.cold_cache  # says which parts were rebuilt
 async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCad, tmp_path: Path) -> None:
     copy_design("hinge", tmp_path / "hinge")
     copy_design("shelf", tmp_path / "shelf")

@@ -16,9 +16,28 @@ from hitlcad.render.base import NullRenderer
 DESIGNS = Path(__file__).parent / "designs"
 
 
+class SharedCache(Settings):
+    """Settings whose builds keep parts and analysis results in one cache, whatever their data folder."""
+
+    shared_cache: Path
+
+    @property
+    def cache_dir(self) -> Path:
+        return self.shared_cache
+
+
+@pytest.fixture(scope="session")
+def shared_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The session's cache: a part built by one test is reused by the next. Each xdist worker has its own, so
+    nothing writes it concurrently; its entries are keyed by all they depend on, so no test sees another's edits."""
+    return tmp_path_factory.mktemp("cache")
+
+
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path / "data", backends=["build123d", "blender"])
+def settings(request: pytest.FixtureRequest, tmp_path: Path, shared_cache: Path) -> Settings:
+    if request.node.get_closest_marker("cold_cache"):
+        return Settings(data_dir=tmp_path / "data", backends=["build123d", "blender"])
+    return SharedCache(data_dir=tmp_path / "data", backends=["build123d", "blender"], shared_cache=shared_cache)
 
 
 @pytest.fixture

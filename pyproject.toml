@@ -41,6 +41,7 @@ dev = [
     "pytest-asyncio>=1",
     "httpx>=0.28",
     "ruff>=0.11",
+    "pytest-xdist>=3",  # the tests in parallel: most of their time is builds and analyses of one design each
 ]
 
 [project.scripts]
@@ -68,9 +69,14 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
+# In parallel: a worker per physical core, at most 6. Each test builds and measures with several threads and
+# processes of its own, so more workers wait on each other; and a worker peaks at about 4 GB, 6 at about 12 GB.
+# --pdb runs the tests in this process; so does -n0.
+addopts = "-n auto --maxprocesses=6 --dist worksteal"
 markers = [
   "geometry: builds or measures geometry, with build123d and Blender",
   "once: an exhaustive case: CI runs it on one job",
+  "cold_cache: builds with a part cache of its own, empty at the start (the test is about caching)",
 ]
 # A numeric warning (a division by zero, an invalid value) is a NaN on its way into a report: fail on it
 filterwarnings = ["error::RuntimeWarning"]

@@ -47,6 +47,7 @@ def edit_json(path: Path, change: Any) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+@pytest.mark.cold_cache
 async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     report = await build(core, folder, tmp_path / "out")
