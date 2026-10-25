@@ -205,7 +205,7 @@
       "connectors": {
         "neck": {
           "kind": "shaft",
-          "description": "the locating peg, from the neck joint up"
+          "description": "the locating peg, from its shoulder on the body's side of the glue line up"
         },
         "tail": {
           "kind": "frame",
@@ -220,7 +220,7 @@
       "connectors": {
         "neck": {
           "kind": "hole",
-          "description": "the socket that takes the peg, from the neck joint up"
+          "description": "the socket that takes the peg, from its opening on the head's side of the glue line"
         }
       }
     },
@@ -241,6 +241,7 @@
       "type": "rigid",
       "a": "body.neck",
       "b": "head.neck",
+      "offset": 0.1,
       "fit": {
         "clearance": [
           0.2,

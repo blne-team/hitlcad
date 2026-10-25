@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from hitlcad import materials
-from hitlcad.analysis.iso286 import fit_clearance
+from hitlcad.analysis.iso286 import deviations, fit_clearance
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, parse_mate
 from hitlcad.core.design import DesignSpec
@@ -162,6 +162,34 @@ def test_fits_come_as_clearance_ranges_or_iso_286() -> None:
         Fit()
     with pytest.raises(ValueError, match="ISO 286"):
         fit_clearance("loose", 8)
+
+
+ISO_286_2 = [  # (class, nominal size, upper, lower in µm), from ISO 286-2's tables
+    ("H7", 2, 10, 0), ("h6", 2, 0, -6), ("H7", 3, 10, 0), ("h6", 3, 0, -6), ("H7", 3.001, 12, 0),
+    ("g6", 8, -5, -14), ("s6", 8, 32, 23), ("d9", 8, -40, -76), ("c11", 8, -80, -170), ("e8", 8, -25, -47),
+    ("u6", 30, 61, 48), ("js7", 8, 7.5, -7.5), ("J7", 4, 6, -6), ("K7", 10, 5, -10), ("K4", 5, 0.5, -3.5),
+    ("M6", 300, -9, -41), ("N9", 100, 0, -87), ("N9", 600, -44, -219), ("P7", 50, -17, -42), ("P7", 600, -78, -148),
+    ("S7", 10, -17, -32), ("t6", 2900, 2235, 2100), ("s6", 3150, 1535, 1400), ("H11", 3000, 1350, 0),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("cls", "size", "upper", "lower"), ISO_286_2, ids=[f"{c}@{s}" for c, s, *_ in ISO_286_2])
+def test_iso_286_limits_follow_the_standard_over_its_whole_range(
+    cls: str, size: float, upper: float, lower: float
+) -> None:
+    assert deviations(cls, size) == pytest.approx((upper / 1000, lower / 1000))
+
+
+def test_an_iso_fit_iso_286_does_not_define_is_named_never_raised_from_a_build() -> None:
+    for fit, size, why in (("H7/t6", 10, "only above 24 up to 3150 mm"), ("H11/c11", 600, "only above 0 up to 500"),
+                           ("H7/g6", 3200, "outside ISO 286's sizes"), ("K9/h9", 10, "only up to 3 mm")):  # fmt: skip
+        with pytest.raises(ValueError, match=why):
+            Fit(iso=fit).limits(size)
+        assert not Fit(iso=fit).allows_interference(size)  # the interference and motion checks never crash on it
+    with pytest.raises(ValidationError, match="holes A, B, C"):
+        Fit(iso="Q7/g6")
+    assert fit_clearance("H7/s6", 8) == pytest.approx((-0.032, -0.008))  # classes isofits lacked
+    assert fit_clearance("H9/d9", 8) == pytest.approx((0.04, 0.112)) and fit_clearance("H11/c11", 8)[0] == 0.08
 
 
 def test_verification_takes_settings_where_the_design_says_nothing() -> None:

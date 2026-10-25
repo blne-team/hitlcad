@@ -53,6 +53,7 @@ async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path)
     assert failing(report) == []
     fasteners = results(report, "fastener", "pass")
     assert len(fasteners) == 4 and all("engages 5.00 mm" in r.detail for r in fasteners)
+    assert not [r for r in results(report, "connector") if r.subject.startswith("base.inserts")]  # datums: no result
     assert len(report.instances) == 10 and report.mass and report.mass.mass_g > 20
     out = tmp_path / "out"
     for rel in ("model.step", "mesh.stl", "view.json", "parts/base.step", "parts/lid.3mf", "model.3mf", "bom.csv"):
@@ -78,18 +79,33 @@ async def test_seeded_faults_are_caught_by_their_analysis(core: HitlCad, tmp_pat
     report = await build(core, folder, tmp_path / "out")
     text = "\n".join(failing(report))
     assert "mate base.top+lid.bottom" in text and "origin 0.200 mm" in text
-    assert (
-        "bottoms out: 5.80 mm into a 5.70 mm deep insert[0].thread" not in text
-    )  # the lid moved: the stack is shorter
+    assert "bottoms out" not in text  # the lid moved: the screw reaches 5.80 mm into a pocket 6.51 deep
     assert "not seated on lid.screws[0]" in text
     assert "interference base+insert[0]: base and insert[0] overlap" in text
 
 
-async def test_a_screw_too_long_bottoms_out(core: HitlCad, tmp_path: Path) -> None:
+async def test_a_screw_bottoms_out_where_something_stops_it_not_at_the_end_of_its_insert(
+    core: HitlCad, tmp_path: Path
+) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
-    edit(folder / "parts/hardware.py", '"M3-0.5", 9,', '"M3-0.5", 10,')
+    edit(folder / "parts/hardware.py", '"M3-0.5", 9,', '"M3-0.5", 12,')  # 8 mm into a pocket 6.51 deep
+    report = await build(core, folder, tmp_path / "short")
+    assert any("bottoms out: it reaches 8.00 mm past the opening of insert[0].thread, where base stops it at 6.51"
+               in f for f in failing(report))  # fmt: skip
+    edit(folder / "parts/box.py", "InsertHole(ins, depth=6)", "InsertHole(ins, depth=12)")  # an open insert, room below
+    report = await build(core, folder, tmp_path / "deep")
+    assert failing(report) == []
+    assert all("engages 5.70 mm" in r.detail for r in results(report, "fastener"))  # the insert's whole thread
+
+
+async def test_a_fastener_needs_the_into_thread_and_an_iso_273_clearance_hole(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("enclosure", tmp_path / "enclosure")
+    edit(folder / "interfaces.py", '"M3-0.5-Standard"', '"M5-0.8-Standard"')  # M5 inserts for the M3 screws
+    edit_json(folder / "design.json", lambda d: d["manufacturing"].update(hole_allowance_mm=0.3))  # Ø3.4 prints Ø3.1
     report = await build(core, folder, tmp_path / "out")
-    assert any("bottoms out: 6.00 mm into a 5.70 mm deep" in f for f in failing(report))
+    text = "\n".join(r.detail for r in results(report, "fastener", "fail"))
+    assert "its M3-0.5 thread does not fit the M5-0.8 thread of insert[0].thread" in text
+    assert "the M3-0.5 shank does not clear lid.screws[0]: Ø3.100 as made, ISO 273 asks Ø3.2 (fine)" in text
 
 
 async def test_floating_parts_and_broken_references(core: HitlCad, tmp_path: Path) -> None:
@@ -181,6 +197,32 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     assert motion.status == "pass" and "-100 … 0°" in motion.detail
 
 
+ISO_FITS = [  # pin Ø, diametral gap modelled, fit, passes, what the mate says
+    (2, 0, "H7/h6", True, "fit H7/h6 at Ø2: hole +0.010/0, shaft 0/-0.006, clearance 0.000 … 0.016 mm"),
+    (3, 0, "H7/h6", True, "fit H7/h6 at Ø3: hole +0.010/0"),  # the 3 mm bound belongs to the range up to 3
+    (8, 0, "H7/r6", False, "a cylindrical mate moves, but its fit leaves no room: greatest clearance -0.004 mm"),
+    (8, 0.03, "H7/g6", False, "fit H7/g6: the hole and shaft differ by 0.030 mm"),  # modelled at the fit's limits
+    (3, 0, "H7/t6", False, "fit H7/t6: ISO 286 does not define t6 at Ø3, only above 24 up to 3150 mm"),
+]
+
+
+@pytest.mark.parametrize(
+    ("pin_d", "gap", "fit", "passes", "says"), ISO_FITS, ids=[f"{f}@{d}+{g}" for d, g, f, *_ in ISO_FITS]
+)
+async def test_iso_fits_hold_over_the_standard_s_range_and_leave_a_moving_mate_room(
+    core: HitlCad, tmp_path: Path, pin_d: float, gap: float, fit: str, passes: bool, says: str
+) -> None:
+    folder = copy_design("hinge", tmp_path / "hinge")
+    edit_json(folder / "design.json", lambda d: (
+        d["parameters"][3].update(value=pin_d, max=10), d["parameters"][4].update(value=gap),
+        d["mates"][0].update(fit={"iso": fit})))  # fmt: skip
+    report = await build(core, folder, tmp_path / "out")
+    assert report.status == "succeeded", report.error
+    (mate,) = results(report, "mate")
+    assert (mate.status == "pass") is passes and says in mate.detail, mate.detail
+    assert results(report, "interference") and results(report, "motion")  # every analysis ran
+
+
 async def test_an_analysis_that_crashes_is_reported_and_spares_the_others(
     core: HitlCad, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,6 +251,8 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
         "(hole Ø5.200, shaft Ø5.000), needs 0 … 0.1"
     ]
     assert len(results(report, "relation", "pass")) == 6
+    (sun,) = [r for r in results(report, "connector") if r.subject == "sun.teeth"]
+    assert sun.status == "pass" and sun.detail == "external gear m1.25, 18 teeth, 10 mm wide: tip Ø25.000"
     motion = results(report, "motion")  # a planetary is a closed loop: not analysed, never wrongly failed
     assert motion and not [r for r in motion if r.status == "fail"]
     assert any(r.status == "unverified" and "closed loop" in r.detail for r in motion)
@@ -218,6 +262,17 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     )
     ratio_5 = await build(core, folder, tmp_path / "ratio_5", "ratio_5")
     assert ratio_5.status == "succeeded" and len(results(ratio_5, "relation", "pass")) == 6
+
+
+async def test_a_gear_cut_to_another_module_fails_its_connector_and_meshes_with_nothing(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    folder = copy_design("gearbox", tmp_path / "gearbox")
+    edit(folder / "parts/gears.py", 'planet = spur(p["planet_teeth"], m,', 'planet = spur(p["planet_teeth"], 1.0,')
+    report = await build(core, folder, tmp_path / "out")
+    assert "connector planet.teeth: tip Ø20.000, m1.25 × (18 + 2) needs Ø25.000 ± 0.125" in failing(report)
+    unverified = [r.detail for r in results(report, "relation", "unverified")]
+    assert len(unverified) == 6 and "not verified until planet[0].teeth measures as declared" in unverified[0]
 
 
 async def test_components_are_built_bound_and_counted(core: HitlCad, tmp_path: Path) -> None:
