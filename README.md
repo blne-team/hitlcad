@@ -181,6 +181,7 @@ assembly as a graph, the BOM and the brief.
   is checked
 - [docs/architecture.md](docs/architecture.md): how hitlcad works inside
 - [docs/development.md](docs/development.md): working on hitlcad itself
+- [docs/roadmap.md](docs/roadmap.md): what comes next
 
 ## License
 

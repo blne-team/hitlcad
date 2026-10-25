@@ -507,34 +507,6 @@ caught by the analysis that owns them.
 | Material | `materials.json` in a project | density, processes, minimum thread engagement |
 | Executor, renderer, store | protocols | as before |
 
-## Status and what's next
+## What's next
 
-Every phase of the original roadmap is built: structure (the folder layout, design.json format 2,
-addresses, connectors, mates, coverage, interference), standard parts and the product record
-(catalog providers, fastener sets, materials, mass properties, BOM and exporters, the Structure and
-BOM tabs), hierarchy and scale (components, where-used, the part cache, parallel builds, scoped
-answers, broad-phase interference, instanced views, STEP product structure, revision comparisons),
-variants and motion (configurations, relations, limits, motion analysis, flexible components, the
-configuration switcher and motion slider), and manufacturing depth (ISO 286 fits, process
-allowances, CNC milling, sheet metal and injection molding, URDF and SDF, tolerance stacks), and
-mesh parts measured like B-rep ones, with resin printing and FDM on support for organic shapes.
-
-**Next: measure the agent.** The reference designs become benchmark tasks, each run headless with
-Claude Code and Codex against fixed requirements, on this version and the one before it: requirements
-passed on the first build and at the end, builds needed, interface errors caught and missed, tokens.
-It is run once, deliberately, because each run costs real tokens, and again only when a change is
-meant to move one of those numbers.
-
-## Open questions
-
-- **Coupled mechanisms.** Motion analysis does not sweep closed loops (a planetary, a four-bar
-  linkage). A loop-closing kinematic solver would be the first exception to "check, don't solve".
-- **Catalog breadth.** bd_warehouse covers fasteners and bearings; motors, connectors and boards come
-  from vendor STEP files. Whether `search_catalog` also searches an online catalogue is a policy
-  question as much as a technical one.
-- **Manufacturing orientation.** A part's own frame is how it is made; a part made in several
-  setups (or printed in another orientation than it is modelled) needs a declared orientation per
-  process.
-- **Very large assemblies.** Instanced tessellation covers repeated parts; simplified
-  representations per component (as SolidWorks' SpeedPak) may be needed beyond a few thousand
-  instances.
+See [roadmap.md](roadmap.md): the milestones from here, and the open questions.
