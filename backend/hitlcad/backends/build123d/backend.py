@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
 
@@ -21,9 +22,8 @@ class Build123dBackend(SubprocessBackend):
     brep = True
     entry = Path(__file__).with_name("entry.py")
 
-    def __init__(self, *, python: str | None = None, **kwargs: object) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
-        self.python = python or sys.executable
+    def libraries(self) -> dict[str, str | None]:
+        return {name: version(name) for name in ("build123d", "bd_warehouse")}
 
     def availability(self) -> tuple[bool, str]:
         if importlib.util.find_spec("build123d") is None:
@@ -35,4 +35,4 @@ class Build123dBackend(SubprocessBackend):
 
     def command(self, job_file: Path) -> list[str]:
         # Isolated, writing no bytecode, unbuffered (a stopped build's last words reach its log), in UTF-8 mode.
-        return [self.python, "-I", "-B", "-u", "-X", "utf8", str(self.entry), str(job_file)]
+        return [sys.executable, "-I", "-B", "-u", "-X", "utf8", str(self.entry), str(job_file)]

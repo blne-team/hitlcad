@@ -32,12 +32,12 @@ class CatalogPart:
 
 def mate_to(frame_on_part: Any, frame_on_target: Any) -> Any:
     """The placement P of a part such that P * frame_on_part faces frame_on_target."""
-    placed = _product(_product(_rows(frame_on_target), FACING), _inverse(_rows(frame_on_part)))
+    placed = _product(_product(rows(frame_on_target), FACING), _inverse(rows(frame_on_part)))
     return _like(frame_on_target, placed)
 
 
-def _rows(frame: Any) -> list[list[float]]:
-    """A Location, a Matrix or nested rows, as 4 × 4 rows."""
+def rows(frame: Any) -> list[list[float]]:
+    """A build123d Location, a Blender Matrix or nested rows, as rows of floats (4 × 4 for a frame)."""
     if hasattr(frame, "wrapped"):  # a build123d Location
         t = frame.wrapped.Transformation()
         return [[t.Value(r, c) for c in range(1, 5)] for r in range(1, 4)] + [[0.0, 0.0, 0.0, 1.0]]

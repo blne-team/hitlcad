@@ -259,6 +259,41 @@ async def test_motion_finds_what_the_paddle_meets_between_any_two_positions(core
     assert motion.status == "unverified" and "paddle and base already overlap by 1.5" in motion.detail
 
 
+PRESSED = {
+    "design.json": {
+        "hitlcad": 2, "name": "Pressed", "backend": "build123d", "ground": "base",
+        "parts": {"base": {"role": "a plate with a Ø4 hole", "file": "parts/pressed.py", "material": "PLA",
+                           "connectors": {"hole": {"kind": "frame"}}},
+                  "knob": {"role": "a Ø4.2 pin with an arm, turning in the hole", "file": "parts/pressed.py",
+                           "material": "PLA", "connectors": {"pin": {"kind": "frame"}}}},
+        "mates": [{"type": "revolute", "a": "base.hole", "b": "knob.pin"}],
+    },
+    "parts/pressed.py": """from build123d import Align, Box, Cylinder, Pos, Rot
+
+LOW = (Align.CENTER, Align.CENTER, Align.MIN)
+
+
+def build(p, i):
+    base = Box(30, 30, 4, align=LOW) - Cylinder(2, 4, align=LOW)
+    knob = Cylinder(2.1, 5, align=LOW) + Pos(5, 0, 4.5) * Box(14, 2, 2, align=LOW)
+    return {"base": (base, {"hole": Pos(0, 0, 4)}), "knob": (knob, {"pin": Pos(0, 0, 4) * Rot(180, 0, 0)})}
+""",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'base': [Pos()], 'knob': [Pos()]}\n",
+}  # fmt: skip
+
+
+async def test_a_mate_s_allowance_reaches_the_motion_it_moves(core: HitlCad, tmp_path: Path) -> None:
+    """The sweep is cached by what it moves; what a mate allows its parts to share where they sit changes that."""
+    folder = write_design(tmp_path / "pressed", PRESSED)
+    report = await build(core, folder, tmp_path / "a")
+    (motion,) = results(report, "motion")
+    assert motion.status == "unverified" and "knob and base already overlap" in motion.detail, motion.detail
+    edit_json(folder / "design.json", lambda d: d["mates"][0].update(overlap=True))  # the pin is pressed in
+    report = await build(core, folder, tmp_path / "b")
+    (motion,) = results(report, "motion")
+    assert motion.status == "pass" and "moves through a full turn without collision" in motion.detail, motion.detail
+
+
 async def test_a_turn_past_a_part_that_cannot_be_measured_is_not_called_clear(core: HitlCad, tmp_path: Path) -> None:
     # A Blender cube with a face deleted, in the paddle's way, and the pin low enough to pass under it
     post = "import bmesh\nimport bpy\n\n\ndef build(p, i):\n    bpy.ops.mesh.primitive_cube_add(size=1, location=(18, 3, 6))\n" \
@@ -442,6 +477,27 @@ async def test_components_are_built_bound_and_counted(core: HitlCad, tmp_path: P
     motion = results(report, "motion")  # flexible: each box's hinge swings at the shelf's level too
     assert len(motion) == 2 and all(r.status == "fail" and "hits" in r.detail for r in motion)
     assert (tmp_path / "out" / "components" / "box" / "parts" / "lid.step").is_file()
+
+
+async def test_robot_descriptions_give_each_part_its_own_mesh(core: HitlCad, tmp_path: Path) -> None:
+    """The shelf's own part named like its boxes' base: each link still carries its own part's mesh."""
+    copy_design("hinge", tmp_path / "hinge")
+    folder = copy_design("shelf", tmp_path / "shelf")
+    edit_json(folder / "design.json", lambda d: d.update(
+        parts={"base": d["parts"]["plate"]}, ground="base", outputs=["urdf", "sdf"],
+        mates=[{"type": "rigid", "a": "base.slots", "b": "box.foot"}]))  # fmt: skip
+    edit(folder / "assembly.py", '"plate": [Pos()]', '"base": [Pos()]')
+    edit(folder / "parts/plate.py", 'return {"plate":', 'return {"base":')
+    out = tmp_path / "out"
+    report = await build(core, folder, out)
+    assert report.status == "succeeded", report.error
+    urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
+    meshes = {link.get("name"): link.find("visual/geometry/mesh").get("filename") for link in urdf.findall("link")}
+    assert meshes["base"] == "meshes/parts/base.stl", meshes
+    assert meshes["box_0___base"] == "meshes/components/box/parts/base.stl", meshes
+    for rel in ("parts/base.stl", "components/box/parts/base.stl"):
+        assert (out / "urdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
+        assert (out / "sdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
 
 
 async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> None:

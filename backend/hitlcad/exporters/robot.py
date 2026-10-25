@@ -132,11 +132,13 @@ def tree(built: BuiltDesign) -> Tree:
 
 
 def _meshes(t: Tree, out: Path, folder: str) -> dict[str, str]:
-    (out / folder / "meshes").mkdir(parents=True, exist_ok=True)
+    """Each link's mesh, by its part's own file in the build (`parts/lid.stl`, a component's
+    `components/box/parts/lid.stl`): part names are unique only within their design."""
     names = {}
     for leaf in t.leaves.values():
-        rel = f"meshes/{leaf.part.name}.stl"
+        rel = f"meshes/{leaf.part.mesh_file.relative_to(out).as_posix()}"
         if not (out / folder / rel).exists():
+            (out / folder / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(leaf.part.mesh_file, out / folder / rel)
         names[leaf.path] = rel
     return names

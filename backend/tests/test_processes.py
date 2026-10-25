@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
+import trimesh
 from build123d import (
     Align,
     Axis,
@@ -32,7 +35,8 @@ from build123d import (
     make_face,
 )
 
-from hitlcad.analysis.model import AnalysisSettings, Body, Leaf, PartGeometry
+from hitlcad.analysis.features import Unmeasurable
+from hitlcad.analysis.model import AnalysisSettings, Body, BuildBodies, Leaf, PartGeometry
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import (
     CncMillingProcess,
@@ -46,19 +50,22 @@ from hitlcad.core.structure import PartSpec, Tolerances
 
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
-SETTINGS = AnalysisSettings(tolerances=Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000), overlap_mm3=1e-3,
-                            mesh_tolerance_mm=0.01, wall_samples=3000)  # fmt: skip
+SETTINGS = AnalysisSettings(overlap_mm3=1e-3, mesh_tolerance_mm=0.01, wall_samples=3000)
+TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 
 
-def body(shape, tmp_path: Path, name: str) -> Body:
+def part(shape, tmp_path: Path, name: str) -> PartGeometry:
     step, stl, glb = tmp_path / f"{name}.step", tmp_path / f"{name}.stl", tmp_path / f"{name}.glb"
     export_step(shape, str(step))
     export_stl(shape, str(stl), tolerance=0.01, angular_tolerance=0.1)
     export_gltf(shape, str(glb), binary=True, linear_deflection=0.01, angular_deflection=0.1)
-    part = PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
+    return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
                         mesh_file=stl, step_file=step, objects_file=glb, frames={}, catalog=None, reads=Reads(),
                         cached=False)  # fmt: skip
-    return Body(name, [Leaf(name, part, None, fr.IDENTITY)], SETTINGS)  # type: ignore[arg-type]
+
+
+def body(shape, tmp_path: Path, name: str) -> Body:
+    return Body(name, [Leaf(name, part(shape, tmp_path, name), None, fr.IDENTITY)], SETTINGS, TOL)  # type: ignore[arg-type]
 
 
 def finding(findings, name: str):
@@ -228,3 +235,31 @@ def test_resin_wants_hollows_drained_and_walls_that_survive(tmp_path: Path) -> N
     drained = hollow - Cylinder(2, 6, align=ON)  # a 4 mm drain hole through the floor into the hollow
     assert passed(rules.checks(body(drained, tmp_path, "drained")), "resin_drains") is True
     assert passed(rules.checks(body(Box(30, 30, 0.4, align=ON), tmp_path, "film")), "resin_wall_thickness") is False
+
+
+def test_an_open_mesh_has_no_wall_thickness_to_read(tmp_path: Path) -> None:
+    """A box one triangle short of closed would read its 2 mm walls as 1 mm: its walls are not measured at all."""
+    box = trimesh.creation.box((20, 20, 2))
+    box.update_faces(np.arange(len(box.faces)) != 0)
+    box.export(tmp_path / "open.stl")
+    geometry = PartGeometry(name="open", spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py",
+                            backend="blender", mesh_file=tmp_path / "open.stl", step_file=None,
+                            objects_file=tmp_path / "open.glb", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+    shape = Body("open", [Leaf("open", geometry, None, fr.IDENTITY)], SETTINGS, TOL)  # type: ignore[arg-type]
+    with pytest.raises(Unmeasurable, match="open is not a closed mesh"):
+        _ = shape.walls
+    walls = finding(FdmProcess(process="fdm").checks(shape), "fdm_wall_thickness")
+    assert walls.passed is None and "not a closed mesh" in walls.detail
+    thickness = finding(SheetMetalProcess(process="sheet_metal", thickness_mm=2, min_bend_radius_mm=2).checks(shape),
+                        "sheet_thickness")  # fmt: skip
+    assert thickness.passed is None
+
+
+def test_a_design_s_own_tolerances_reach_its_process_checks(tmp_path: Path) -> None:
+    """A pocket leaning 1° has no vertical inside corners to 0.05°, and sharp ones to a design's 2°."""
+    rules = CncMillingProcess(process="cnc_milling", tool_diameter_mm=6)
+    leaning = part(Rotation(1, 0, 0) * pocket(0), tmp_path, "leaning")
+    for angle, vertical in ((0.05, False), (2.0, True)):
+        built = SimpleNamespace(parts={"leaning": leaning}, tolerances=TOL.model_copy(update={"angle_deg": angle}))
+        corners = finding(rules.checks(BuildBodies(built, SETTINGS, None).part("leaning")), "cnc_inside_corners")  # type: ignore[arg-type]
+        assert corners.passed is not vertical, (angle, corners.detail)

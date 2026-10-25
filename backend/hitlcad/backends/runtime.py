@@ -12,8 +12,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import numbers
 import os
 import sys
+import threading
+import time
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -24,6 +27,8 @@ from typing import Any
 INTERFACES = "interfaces.py"
 ASSEMBLY = "assembly.py"
 LIB = "lib"
+#: How often (s) a build checks that the server that started it is still there.
+PARENT_POLL_S = 1.0
 
 
 class ModelError(Exception):
@@ -200,16 +205,16 @@ def _plain(value: Any, what: str) -> Any:
     """A JSON value (numbers, strings, booleans, lists and string-keyed dicts of them)."""
     if isinstance(value, bool | str) or value is None:
         return value
-    if isinstance(value, int | float):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise ModelError(f"{what} is {value}")
-        return value
+    if isinstance(value, numbers.Integral):  # numpy's integers too
+        return int(value)
+    if isinstance(value, numbers.Real):  # numpy's floats too
+        if not math.isfinite(number := float(value)):
+            raise ModelError(f"{what} is {number}")
+        return number
     if isinstance(value, list | tuple):
         return [_plain(v, what) for v in value]
     if isinstance(value, dict) and all(isinstance(k, str) for k in value):
         return {k: _plain(v, what) for k, v in value.items()}
-    if hasattr(value, "__float__"):  # numpy scalars
-        return float(value)
     raise ModelError(f"{what} is a {type(value).__name__}; interface values are numbers, strings, booleans, "
                      "and lists or dicts of them")  # fmt: skip
 
@@ -218,11 +223,26 @@ def as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list | tuple) else [value]
 
 
+def exit_with_parent() -> None:
+    """End this process once the one that started it is gone. The server holds a build's limits (its deadline,
+    its memory); a server killed outright cannot, so its builds end themselves rather than run on without any.
+    On Windows a job object ends them with the server already (and a parent's pid never changes there)."""
+    parent = os.getppid()
+
+    def watch() -> None:
+        while os.getppid() == parent:
+            time.sleep(PARENT_POLL_S)
+        os._exit(1)
+
+    threading.Thread(target=watch, name="exit-with-parent", daemon=True).start()
+
+
 def run(job_file: Path, modes: dict[str, Callable[[Runtime | None, dict[str, Any]], dict[str, Any]]]) -> None:
     """The entry scripts' main: read job.json, run its mode, write result.json (always). Model code runs in
     the design's sources folder, so its relative paths (vendor/…) resolve there; outputs go to `job["out"]`,
     the folder the entry was started in. A job that runs no model code (one that assembles built parts) has
     no `src` and gets no runtime."""
+    exit_with_parent()
     job = json.loads(job_file.read_text(encoding="utf-8"))
     out = Path.cwd()
     job["out"] = str(out)

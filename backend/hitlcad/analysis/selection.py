@@ -38,8 +38,6 @@ def leaf_of(built: BuiltDesign, instance: str) -> Leaf:
 
 def connector_of(part: PartGeometry, item: Any, tol: Any) -> str | None:
     """The connector (and frame, in a pattern) whose feature a part-frame face is."""
-    if not hasattr(item, "geom_type"):
-        return None
     kind = item.geom_type.name
     for name, spec in part.spec.connectors.items():
         frames = part.frames.get(name, [])
@@ -105,10 +103,8 @@ def describe_file_pick(path: Path, point: Vec, normal: Vec | None, ref: Componen
 
 def _nearest(placed: list[tuple[Features, fr.Frame]], point: Vec) -> tuple[int, str | None]:
     """Which placed part a point is on (the nearest), and the object of it there, where it has several."""
-    import trimesh
-
     local = [(np.linalg.inv(transform) @ np.append(point, 1.0))[:3] for _, transform in placed]
-    gaps = [float(trimesh.proximity.closest_point(f.mesh, [p])[1][0]) for (f, _), p in zip(placed, local, strict=True)]
+    gaps = [float(f.probe.nearest(p[None])[0][0]) for (f, _), p in zip(placed, local, strict=True)]
     k = int(np.argmin(gaps))
     return k, placed[k][0].named_at(local[k])
 

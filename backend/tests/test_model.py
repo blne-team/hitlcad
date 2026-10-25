@@ -11,10 +11,10 @@ import pytest
 from pydantic import ValidationError
 
 from hitlcad import materials
-from hitlcad.analysis.iso286 import deviations, fit_clearance
 from hitlcad.core import frames as fr
-from hitlcad.core.address import End, InstancePath, parse_mate
+from hitlcad.core.address import End, InstancePath
 from hitlcad.core.design import DesignSpec
+from hitlcad.core.iso286 import deviations, fit_clearance
 from hitlcad.core.structure import (
     Axis,
     CylindricalMate,
@@ -43,8 +43,6 @@ def test_addresses_parse_and_print_back() -> None:
     path = InstancePath.parse("tilt/planet[2]")
     assert [str(s) for s in path.segments] == ["tilt", "planet[2]"] and str(path) == "tilt/planet[2]"
     assert str(End.parse("planet[1].bore")) == "planet[1].bore"
-    a, b = parse_mate("lid.bottom+housing.top")
-    assert (a.owner.name, a.connector, b.owner.name) == ("lid", "bottom", "housing")
     for bad in ("lid", "1lid.x", "a/b.c", "lid.bottom.top"):
         with pytest.raises(ValueError):
             End.parse(bad)
@@ -95,6 +93,14 @@ def test_design_json_names_must_be_unique_and_resolve() -> None:
         )
     with pytest.raises(ValidationError, match="under parts/"):
         DesignSpec.model_validate(design(parts={"a": {"role": "x", "file": "a.py"}}))
+
+
+def test_an_int_parameter_takes_whole_numbers_only() -> None:
+    from hitlcad.core.types import ParamSpec
+
+    assert ParamSpec(name="n", type="int", value=3.0).value == 3
+    with pytest.raises(ValidationError, match="n: expected a whole number, got 2.7"):
+        ParamSpec(name="n", type="int", value=2.7)
 
 
 def test_configurations_apply_over_the_parameters() -> None:
@@ -288,10 +294,10 @@ def test_a_body_of_many_leaves_is_measured_from_its_parts_not_one_mesh_of_them(t
 
     from hitlcad.analysis.model import AnalysisSettings, Body, Leaf
 
-    settings = AnalysisSettings(tolerances=TOL, overlap_mm3=1e-3, mesh_tolerance_mm=0.01, wall_samples=100)
+    settings = AnalysisSettings(overlap_mm3=1e-3, mesh_tolerance_mm=0.01, wall_samples=100)
     part = _part(tmp_path, "cube", trimesh.creation.box((10, 10, 10)))
     leaves = [Leaf(f"cube[{k}]", part, None, fr.translation((20.0 * k, 0, 0))) for k in range(3)]  # type: ignore[arg-type]
-    body = Body("row", leaves, settings)
+    body = Body("row", leaves, settings, TOL)
     assert body.metrics.size == pytest.approx((50, 10, 10)) and body.metrics.volume == pytest.approx(3000)
     assert body.metrics.watertight and body.metrics.bodies == 3
     assert "mesh" not in body.__dict__  # a box and a volume need no mesh of every leaf at once
@@ -312,3 +318,29 @@ def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:
     (tmp_path / "design.json").write_text(json.dumps(design), encoding="utf-8")
     with pytest.raises(ValueError, match=r"\nparts\.a\.colour: Extra inputs are not permitted$"):
         DesignFolder(tmp_path).load()
+
+
+def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> None:
+    """Its relations then say so for every frame, never reading the nominals that are not there."""
+    from hitlcad.analysis.base import Context
+    from hitlcad.analysis.model import BuiltDesign, PartGeometry
+    from hitlcad.analysis.relations import Relations
+    from hitlcad.core.report import Reads
+
+    gears = {"teeth": {"kind": "gear", "count": 2, "teeth": "teeth", "module": "interfaces.module", "width": "w"}}
+    spec = DesignSpec.model_validate(design(
+        parts={name: {"role": name, "file": "parts/a.py", "connectors": gears} for name in ("a", "b")},
+        relations=[{"type": "gear", "a": "a.teeth", "b": "b.teeth"}],
+    ))  # fmt: skip
+    parts = {name: PartGeometry(name=name, spec=spec.parts[name], file="parts/a.py", backend="build123d",
+                                mesh_file=Path("unused.stl"), step_file=None, objects_file=Path("unused.glb"),
+                                frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
+                                reads=Reads(), cached=False)
+             for name in ("a", "b")}  # fmt: skip
+    built = BuiltDesign(spec=spec, folder=Path(), values={"w": 10}, interfaces={}, interface_reads={},
+                        assembly_reads=Reads(), parts=parts, placements={"a": [fr.IDENTITY], "b": [fr.IDENTITY]},
+                        components={}, materials={}, tolerances=TOL)  # fmt: skip
+    built.measure_connectors()
+    assert [m.detail for m in built.measured[("a", "teeth")]] == ["no parameter 'teeth'"] * 2
+    relations = Relations().run(Context(built, None, None, None))  # type: ignore[arg-type]
+    assert [r.status for r in relations] == ["unverified"] * 2

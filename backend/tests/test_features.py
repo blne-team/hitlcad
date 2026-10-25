@@ -171,3 +171,23 @@ def test_a_gear_measures_its_tip_and_teeth_across_its_face_width(gear: tuple[Bre
         assert more.status == "fail" and "12 teeth across the face width, 13 declared" in more.detail
         upside_down = features.gear(at(0, 0, 5), TOL, module=2, teeth=12, width=5, internal=False)
         assert upside_down.status == "fail" and "no external gear teeth" in upside_down.detail
+
+
+def test_a_hole_split_into_half_faces_is_one_hole() -> None:
+    """CAD exporters often write a hole's wall as two half-faces, on trimmed surfaces: still one hole, no corner."""
+    from build123d import Shape
+    from OCP.ShapeUpgrade import ShapeUpgrade_ShapeDivideClosed
+
+    from hitlcad.analysis.geometry import face_text
+
+    divide = ShapeUpgrade_ShapeDivideClosed((Box(30, 30, 10, align=ON) - Cylinder(1.5, 10, align=ON)).wrapped)
+    divide.SetNbSplitPoints(1)
+    divide.Perform()
+    shape = Shape.cast(divide.Result())
+    halves = [f for f in shape.faces() if f.geom_type.name == "CYLINDER"]
+    assert len(halves) == 2 and halves[0].radius is None  # build123d gives a trimmed surface no radius
+    features = BrepFeatures("part", shape, lambda: None, list)  # type: ignore[arg-type, return-value]
+    assert [(h.diameter, h.depth) for h in features.holes()] == [(pytest.approx(3), pytest.approx(10))]
+    assert features.inside_corners(TOL) == []
+    assert features.round(at(0, 0, 10), TOL, inward=True).values["diameter"] == pytest.approx(3)
+    assert "r=1.50 mm" in face_text(halves[0], {})

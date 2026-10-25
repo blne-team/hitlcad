@@ -69,7 +69,7 @@ class BackendRegistry:
         try:
             return self._backends[name]
         except KeyError:
-            raise KeyError(f"unknown backend {name!r}; enabled: {self.names()}") from None
+            raise LookupError(f"unknown backend {name!r}; enabled: {', '.join(self.names())}") from None
 
     def names(self) -> list[str]:
         return list(self._backends)

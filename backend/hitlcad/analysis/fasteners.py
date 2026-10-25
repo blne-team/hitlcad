@@ -8,11 +8,10 @@ import math
 from typing import Any
 
 import numpy as np
-import trimesh
 
 from hitlcad.analysis.base import Context, label, result, structural
 from hitlcad.analysis.mates import allowance
-from hitlcad.analysis.model import Leaf, PlacedFrame, StructureError
+from hitlcad.analysis.model import BuiltDesign, Leaf, PlacedFrame, StructureError
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result
 from hitlcad.core.structure import FastenerSet
@@ -24,6 +23,12 @@ FASTENER_DATA = ("thread", "thread_diameter", "thread_pitch", "length", "clearan
 TAPPED = 0.7
 #: Rays parallel to the fastener's axis, round it, that look for what stops it past the into hole's opening.
 FREE_RAYS = 8
+#: Those rays run this share of the way out to the thread's root (or the into hole's wall, if narrower): inside
+#: the fastener, clear of the hole's own wall, which they would otherwise graze.
+FREE_REACH = 0.9
+#: ISO 68-1's basic profile: a thread's minor diameter is its major diameter less this many pitches (5/4 of the
+#: fundamental triangle's height √3/2 · P).
+MINOR_PITCHES = 5 * math.sqrt(3) / 8
 
 
 def _coaxial(a: PlacedFrame, b: PlacedFrame, tol: Any) -> bool:
@@ -32,17 +37,17 @@ def _coaxial(a: PlacedFrame, b: PlacedFrame, tol: Any) -> bool:
     return parallel and fr.distance_to_line(fr.origin(b.frame), fr.origin(a.frame), za) <= tol.position_mm
 
 
-def stacks(ctx: Context, fs: FastenerSet) -> list[tuple[PlacedFrame, list[PlacedFrame]]]:
+def stacks(built: BuiltDesign, fs: FastenerSet) -> list[tuple[PlacedFrame, list[PlacedFrame]]]:
     """Each stack (the through frame of every through pattern on an into frame's axis, then the into frame)
     with its fastener seat: the free seat nearest the stack's top."""
-    seats = ctx.built.frames(fs.fastener)
-    throughs = [ctx.built.frames(t) for t in fs.through]
-    into = ctx.built.frames(fs.into)
+    seats = built.frames(fs.fastener)
+    throughs = [built.frames(t) for t in fs.through]
+    into = built.frames(fs.into)
     out = []
     for anchor in into:
         stack = []
         for end, pattern in zip(fs.through, throughs, strict=True):
-            hits = [f for f in pattern if _coaxial(anchor, f, ctx.tol)]
+            hits = [f for f in pattern if _coaxial(anchor, f, built.tolerances)]
             if len(hits) != 1:
                 raise StructureError(f"{label(anchor)} has {len(hits)} holes of {end} on its axis; a stack needs one")
             stack.append(hits[0])
@@ -86,22 +91,14 @@ def free_depth(
     span = np.array([path.min(axis=0), path.max(axis=0)])
     nearest, what = math.inf, ""
     for leaf in leaves:
-        corners = trimesh.bounds.corners(leaf.part.mesh.bounds) @ leaf.transform[:3, :3].T + leaf.transform[:3, 3]
-        if leaf.path == seat.instance or np.any(corners.min(axis=0) > span[1]) or np.any(corners.max(axis=0) < span[0]):
+        if leaf.path == seat.instance or np.any(leaf.bounds[0] > span[1]) or np.any(leaf.bounds[1] < span[0]):
             continue
         inverse = np.linalg.inv(leaf.transform)
         local = origins @ inverse[:3, :3].T + inverse[:3, 3]
         direction = inverse[:3, :3] @ axis
-        mesh = leaf.part.mesh
-        with np.errstate(divide="ignore", invalid="ignore"):  # trimesh's test of sliver triangles, never hit
-            at, ray, tri = mesh.ray.intersects_location(local, np.tile(direction, (len(local), 1)), multiple_hits=True)
-        if not len(ray):
-            continue
-        entering = mesh.face_normals[tri] @ direction < 0
-        distance = np.einsum("ij,j->i", at - local[ray], direction)[entering]
-        distance = distance[distance > 1e-6]
-        if len(distance) and float(distance.min()) < nearest:
-            nearest, what = float(distance.min()), leaf.path
+        distance = float(leaf.part.features.probe.entering(local, np.tile(direction, (len(local), 1))).min())
+        if distance < nearest:
+            nearest, what = distance, leaf.path
     return (nearest, what) if nearest <= reach else (math.inf, "")
 
 
@@ -112,7 +109,7 @@ class Fasteners:
         out, leaves = [], ctx.built.leaves()
         for fs in ctx.built.spec.fasteners:
             try:
-                paired = stacks(ctx, fs)
+                paired = stacks(ctx.built, fs)
             except StructureError as e:
                 out.append(structural(fs.address, e, [fs.fastener, *fs.through, fs.into]))
                 continue
@@ -158,7 +155,7 @@ class Fasteners:
             notes.append(f"engagement {engagement:.2f} mm not judged: {into.part.name} has no material in the registry")
         elif engagement < k * d:
             problems.append(f"engagement {engagement:.2f} mm in {label(into)}, needs {k * d:.2f} ({k:g} × Ø{d:g})")
-        radius = 0.9 * min(into.measured.values.get("diameter", d), d - 1.0825 * pitch) / 2  # inside its thread
+        radius = FREE_REACH * min(into.measured.values.get("diameter", d), d - MINOR_PITCHES * pitch) / 2
         free, stop = free_depth(leaves, seat, into, radius, past + ctx.tol.position_mm)
         if past > free + ctx.tol.position_mm:
             values["free_mm"] = free

@@ -23,7 +23,7 @@ from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
-from hitlcad.core.structure import Measured, PartSpec, Tolerances, _Connector
+from hitlcad.core.structure import GearConnector, Measured, PartSpec, Tolerances, _Connector
 from hitlcad.core.types import Value
 from hitlcad.materials import Material
 
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class AnalysisSettings:
-    tolerances: Tolerances
     overlap_mm3: float = field(metadata={"doc": "Bodies sharing less than this touch; they do not overlap"})
     mesh_tolerance_mm: float = field(metadata={"doc": "Chordal deviation of the meshes measured"})
     wall_samples: int = field(metadata={"doc": "Surface points probed for wall thickness"})
@@ -76,7 +75,7 @@ class PartGeometry:
     @cached_property
     def metrics(self) -> MeshMetrics:
         """Measured on the mesh; its bodies as its representation counts them (a B-rep's solids)."""
-        return measure(self.mesh, self.solid).model_copy(update={"bodies": self.features.bodies()})
+        return measure(self.mesh, self.solid, self.features.bodies())
 
     @cached_property
     def features(self) -> Features:
@@ -260,18 +259,25 @@ class BuiltDesign:
 
     def mass(self, part: PartGeometry, transform: fr.Frame = fr.IDENTITY) -> MassProperties | None:
         """One of its parts' mass, centre and inertia about the centre, placed by `transform`: known when the
-        part's material is and its mesh is closed."""
-        material = self.materials.get(part.material or "")
-        if material is None or not part.metrics.watertight:
+        part's material is and its mesh is closed (`unknown_mass` says why it is not)."""
+        if self.unknown_mass(part):
             return None
         props = part.mesh.mass_properties  # at unit density
-        density = material.density_g_cm3 / 1000  # g/mm³
+        density = self.materials[part.material].density_g_cm3 / 1000  # type: ignore[index]  # g/mm³
         r = transform[:3, :3]
         return MassProperties(
             mass_g=float(props["mass"]) * density,
             centre_mm=tuple(float(v) for v in (transform @ np.append(props["center_mass"], 1.0))[:3]),
             inertia_g_mm2=tuple(tuple(float(v) for v in row) for row in r @ props["inertia"] @ r.T * density),
         )  # type: ignore[arg-type]
+
+    def unknown_mass(self, part: PartGeometry) -> str:
+        """Why a part's mass is unknown, or ''."""
+        if part.material is None:
+            return "has no material"
+        if part.material not in self.materials:
+            return f"has material {part.material!r}, which is not in the material registry"
+        return "" if part.metrics.watertight else "is not a closed mesh"
 
     @cached_property
     def motion_plans(self) -> list[Any]:
@@ -313,43 +319,51 @@ class BuiltDesign:
         return out
 
     def measure_connectors(self) -> None:
-        """Measure every declared connector's frames on its part (before the analyses read them)."""
+        """Measure every declared connector's frames on its part (before the analyses read them). A nominal value
+        that does not resolve fails every frame, so nothing reads the nominals that are not there."""
         for name, part in self.parts.items():
             for cname, spec in part.spec.connectors.items():
+                frames = part.frames.get(cname, [])
                 try:
                     nominals = self.nominals(spec)
                 except StructureError as e:
-                    self.measured[(name, cname)] = [Measured(status="fail", detail=str(e))]
+                    self.measured[(name, cname)] = [Measured(status="fail", detail=str(e)) for _ in frames]
                     continue
                 self.measured[(name, cname)] = [spec.measure(part.features, f, self.tolerances, nominals)
-                                                for f in part.frames.get(cname, [])]  # fmt: skip
+                                                for f in frames]  # fmt: skip
 
     def nominals(self, spec: _Connector) -> dict[str, float]:
         out: dict[str, float] = {k: float(self.nominal(ref)) for k, ref in spec.nominal_refs().items()}
-        if getattr(spec, "internal", False):
-            out["internal"] = 1.0
+        if isinstance(spec, GearConnector):
+            out["internal"] = float(spec.internal)
         return out
 
 
 # --------------------------------------------------------------------------- bodies for checks
 
 
+#: A gap between solids is looked for this far (mm) first, and WIDEN times as far each time nothing is within
+#: reach: fitted parts are close, so looking near first is cheap.
+SEARCH_MM, WIDEN = 1.0, 4
+
+
 def gap(a: manifold3d.Manifold, b: manifold3d.Manifold, upto: float) -> float:
     """Smallest distance (mm) between two solids, or `upto` when they are further apart; 0 when they touch
     or overlap."""
-    search = 1.0  # mm; widened ×8 until the gap is found: fitted parts are close, so near first is cheap
+    search = SEARCH_MM
     while (found := float(a.min_gap(b, search))) >= search and search < upto:
-        search = min(search * 8, upto)
+        search = min(search * WIDEN, upto)
     return found
 
 
 class Body:
     """What a requirement or process check measures: placed part instances, as one body."""
 
-    def __init__(self, name: str, leaves: list[Leaf], settings: AnalysisSettings) -> None:
+    def __init__(self, name: str, leaves: list[Leaf], settings: AnalysisSettings, tolerances: Tolerances) -> None:
         self.name = name
         self.leaves = leaves
         self.settings = settings
+        self.tolerances = tolerances  # the design's own
 
     @cached_property
     def mesh(self) -> trimesh.Trimesh:
@@ -371,25 +385,20 @@ class Body:
 
     @cached_property
     def walls(self) -> Walls:
+        """Its wall thickness; `Unmeasurable` where a part of it is not a closed mesh (`mesh.closed`): an open
+        surface has no inside to measure across."""
         from hitlcad.analysis.processes import wall_thickness
 
+        if not self.metrics.watertight:
+            raise Unmeasurable(f"{self.name} is not a closed mesh: its walls cannot be measured")
         return wall_thickness(self.mesh, self.settings.wall_samples)
 
     def mass_g(self) -> tuple[float | None, str]:
         """(grams, '') or (None, why it is unknown)."""
-        total, unknown = 0.0, []
-        for leaf in self.leaves:
-            name = leaf.part.material
-            volume = leaf.part.metrics.volume
-            if name is None:
-                unknown.append(f"{leaf.path} has no material")
-            elif name not in leaf.owner.materials:
-                unknown.append(f"{leaf.path}: material {name!r} is not in the material registry")
-            elif volume is None:
-                unknown.append(f"{leaf.path} is not a closed mesh")
-            else:
-                total += volume * leaf.owner.materials[name].density_g_cm3 / 1000
-        return (None, "; ".join(unknown)) if unknown else (total, "")
+        unknown = [f"{leaf.path} {why}" for leaf in self.leaves if (why := leaf.owner.unknown_mass(leaf.part))]
+        if unknown:
+            return None, "; ".join(unknown)
+        return sum(leaf.owner.mass(leaf.part).mass_g for leaf in self.leaves), ""  # type: ignore[union-attr]
 
     @cached_property
     def manifold(self) -> manifold3d.Manifold:
@@ -426,7 +435,7 @@ class BuildBodies:
     def _body(self, kind: str, name: str, leaves: Callable[[], list[Leaf]]) -> Body:
         """One body per subject, so what is measured on it (its walls, a union) is measured once per build."""
         if (kind, name) not in self._bodies:
-            self._bodies[kind, name] = Body(name, leaves(), self.settings)
+            self._bodies[kind, name] = Body(name, leaves(), self.settings, self.built.tolerances)
         return self._bodies[kind, name]
 
     def whole(self) -> Body:

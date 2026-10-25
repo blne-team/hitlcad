@@ -111,10 +111,6 @@ class DesignState(Model):
         return self.revisions[-1] if self.revisions else None
 
     @property
-    def latest_successful_revision(self) -> Revision | None:
-        return next((r for r in reversed(self.revisions) if r.report.status == "succeeded"), None)
-
-    @property
     def open_pins(self) -> list[Pin]:
         return [p for p in self.pins if not p.resolved]
 

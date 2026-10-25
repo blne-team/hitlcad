@@ -16,7 +16,8 @@ import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from hitlcad.core import frames as fr
-from hitlcad.core.address import End, check_name, is_interface_ref
+from hitlcad.core import iso286
+from hitlcad.core.address import End, check_name
 from hitlcad.core.checks import Manufacturing
 from hitlcad.core.types import Model, members
 
@@ -231,9 +232,7 @@ class Fit(Model):
     @classmethod
     def _iso(cls, v: str | None) -> str | None:
         if v is not None:
-            from hitlcad.analysis.iso286 import parse
-
-            parse(v)
+            iso286.parse(v)
         return v
 
     @model_validator(mode="after")
@@ -249,10 +248,7 @@ class Fit(Model):
         size."""
         if self.clearance:
             return self.clearance
-        from hitlcad.analysis.iso286 import fit_clearance
-
-        assert self.iso is not None
-        return fit_clearance(self.iso, nominal_mm)
+        return iso286.fit_clearance(self.iso, nominal_mm)  # type: ignore[arg-type]  # one of the two is set
 
     def allows_interference(self, nominal_mm: float) -> bool:
         """Whether the fit lets the parts overlap; not where ISO 286 does not define it (the mate's fit fails)."""
@@ -645,8 +641,3 @@ class FastenerSet(Model):
     @property
     def address(self) -> str:
         return f"{self.fastener}:{'>'.join(self.through)}>{self.into}"
-
-
-def ref_names(ref: Ref) -> tuple[str, str]:
-    """('interface', name) or ('parameter', name) for a reference."""
-    return ("interface", ref.removeprefix("interfaces.")) if is_interface_ref(ref) else ("parameter", ref)

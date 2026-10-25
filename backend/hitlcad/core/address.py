@@ -88,23 +88,8 @@ class End:
         return f"{self.owner}.{self.connector}"
 
 
-def mate_address(a: str, b: str) -> str:
-    return f"{a}+{b}"
-
-
-def parse_mate(text: str) -> tuple[End, End]:
-    a, sep, b = text.partition("+")
-    if not sep:
-        raise ValueError(f"{text!r} is not a mate like 'lid.bottom+housing.top'")
-    return End.parse(a), End.parse(b)
-
-
 INTERFACE_PREFIX = "interfaces."
 
 
 def is_interface_ref(ref: str) -> bool:
     return ref.startswith(INTERFACE_PREFIX)
-
-
-def interface_name(ref: str) -> str:
-    return check_name(ref.removeprefix(INTERFACE_PREFIX), "interface value")

@@ -34,7 +34,6 @@ class Link:
 
 def links(built: BuiltDesign) -> tuple[list[Link], list[Result]]:
     """Every link of a design's mates, relations and fastener sets, and structure errors met on the way."""
-    view = _View(built)
     out, errors = [], []
     for mate in built.spec.mates:
         try:
@@ -43,12 +42,12 @@ def links(built: BuiltDesign) -> tuple[list[Link], list[Result]]:
             errors.append(structural(mate.address, e, [mate.a, mate.b]))
     for rel in built.spec.relations:
         try:
-            out += [Link(fa, fb, rel.type, rel) for fa, fb in relation_pairs(view, rel)]
+            out += [Link(fa, fb, rel.type, rel) for fa, fb in relation_pairs(built, rel)]
         except StructureError as e:
             errors.append(structural(rel.address, e, [rel.a, rel.b]))
     for fs in built.spec.fasteners:
         try:
-            paired = stacks(view, fs)
+            paired = stacks(built, fs)
         except StructureError as e:
             errors.append(structural(fs.address, e, [fs.fastener, *fs.through, fs.into]))
             continue
@@ -85,13 +84,6 @@ def _scoped(link: Link, prefix: str, transform: fr.Frame) -> Link:
         return dataclasses.replace(f, instance=f"{prefix}{f.instance}", frame=transform @ f.frame)
 
     return dataclasses.replace(link, a=move(link.a), b=move(link.b))
-
-
-class _View:
-    """What the link helpers read of an analysis context: the design and its tolerances."""
-
-    def __init__(self, built: BuiltDesign) -> None:
-        self.built, self.tol = built, built.tolerances
 
 
 def top(instance: str) -> str:
