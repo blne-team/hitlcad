@@ -154,6 +154,7 @@ def _inertial(leaf: Leaf, link_frame: fr.Frame) -> tuple[float, np.ndarray, np.n
 
 class UrdfExporter:
     name = "urdf"
+    title = "URDF robot description"
     summary = "urdf/<design>.urdf with meshes/: links per part instance, joints from mates (ROS, PyBullet, MuJoCo)"
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:
@@ -204,6 +205,7 @@ SDF_KINDS = {"fixed": "fixed", "revolute": "revolute", "continuous": "revolute",
 
 class SdfExporter:
     name = "sdf"
+    title = "SDFormat model"
     summary = "sdf/model.sdf with meshes/: the design as an SDFormat model (Gazebo)"
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:

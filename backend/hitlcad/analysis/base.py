@@ -54,7 +54,9 @@ class Context:
 
 
 class Analysis(Protocol):
-    name: str
+    name: str  # what its results are filed under (`Result.analysis`)
+    title: str  # for the panel: "Fastener sets"
+    summary: str  # one line for the panel: what it checks
 
     def run(self, ctx: Context) -> list[Result]: ...
 

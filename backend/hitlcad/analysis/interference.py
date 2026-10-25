@@ -114,6 +114,8 @@ def _depth(piece: manifold3d.Manifold) -> float:
 
 class Interference:
     name = "interference"
+    title = "Interference"
+    summary = "No two parts overlap unless a joint says they should"
 
     def run(self, ctx: Context) -> list[Result]:
         leaves = ctx.built.leaves()

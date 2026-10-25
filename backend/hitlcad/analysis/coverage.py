@@ -134,6 +134,8 @@ def misplaced(built: BuiltDesign, found: list[Link]) -> dict[str, str]:
 
 class Coverage:
     name = "coverage"
+    title = "Coverage"
+    summary = "Nothing floats: mates, relations and fastener sets connect every instance to ground"
 
     def run(self, ctx: Context) -> list[Result]:
         built = ctx.built

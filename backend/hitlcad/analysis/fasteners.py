@@ -104,6 +104,8 @@ def free_depth(
 
 class Fasteners:
     name = "fastener"
+    title = "Fastener sets"
+    summary = "Each fastener seats, clears its holes, takes the thread and engages enough"
 
     def run(self, ctx: Context) -> list[Result]:
         out, leaves = [], ctx.built.leaves()

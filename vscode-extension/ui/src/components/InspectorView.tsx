@@ -51,7 +51,6 @@ export const TABS: Tab[] = [
   {
     id: "structure",
     label: "Structure",
-    badge: ({ revision }) => (revision?.report.results ?? []).filter((r) => r.status === "fail" && ["mate", "relation", "fastener", "coverage", "structure"].includes(r.analysis)).length,
     render: ({ id, state, revision, ui, refresh }) => (
       <StructurePanel
         designId={id}
@@ -84,7 +83,7 @@ export const TABS: Tab[] = [
   {
     id: "report",
     label: "Results",
-    badge: ({ revision }) => (revision?.report.results ?? []).filter((r) => r.status === "fail").length,
+    badge: ({ revision }) => (revision ? revision.report.tally.problems + revision.report.tally.warnings : 0),
     render: ({ id, revision }) => <ReportPanel designId={id} revision={revision} />,
   },
   { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },

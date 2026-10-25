@@ -24,6 +24,7 @@ MEDIA = "model/3mf"
 
 class ThreeMfExporter:
     name = "3mf"
+    title = "3MF for printing"
     summary = "parts/<part>.3mf for each made part as it is made, and model.3mf of the assembly, in their colours"
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:

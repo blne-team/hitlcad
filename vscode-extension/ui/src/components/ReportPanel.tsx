@@ -1,40 +1,28 @@
 import { fileUrl } from "../api/client";
-import type { Result, Revision } from "../api/types";
+import type { AnalysisInfo, Finding, Problem, Result, Revision } from "../api/types";
+import { useCapabilities } from "../hooks/useCapabilities";
 import { bytes } from "../lib/format";
 import { toExtension } from "../lib/host";
 
 export const MARK = { pass: "✓", fail: "✗", unverified: "?" } as const;
-const ROW = { pass: "pass", fail: "miss sev-error", unverified: "miss sev-info" } as const;
-
-/** The analyses in the order a reader checks them: does it hold together, do the parts meet, can it be made. */
-const ORDER = ["structure", "part", "connector", "mate", "relation", "fastener", "coverage", "interference", "motion", "manufacturing", "requirement"];
-const TITLES: Record<string, string> = {
-  structure: "Structure", part: "Parts", connector: "Connectors", mate: "Mates", relation: "Relations",
-  fastener: "Fastener sets", coverage: "Coverage", interference: "Interference", motion: "Motion",
-  manufacturing: "Manufacturing", requirement: "Requirements",
-};
-
-const DOWNLOADS: Record<string, string> = {
-  exchange: "STEP of the assembly, for CAD tools",
-  native: "The assembly in its modelling tool's own file (a Blender scene)",
-  mesh: "STL of the assembly",
-  part_exchange: "STEP of one part, in its own frame",
-  part_mesh: "STL of one part, in its own frame (as it is made)",
-  objects: "The part's named objects (glTF)",
-  bom: "Bill of materials",
-  "3mf": "3MF for printing",
-  urdf: "URDF robot description",
-  sdf: "SDFormat model",
-  log: "Build log",
-};
-
+const WARNING = "!";
 const order = { fail: 0, unverified: 1, pass: 2 } as const;
 
-function grouped(results: Result[]): [string, Result[]][] {
+const rowClass = (r: Pick<Result, "status" | "severity">) =>
+  r.status === "pass" ? "pass" : r.status === "unverified" || r.severity === "info" ? "miss sev-info" : `miss sev-${r.severity}`;
+
+/** " ×4 at [0, 1, 2, 3]": a finding's copies, as the agent reads them. */
+function copies(f: Finding): string {
+  if (f.results.length === 1) return "";
+  return ` ×${f.results.length}${f.indices.length ? ` at [${f.indices.join(", ")}]` : ""}`;
+}
+
+/** A report's results by analysis, in the order the server runs them (others after, by name). */
+function byAnalysis(results: Result[], analyses: AnalysisInfo[]): [string, Result[]][] {
   const groups = new Map<string, Result[]>();
   for (const r of results) groups.set(r.analysis, [...(groups.get(r.analysis) ?? []), r]);
-  const known = ORDER.filter((a) => groups.has(a));
-  const rest = [...groups.keys()].filter((a) => !ORDER.includes(a)).sort();
+  const known = analyses.map((a) => a.name).filter((a) => groups.has(a));
+  const rest = [...groups.keys()].filter((a) => !known.includes(a)).sort();
   return [...known, ...rest].map((a) => [a, [...groups.get(a)!].sort((x, y) => order[x.status] - order[y.status])]);
 }
 
@@ -42,7 +30,7 @@ function ResultList({ results }: { results: Result[] }) {
   return (
     <ul className="checks">
       {results.map((r, i) => (
-        <li key={`${r.subject}-${i}`} className={r.status === "pass" ? "pass" : r.severity === "warning" ? "miss sev-warning" : ROW[r.status]}>
+        <li key={`${r.subject}-${i}`} className={rowClass(r)}>
           <span className="check-mark" aria-label={r.status}>
             {MARK[r.status]}
           </span>
@@ -56,13 +44,58 @@ function ResultList({ results }: { results: Result[] }) {
   );
 }
 
+/** One problem: what leads it (folded copies at their pattern indices), what else saw it, and every check in it. */
+function ProblemRow({ problem, results, title }: { problem: Problem; results: Result[]; title: (analysis: string) => string }) {
+  const [lead, ...also] = problem.findings;
+  const first = results[lead!.results[0]!]!;
+  const all = problem.findings.flatMap((f) => f.results.map((i) => results[i]!));
+  const warning = problem.status === "fail" && problem.severity === "warning";
+  return (
+    <li className={`problem ${rowClass({ status: problem.status, severity: problem.severity })}`}>
+      <span className="check-mark" aria-label={warning ? "warning" : problem.status}>
+        {warning ? WARNING : MARK[problem.status]}
+      </span>
+      <div>
+        <span className="check-name">
+          {title(first.analysis)} {first.subject}
+          {copies(lead!)}
+        </span>
+        <span className="muted"> {first.detail}</span>
+        {also.length > 0 && (
+          <div className="also muted">
+            also:{" "}
+            {also.map((f, k) => {
+              const r = results[f.results[0]!]!;
+              return (
+                <span key={k}>
+                  {k > 0 && ", "}
+                  {title(r.analysis)} {r.subject}
+                  {f.results.length > 1 ? ` ×${f.results.length}` : ""}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {all.length > 1 && (
+          <details className="problem-checks">
+            <summary className="muted">{all.length} checks</summary>
+            <ResultList results={all} />
+          </details>
+        )}
+      </div>
+    </li>
+  );
+}
+
 /** A revision's build: what every analysis found, the parts, and the files. */
 export function ReportPanel({ designId, revision }: { designId: string; revision: Revision | null }) {
+  const capabilities = useCapabilities();
   if (!revision) return <p className="muted pad">The build report appears after the first build.</p>;
   const { report } = revision;
   const m = report.metrics;
   const preview = report.artifacts.find((a) => a.role === "preview");
-  const failing = report.results.filter((r) => r.status === "fail").length;
+  const analyses = capabilities?.analyses ?? [];
+  const title = (name: string) => analyses.find((a) => a.name === name)?.title ?? name;
   return (
     <div className="report">
       <p>
@@ -72,9 +105,9 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
         <span className="muted">
           in {report.duration_s.toFixed(1)} s{report.configuration ? `, configuration ${report.configuration}` : ""}
           {revision.origin === "parameter_edit" ? ", from your parameter edit" : ""}
-          {report.results.length ? ` · ${failing ? `${failing} failing` : "nothing failing"} of ${report.results.length} results` : ""}
         </span>
       </p>
+      {report.results.length > 0 && <p className="tally">{report.tally.text}</p>}
       {revision.summary && <p>{revision.summary}</p>}
       {report.error && <pre className="error-block">{report.error}</pre>}
       {report.log_tail && (
@@ -84,18 +117,37 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
         </details>
       )}
 
-      {grouped(report.results).map(([analysis, results]) => {
-        const bad = results.filter((r) => r.status !== "pass").length;
-        return (
-          <details key={analysis} className="result-group" open={results.some((r) => r.status === "fail")}>
-            <summary>
-              <span className="check-name">{TITLES[analysis] ?? analysis}</span>
-              <span className="muted"> {bad ? `${bad} of ${results.length} need attention` : `${results.length} pass`}</span>
-            </summary>
-            <ResultList results={results} />
-          </details>
-        );
-      })}
+      {report.problems.length > 0 && (
+        <ul className="checks problems">
+          {report.problems.map((p) => (
+            <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} />
+          ))}
+        </ul>
+      )}
+
+      {report.results.length > 0 && (
+        <details className="all-checks">
+          <summary>Every check, by analysis</summary>
+          {byAnalysis(report.results, analyses).map(([analysis, results]) => {
+            const bad = results.filter((r) => r.status !== "pass").length;
+            const noted = results.filter((r) => r.severity === "info").length; // listed, but no checks
+            const checks = results.length - noted;
+            return (
+              <details key={analysis} className="result-group">
+                <summary title={analyses.find((a) => a.name === analysis)?.summary}>
+                  <span className="check-name">{title(analysis)}</span>
+                  <span className="muted">
+                    {" "}
+                    {bad ? `${bad} of ${checks} need attention` : `${checks} pass`}
+                    {noted ? `, ${noted} noted` : ""}
+                  </span>
+                </summary>
+                <ResultList results={results} />
+              </details>
+            );
+          })}
+        </details>
+      )}
 
       {m && (
         <table className="metrics">
@@ -135,13 +187,13 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
           <h3>Components</h3>
           <ul className="checks">
             {Object.entries(report.components).map(([name, child]) => {
-              const bad = child.results.filter((r) => r.status === "fail").length;
+              const ok = child.status === "succeeded" && !child.tally.problems;
               return (
-                <li key={name} className={child.status === "succeeded" && !bad ? "pass" : "miss sev-error"}>
-                  <span className="check-mark">{child.status === "succeeded" && !bad ? "✓" : "✗"}</span>
+                <li key={name} className={ok ? "pass" : "miss sev-error"}>
+                  <span className="check-mark">{ok ? MARK.pass : MARK.fail}</span>
                   <span>
                     <span className="check-name">{name}</span>
-                    <span className="muted"> {child.parts.length} parts, {bad ? `${bad} failing results in its own build` : "its own build verifies"}</span>
+                    <span className="muted"> {child.parts.length} parts; its own build: {child.tally.text}</span>
                   </span>
                 </li>
               );
@@ -159,13 +211,13 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
 
       <h3>Files</h3>
       <ul className="files">
-        {report.artifacts.filter((a) => a.role in DOWNLOADS).map((a) => (
+        {report.artifacts.filter((a) => a.label).map((a) => (
           <li key={a.path}>
             <button type="button" className="link-button" title={`Save a copy of ${a.name}`}
               onClick={() => toExtension({ type: "hitlcad.saveFile", design: designId, revision: revision.id, path: a.path, name: a.name })}>
               {a.path}
             </button>
-            <span className="muted"> {DOWNLOADS[a.role]}, {bytes(a.bytes)}</span>
+            <span className="muted"> {a.label}, {bytes(a.bytes)}</span>
           </li>
         ))}
       </ul>

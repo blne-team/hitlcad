@@ -280,6 +280,8 @@ class Artifact(Model):
         description="source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an "
         "exporter's name"
     )
+    label: str = Field(default="", description="What the file is, for the panel's file list; empty for the files it "
+                       "shows its own way (sources, the 3D view, the preview)")  # fmt: skip
     sha256: str
     bytes: int
 

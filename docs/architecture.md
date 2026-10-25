@@ -239,8 +239,10 @@ graph, the address grammar and the tools present any member's results.
   one, with its connector frames), give it an `authoring_guide()`, set `brep`, and register a
   factory under `hitlcad.backends`; enable it with `HITLCAD_BACKENDS`. To also write the assembly
   in its own format, override `write_assembly` (Blender's runs an `assembly` mode).
-- **An analysis**: a class with `name` and `run(ctx) -> list[Result]`, added to
-  `analysis.base.default_analyses()` (or passed to `HitlCad.create`). Cache costly results with
+- **An analysis**: a class with `name`, `title`, `summary` (the panel shows them) and
+  `run(ctx) -> list[Result]`, added to `analysis.base.default_analyses()` (or passed to
+  `HitlCad.create`) in its place in the order: cause before effect. A result that another analysis
+  may report too names their shared `cause` (`core.report.Cause`). Cache costly results with
   `ctx.cache`.
 - **A connector kind, mate type or relation type**: a model in `core/structure.py` with a literal
   discriminator, a docstring, an `example`, and its `measure` / `verify` / `ratio`, added to its union.
@@ -248,8 +250,8 @@ graph, the address grammar and the tools present any member's results.
   `_Check` with `verify(build)`; `_Process` with `checks(body)` and `allowance`), added to its union.
 - **A catalog provider**: a module with helpers that return `sdk.CatalogPart`s and an object with
   `name`, `usage` and `search(query, limit)`, registered under `hitlcad.catalogs`.
-- **An exporter**: an object with `name`, `summary` and `export(built, report, out_dir)`, registered
-  under `hitlcad.exporters`.
+- **An exporter**: an object with `name`, `title` (the panel's label for its files), `summary` and
+  `export(built, report, out_dir)`, registered under `hitlcad.exporters`.
 - **A material**: an entry in a project's `materials.json`.
 
 ## Safety

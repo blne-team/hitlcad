@@ -17,6 +17,7 @@ COLUMNS = list(BomLine.model_fields)
 
 class BomExporter:
     name = "bom"
+    title = "Bill of materials"
     summary = "bom.csv and bom.json: every part and component with quantity, material, process and what to buy"
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:

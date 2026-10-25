@@ -248,6 +248,8 @@ NAME = "motion"
 
 class Motion:
     name = NAME
+    title = "Motion"
+    summary = "Moving parts sweep through their range without colliding"
 
     def run(self, ctx: Context) -> list[Result]:
         return [p if isinstance(p, Result) else self._verdict(p, sweep(p, ctx.settings, ctx.cache))

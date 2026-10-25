@@ -140,9 +140,16 @@ class Structure(BaseModel):
     graph: dict[str, Any]
 
 
+class AnalysisInfo(BaseModel):
+    name: str = Field(description="What its results are filed under (`Result.analysis`)")
+    title: str
+    summary: str
+
+
 class Capabilities(BaseModel):
     version: str
     backends: list[BackendInfo]
+    analyses: list[AnalysisInfo] = Field(description="In the order they run: cause before effect")
 
 
 def design_summary(s: DesignState) -> dict[str, Any]:
@@ -188,7 +195,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.get("/api/capabilities")
     async def capabilities() -> Capabilities:
-        return Capabilities(version=version("hitlcad"), backends=core.registry.describe())
+        analyses = [AnalysisInfo(name=a.name, title=a.title, summary=a.summary) for a in core.pipeline.analyses]
+        return Capabilities(version=version("hitlcad"), backends=core.registry.describe(), analyses=analyses)
 
     # ------------------------------------------------------------------ designs
 

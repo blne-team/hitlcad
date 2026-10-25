@@ -100,6 +100,8 @@ def structure_results(design: DesignSpec, placed: Iterable[str], exports: dict[s
 
 class Structure:
     name = NAME
+    title = "Structure"
+    summary = "What design.json declares refers to what exists, and assembly.py places it"
 
     def run(self, ctx: Context) -> list[Result]:
         built = ctx.built

@@ -69,9 +69,22 @@ class BuildFailed(Exception):
         self.error, self.log, self.results = error, log, results or []
 
 
-def _artifact(out_dir: Path, rel: str, media_type: str, role: str) -> Artifact:
+#: What the panel's file list says of the files every build writes; the sources, the 3D view and the preview it
+#: shows its own way. An exporter's files say its title.
+LABELS = {
+    "exchange": "STEP of the assembly, for CAD tools",
+    "native": "The assembly in its modelling tool's own file (a Blender scene)",
+    "mesh": "STL of the assembly",
+    "part_exchange": "STEP of one part, in its own frame",
+    "part_mesh": "STL of one part, in its own frame (as it is made)",
+    "objects": "The part's named objects (glTF)",
+    "log": "Build log",
+}
+
+
+def _artifact(out_dir: Path, rel: str, media_type: str, role: str, label: str = "") -> Artifact:
     data = (out_dir / rel).read_bytes()
-    return Artifact(name=Path(rel).name, path=rel, media_type=media_type, role=role,
+    return Artifact(name=Path(rel).name, path=rel, media_type=media_type, role=role, label=label or LABELS.get(role, ""),
                     sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))  # fmt: skip
 
 
@@ -412,8 +425,9 @@ class BuildPipeline:
         for name in built.spec.outputs:
             if name not in self.exporters:
                 raise ValueError(f"design.json outputs names {name!r}; exporters: {', '.join(self.exporters)}")
-            for rel, media_type in await asyncio.to_thread(self.exporters[name].export, built, fields, out_dir):
-                artifacts.append(_artifact(out_dir, rel, media_type, name))
+            exporter = self.exporters[name]
+            for rel, media_type in await asyncio.to_thread(exporter.export, built, fields, out_dir):
+                artifacts.append(_artifact(out_dir, rel, media_type, name, exporter.title))
         return artifacts
 
 

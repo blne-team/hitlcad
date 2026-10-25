@@ -579,8 +579,8 @@ reads were recorded as the code ran. Answers are bounded by `explore_limit`, the
   connector; the configuration on screen; a motion slider per range of motion.
 - **Structure**: parts and components as nodes, mates, relations and fastener sets as edges,
   coloured by their results (laid out with dagre); a click selects the part's instance.
-- **Parameters** with configurations; **Changes**; **Results** by analysis, with parts, components,
-  renders, files and sources; **BOM**; **Pins**; **Brief**.
+- **Parameters** with configurations; **Changes**; **Results**: the problems and the tally the agent
+  reads, every check by analysis, parts, components, renders, files and sources; **BOM**; **Pins**; **Brief**.
 
 ## Reference designs
 
@@ -608,9 +608,9 @@ caught by the analysis that owns them.
 | Relation type | `RelationSpec` union | the kinds it joins, `verify`, `ratio` |
 | Requirement check | `RequirementCheck` union | `verify(build)`, and `cause(build)` when another analysis sees its failure too |
 | Manufacturing process | `Manufacturing` union | `checks(body)`, `allowance(feature)` |
-| Analysis | `Analysis` protocol, `analysis.base.default_analyses` | `run(ctx) -> [Result]` |
+| Analysis | `Analysis` protocol, `analysis.base.default_analyses` | `title`, `summary`, `run(ctx) -> [Result]` |
 | Catalog provider | `CatalogProvider`, entry points `hitlcad.catalogs` | helpers returning `CatalogPart`s, `search` |
-| Exporter | `Exporter`, entry points `hitlcad.exporters` | `export(built, report, out_dir)` |
+| Exporter | `Exporter`, entry points `hitlcad.exporters` | `title`, `summary`, `export(built, report, out_dir)` |
 | Material | `materials.json` in a project | density, processes, minimum thread engagement |
 | Executor, renderer, store | protocols | as before |
 

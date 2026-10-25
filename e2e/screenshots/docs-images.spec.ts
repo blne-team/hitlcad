@@ -187,6 +187,7 @@ test("handhold-fan", async ({ page, browser }) => {
   await designView(page, id, "Structure", { width: 1280, height: 600 });
   await shot(page, "design-structure.png");
   await designView(page, id, "Results", { width: 1000, height: 720 });
+  await page.locator(".all-checks > summary").click();
   await page.locator(".result-group summary", { hasText: "Requirements" }).click();
   await shot(page, "design-results.png");
 

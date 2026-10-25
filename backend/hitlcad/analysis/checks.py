@@ -14,6 +14,8 @@ class Parts:
     (where it has one) passes the kernel's check."""
 
     name = "part"
+    title = "Parts"
+    summary = "Every part is a valid solid with a closed mesh"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []
@@ -36,6 +38,8 @@ class Connectors:
     check, so no result of its own)."""
 
     name = "connector"
+    title = "Connectors"
+    summary = "Each declared feature is found in the geometry and measured"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []
@@ -64,6 +68,8 @@ class Manufacturing:
     """Each made part, in its own frame, against its process."""
 
     name = "manufacturing"
+    title = "Manufacturing"
+    summary = "Each made part against its process, in the orientation it is made"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []
@@ -79,6 +85,8 @@ class Manufacturing:
 
 class Requirements:
     name = "requirement"
+    title = "Requirements"
+    summary = "The brief's requirements, measured; the human judges those without a check"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []

@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 
 class Exporter(Protocol):
     name: str
+    #: What its files are, for the panel's file list: "Bill of materials".
+    title: str
     #: One line for the agent: what the files are for.
     summary: str
 

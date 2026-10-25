@@ -14,6 +14,12 @@ export type Revision = Schemas["Revision"];
 export type BuildReport = Schemas["BuildReport"];
 /** One finding of one analysis, naming the addresses it is about. */
 export type Result = Schemas["Result"];
+/** The results that share a cause, failing or unverified, with copies at other pattern indices folded in. */
+export type Problem = Schemas["Problem"];
+export type Finding = Schemas["Finding"];
+export type Tally = Schemas["Tally"];
+export type Capabilities = Schemas["Capabilities"];
+export type AnalysisInfo = Schemas["AnalysisInfo"];
 /** A click in a 3D view: the surface point, and on B-rep builds the instance's face, edge or vertex it hit. */
 export type Pick = Schemas["Pick"];
 export type SelectionItem = Schemas["SelectionItem"];

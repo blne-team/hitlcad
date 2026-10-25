@@ -98,6 +98,8 @@ def _limits(mate: _Mate, free: dict[str, float]) -> str:
 
 class Mates:
     name = "mate"
+    title = "Mates"
+    summary = "Joined features line up, and fits are what was asked for after the process's allowance"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []

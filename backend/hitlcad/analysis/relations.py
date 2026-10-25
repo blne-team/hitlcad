@@ -25,6 +25,8 @@ def relation_pairs(built: BuiltDesign, rel: _Relation) -> list[tuple[PlacedFrame
 
 class Relations:
     name = "relation"
+    title = "Relations"
+    summary = "Gears and other relations hold between their placed, measured features"
 
     def run(self, ctx: Context) -> list[Result]:
         out = []

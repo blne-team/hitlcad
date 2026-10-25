@@ -1,6 +1,6 @@
 import { errorDetail } from "../../../src/lib/errorDetail";
 import { server } from "../lib/host";
-import type { DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
+import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -24,6 +24,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const send = <T>(method: string, path: string, body: unknown) => request<T>(path, { method, body: JSON.stringify(body) });
 
 export const api = {
+  capabilities: () => request<Capabilities>("/api/capabilities"),
   design: (id: string) => request<DesignState>(`/api/designs/${id}`),
   setSelection: (id: string, revision: number | null, items: Pick[]) =>
     send<{ items: SelectionItem[] }>("PUT", `/api/designs/${id}/selection`, { revision, items }),
