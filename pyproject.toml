@@ -75,6 +75,7 @@ asyncio_mode = "auto"
 addopts = "-n auto --maxprocesses=6 --dist worksteal"
 markers = [
   "geometry: builds or measures geometry, with build123d and Blender",
+  "smoke: one build, run where the geometry tests are not",
   "once: an exhaustive case: CI runs it on one job",
   "cold_cache: builds with a part cache of its own, empty at the start (the test is about caching)",
 ]

@@ -23,13 +23,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python: ["3.11", "3.12", "3.13"]
-        include: # Windows and macOS on the Python a release installs by default (.python-version)
-          - os: windows-latest
-            python: "3.11"
-          - os: macos-latest
-            python: "3.11"
+        include:
+          # Every test, on the Python a release installs by default (.python-version)
+          - { os: ubuntu-latest, python: "3.11", workers: 4, tests: "" }
+          # Windows and macOS: every test but the exhaustive cases Linux runs once
+          - { os: windows-latest, python: "3.11", workers: 4, tests: '-m "not once"' }
+          - { os: macos-latest, python: "3.11", workers: 2, tests: '-m "not once"' } # 7 GB: two builds at a time
+          # The other Pythons: the tests that build no geometry, and one build
+          - { os: ubuntu-latest, python: "3.12", workers: 4, tests: '-m "not geometry or smoke"' }
+          - { os: ubuntu-latest, python: "3.13", workers: 4, tests: '-m "not geometry or smoke"' }
     env:
       UV_PYTHON: ${{ matrix.python }} # every uv command below, not only the first, runs on this Python
     defaults:
@@ -43,7 +45,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --extra dev
       - run: uv run hitlcad doctor
-      - run: uv run pytest
+      - run: uv run pytest -n ${{ matrix.workers }} ${{ matrix.tests }}
 
   extension:
     name: extension (${{ matrix.os }})
@@ -73,8 +75,10 @@ jobs:
           npm run api-types
           git diff --exit-code -- src/lib/schema.ts || { echo "::error::run scripts/api-types.sh and commit src/lib/schema.ts"; exit 1; }
       - run: npm run lint
+        if: runner.os == 'Linux'
       - run: npm test
       - run: npm run package
+        if: runner.os == 'Linux'
 
   e2e:
     name: end-to-end (server, panel UI, extension)

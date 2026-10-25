@@ -12,7 +12,7 @@ See `.vscode/launch.json`. The devcontainer has everything a build needs (uv, No
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # all tests; -m "not geometry" skips real-kernel tests
+uv run pytest                          # all tests, in parallel; -n0 in this process; -m "not geometry" skips builds
 uv run ruff check backend && uv run ruff format backend
 (cd vscode-extension && npm test)      # extension unit tests
 (cd vscode-extension && npm run lint)  # ESLint: TypeScript's rules, React's rules of hooks
@@ -27,9 +27,11 @@ forward deliberately when upgrading.
 ## Tests and CI
 
 `.github/workflows/ci.yml` runs on every push and pull request: ruff and ESLint; the full backend suite,
-including real build123d and Blender builds of the test designs and of every design in
-`examples/`, on Python 3.11, 3.12 and 3.13; the extension's tests, its panel UI's typecheck and
-build, and its packaging; and the end-to-end tests (`e2e/`). Playwright drives the real server and
+including real build123d and Blender builds of the test designs and of every design in `examples/`, on
+Linux with Python 3.11; on Windows and macOS, all of it but the exhaustive cases marked `once` (other
+configurations of the same designs, the largest example); on Python 3.12 and 3.13, the tests that build no
+geometry and one build (`smoke`); the extension's tests on all three, and on Linux its panel UI's
+typecheck and build and its packaging; and the end-to-end tests (`e2e/`). Playwright drives the real server and
 the panel UI in Chromium, each page loaded as the extension loads it into a webview, including the
 extension's sync between the 3D editor tab and the Design view. To run them locally:
 
