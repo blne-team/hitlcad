@@ -437,7 +437,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -721,8 +721,9 @@ export interface components {
         };
         /**
          * ClearanceCheck
-         * @description The gap between two placed things (instances or component instances), mm. Things that overlap
-         *     have no gap and fail any minimum. Clearance is analysis, not a mate: use it for what must never touch.
+         * @description The gap between two placed things (instances or component instances), mm: the least it comes to where
+         *     they sit and wherever a mate's range of motion moves one against the other. Things that overlap have no
+         *     gap and fail any minimum. Clearance is analysis, not a mate: use it for what must never touch.
          */
         ClearanceCheck: {
             /** Min */
@@ -899,7 +900,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -2047,7 +2048,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -2238,7 +2239,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -2276,7 +2277,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -2491,7 +2492,7 @@ export interface components {
             fit: components["schemas"]["Fit"] | null;
             /**
              * Overlap
-             * @description The two parts are meant to overlap here: a heat-set insert's knurls, a modelled thread, a press fit between frames
+             * @description b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits
              * @default false
              */
             overlap: boolean;
@@ -2559,8 +2560,8 @@ export interface components {
             position_mm: number;
             /** Angle Deg */
             angle_deg: number;
-            /** Motion Samples */
-            motion_samples: number;
+            /** Motion Steps */
+            motion_steps: number;
         };
         /** UpdatePin */
         UpdatePin: {
@@ -2598,10 +2599,10 @@ export interface components {
              */
             angle_deg: number | null;
             /**
-             * Motion Samples
-             * @description Positions sampled per range of motion
+             * Motion Steps
+             * @description Most positions motion analysis checks per mate before it gives up
              */
-            motion_samples: number | null;
+            motion_steps: number | null;
         };
         /**
          * VolumeCheck

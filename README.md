@@ -58,8 +58,7 @@ whole assembly again. Agents make mistakes here. Suppose it typed the impeller's
 70 mm instead of reading it from the parameters. The build comes back with:
 
 ```
-✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³
-✗ motion motor.shaft+impeller.bore: motor.shaft ↔ impeller.bore at 0.0°: impeller hits duct (91.11 mm³)
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep
 ✗ requirement Impeller blade tips clear the duct: impeller and duct overlap by 91.1 mm³
 ✓ 151 of 155 results pass
 ```

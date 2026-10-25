@@ -169,7 +169,8 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     folder = copy_design("hinge", tmp_path / "hinge")
     report = await build(core, folder, tmp_path / "a")
     (motion,) = results(report, "motion")
-    assert motion.status == "fail" and "lid hits base" in motion.detail
+    assert motion.status == "fail" and "lid hits base at -99.0° on the way to -100°" in motion.detail
+    assert "make them [-98.9, 0]" in motion.detail  # the limit to change, to where it last moved clear
     (sweep,) = report.motions  # what the panel moves: the lid, about the hinge axis, -100 … 0°
     assert (sweep.kind, sweep.start, sweep.end, sweep.moving) == ("angle", -100, 0, ["lid"])
     assert sweep.axis == pytest.approx((1, 0, 0)) and sweep.current == pytest.approx(0, abs=1e-6)
@@ -177,6 +178,154 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     clear = await build(core, folder, tmp_path / "b")
     (motion,) = results(clear, "motion")
     assert motion.status == "pass" and "-100 … 0°" in motion.detail
+
+
+PADDLE = {
+    "design.json": {
+        "hitlcad": 2, "name": "Paddle", "backend": "build123d", "ground": "base",
+        "parameters": [{"name": "pin_deg", "value": 7.5, "min": 0, "max": 90},
+                       {"name": "pin_h", "value": 4, "min": 0.5, "max": 6}],
+        "parts": {"base": {"role": "a plate with a pin", "file": "parts/paddle.py", "material": "PLA",
+                           "connectors": {"axle": {"kind": "frame"}}},
+                  "paddle": {"role": "turns about the axle", "file": "parts/paddle.py", "material": "PLA",
+                             "connectors": {"hub": {"kind": "frame"}}}},
+        "mates": [{"type": "revolute", "a": "base.axle", "b": "paddle.hub"}],
+        "requirements": [{"text": "the paddle clears the plate",
+                          "check": {"kind": "clearance", "between": ["paddle", "base"], "min": 0.3}}],
+    },
+    # A 1 mm wide paddle 1.5 mm over a plate, turning past a Ø1 pin 18 mm out from its axle
+    "parts/paddle.py": """import math
+
+from build123d import Align, Box, Cylinder, Pos, Rot
+
+LOW = (Align.CENTER, Align.CENTER, Align.MIN)
+
+
+def build(p, i):
+    a = math.radians(p["pin_deg"])
+    base = Box(50, 50, 4, align=LOW) + Pos(18 * math.cos(a), 18 * math.sin(a), 4) * Cylinder(0.5, p["pin_h"], align=LOW)
+    paddle = Pos(12, 0, 0.5) * Box(20, 1, 2, align=LOW)
+    return {"base": (base, {"axle": Pos(0, 0, 5)}), "paddle": (paddle, {"hub": Rot(180, 0, 0)})}
+""",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'base': [Pos()], 'paddle': [Pos(0, 0, 5)]}\n",
+}  # fmt: skip
+
+
+async def test_motion_finds_what_the_paddle_meets_between_any_two_positions(core: HitlCad, tmp_path: Path) -> None:
+    folder = write_design(tmp_path / "paddle", PADDLE)
+    # The pin stands in the paddle's way only from 4.3° to 10.7°: sampling a turn every 15° never meets it
+    report = await build(core, folder, tmp_path / "a")
+    (motion,) = results(report, "motion")
+    assert motion.status == "fail" and "paddle hits base at 4.3° on the way to 180°" in motion.detail, motion.detail
+    assert 4.25 < motion.values["angle"] < 4.35
+    (clear,) = results(report, "requirement")  # measured over the turn, not only where it sits
+    assert clear.status == "fail" and "0.00 mm (needs ≥ 0.3) at 4.3° of base.axle+paddle.hub" in clear.detail
+
+    # Lower, the pin passes 0.2 mm under it: nothing collides, but the clearance is broken half way round
+    edit_json(folder / "design.json", lambda d: d["parameters"][1].update(value=1.3))
+    report = await build(core, folder, tmp_path / "b")
+    (motion,) = results(report, "motion")
+    assert motion.status == "pass" and "moves through a full turn without collision" in motion.detail
+    (clear,) = results(report, "requirement")
+    assert clear.status == "fail" and clear.detail.startswith("paddle to base: 0.20 mm (needs ≥ 0.3) at "), clear.detail
+
+    # Under it where it sits: interference says where and how deep; motion does not fail it a second time
+    edit_json(
+        folder / "design.json", lambda d: (d["parameters"][0].update(value=0), d["parameters"][1].update(value=4))
+    )
+    report = await build(core, folder, tmp_path / "c")
+    (overlap,) = results(report, "interference", "fail")
+    assert "base and paddle overlap by 1.5" in overlap.detail and "in 1 piece within x 17.50 … 18.50" in overlap.detail
+    assert "z 5.50 … 7.50, about 1.00 mm deep" in overlap.detail, overlap.detail
+    (motion,) = results(report, "motion")
+    assert motion.status == "unverified" and "paddle and base already overlap by 1.5" in motion.detail
+
+
+async def test_a_turn_past_a_part_that_cannot_be_measured_is_not_called_clear(core: HitlCad, tmp_path: Path) -> None:
+    # A Blender cube with a face deleted, in the paddle's way, and the pin low enough to pass under it
+    post = "import bmesh\nimport bpy\n\n\ndef build(p, i):\n    bpy.ops.mesh.primitive_cube_add(size=1, location=(18, 3, 6))\n" \
+        "    post = bpy.context.active_object\n    mesh = bmesh.new()\n    mesh.from_mesh(post.data)\n" \
+        "    bmesh.ops.delete(mesh, geom=list(mesh.faces)[:1], context='FACES_ONLY')\n    mesh.to_mesh(post.data)\n" \
+        "    return {'post': (post, {})}\n"  # fmt: skip
+    folder = write_design(tmp_path / "paddle", {**PADDLE, "parts/post.py": post})
+    edit_json(folder / "design.json", lambda d: (d["parameters"][1].update(value=1.3), d["parts"].update(
+        post={"role": "in the way", "file": "parts/post.py", "backend": "blender", "material": "PLA"})))  # fmt: skip
+    edit(folder / "assembly.py", "'paddle': [Pos(0, 0, 5)]", "'paddle': [Pos(0, 0, 5)], 'post': [Pos()]")
+    report = await build(core, folder, tmp_path / "out")
+    assert report.status == "succeeded", report.error
+    (motion,) = results(report, "motion")
+    assert motion.status == "unverified" and "paddle against post is not measurable" in motion.detail, motion.detail
+
+
+async def test_an_insert_set_into_solid_material_is_not_an_expected_overlap(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("enclosure", tmp_path / "enclosure")
+    edit(folder / "parts/box.py", "InsertHole(ins, depth=6)", "InsertHole(ins, depth=6, mode=Mode.PRIVATE)")  # no hole
+    report = await build(core, folder, tmp_path / "out")
+    inserts = [r for r in results(report, "interference", "fail") if "+insert[" in r.subject]
+    assert len(inserts) == 4 and all("the hole is not cut there" in r.detail for r in inserts), failing(report)
+
+
+async def test_the_fan_turns_into_a_pin_in_its_duct_and_one_too_big_for_it_once(core: HitlCad, tmp_path: Path) -> None:
+    folder = shutil.copytree(EXAMPLES / "handhold-fan", tmp_path / "fan")
+    # A Ø1.2 pin into the blades' path at 22.5°: eight blades, every 45°, meet it only between positions
+    edit_json(folder / "design.json", lambda d: next(p for p in d["parameters"] if p["name"] == "blade_count")
+              .update(value=8))  # fmt: skip
+    wire = 'add(teardrop(pad, p["wire_hole_d"], i.pad_depth), mode=Mode.SUBTRACT)\n'
+    edit(folder / "parts/duct.py", wire, wire + "        add(Rot(0, 0, 22.5) * Pos(33.25, 0, 13) * Rot(0, 90, 0) * "
+         "Cylinder(0.6, 4.5, mode=Mode.PRIVATE))\n")  # fmt: skip
+    edit(folder / "parts/duct.py", "Pos, add", "Pos, Rot, add")
+    report = await build(core, folder, tmp_path / "pin")
+    assert report.status == "succeeded", report.error
+    (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
+    assert motion.status == "fail" and "impeller hits duct at 18.5°" in motion.detail and "at -18.5°" in motion.detail
+    (tips,) = [r for r in results(report, "requirement") if r.subject == "Impeller blade tips clear the duct"]
+    assert tips.status == "fail" and "0.74 mm where they sit" in tips.detail, tips.detail
+    # An impeller 0.5 mm too big for its duct overlaps it where it sits: interference says so, once
+    shutil.rmtree(folder)
+    folder = shutil.copytree(EXAMPLES / "handhold-fan", tmp_path / "fan")
+    edit(folder / "parts/impeller.py", 'p["fan_d"] / 2', "70 / 2")
+    report = await build(core, folder, tmp_path / "big")
+    (overlap,) = results(report, "interference", "fail")
+    assert "duct and impeller overlap by 91.1" in overlap.detail and "in 7 pieces" in overlap.detail, overlap.detail
+    assert "about 0.2" in overlap.detail
+    (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
+    assert motion.status == "unverified" and "already overlap" in motion.detail
+
+
+PRESS = {
+    "design.json": {
+        "hitlcad": 2, "name": "Press", "backend": "build123d", "ground": "plate",
+        "parameters": [{"name": "sink", "value": 0, "min": 0, "max": 1}],
+        "parts": {"plate": {"role": "holds the pin", "file": "parts/press.py", "material": "PLA",
+                            "connectors": {"hole": {"kind": "hole"}}},
+                  "pin": {"role": "pressed in", "file": "parts/press.py", "material": "PLA",
+                          "connectors": {"shaft": {"kind": "shaft"}}}},
+        "mates": [{"type": "rigid", "a": "plate.hole", "b": "pin.shaft", "fit": {"clearance": [-0.1, 0]}}],
+    },
+    # A Ø3.05 pin with a Ø6 head pressed into a Ø3 hole through a 5 mm plate
+    "parts/press.py": """from build123d import Align, Cylinder, Box, Pos, Rot
+
+LOW, HIGH = (Align.CENTER, Align.CENTER, Align.MIN), (Align.CENTER, Align.CENTER, Align.MAX)
+
+
+def build(p, i):
+    plate = Box(20, 20, 5, align=LOW) - Cylinder(1.5, 5, align=LOW)
+    pin = Cylinder(1.525, 8, align=HIGH) + Cylinder(3, 2, align=LOW)
+    return {"plate": (plate, {"hole": Pos(0, 0, 5)}), "pin": (pin, {"shaft": Rot(180, 0, 0)})}
+""",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'plate': [Pos()], 'pin': [Pos(0, 0, 5 - p['sink'])]}\n",
+}  # fmt: skip
+
+
+async def test_an_interference_fit_allows_the_ring_it_predicts_and_no_more(core: HitlCad, tmp_path: Path) -> None:
+    folder = write_design(tmp_path / "press", PRESS)
+    report = await build(core, folder, tmp_path / "a")
+    (fit,) = results(report, "interference", "pass")[:1]
+    assert fit.detail.startswith("overlap 1.19 mm³, expected: the plate.hole+pin.shaft fit"), fit.detail
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=0.5))  # the head sunk into the plate
+    report = await build(core, folder, tmp_path / "b")
+    (beyond,) = results(report, "interference", "fail")
+    assert "more than the 1.19 mm³ the plate.hole+pin.shaft interference fit makes" in beyond.detail, beyond.detail
 
 
 async def test_an_analysis_that_crashes_is_reported_and_spares_the_others(
@@ -207,6 +356,8 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
         "(hole Ø5.200, shaft Ø5.000), needs 0 … 0.1"
     ]
     assert len(results(report, "relation", "pass")) == 6
+    # The bearing's balls touch its races along edges: still one closed solid, measured like any other
+    assert [r.detail for r in results(report, "part") if r.subject == "bearing"] == ["closed mesh"]
     motion = results(report, "motion")  # a planetary is a closed loop: not analysed, never wrongly failed
     assert motion and not [r for r in motion if r.status == "fail"]
     assert any(r.status == "unverified" and "closed loop" in r.detail for r in motion)

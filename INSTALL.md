@@ -115,7 +115,7 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
 | `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
-| `HITLCAD_VERIFY_MOTION_SAMPLES` | `24` | Positions sampled per range of motion |
+| `HITLCAD_VERIFY_MOTION_STEPS` | `2000` | Most positions motion analysis checks per mate before it reports the motion unverified |
 | `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
 | `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server; the server also answers requests addressed to its host |
 

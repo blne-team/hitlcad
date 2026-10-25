@@ -185,8 +185,9 @@ class BodiesCheck(_OnTarget):
 
 
 class ClearanceCheck(_Bounded, _Check):
-    """The gap between two placed things (instances or component instances), mm. Things that overlap
-    have no gap and fail any minimum. Clearance is analysis, not a mate: use it for what must never touch."""
+    """The gap between two placed things (instances or component instances), mm: the least it comes to where
+    they sit and wherever a mate's range of motion moves one against the other. Things that overlap have no
+    gap and fail any minimum. Clearance is analysis, not a mate: use it for what must never touch."""
 
     kind: Literal["clearance"]
     between: tuple[str, str]
@@ -203,10 +204,20 @@ class ClearanceCheck(_Bounded, _Check):
             shared = a.overlap(b)
             if shared > build.overlap_mm3:
                 return self.min is None, f"{a.name} and {b.name} overlap by {shared:.1f} mm³"
-            passed, detail = self.bounds(a.gap(b), build, "mm")
+            sitting = a.gap(b)
+            moved = build.moved_gap(a, b)
         except Unmeasurable as e:  # a mesh is not closed
             return None, f"not measurable: {e}"
-        return passed, f"{a.name} to {b.name}: {detail}"
+        least, where, complete = moved or (sitting, "", True)
+        if least >= sitting:
+            passed, detail = self.bounds(sitting, build, "mm")
+            detail = f"{a.name} to {b.name}: {detail}"
+        else:
+            passed, detail = self.bounds(least, build, "mm")
+            detail = f"{a.name} to {b.name}: {detail} {where}; {sitting:.2f} mm where they sit"
+        if passed and not complete:
+            return None, f"{detail}; its motion was not swept to the ends (see motion)"
+        return passed, detail
 
 
 class StackCheck(_Bounded, _Check):

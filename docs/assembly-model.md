@@ -110,7 +110,7 @@ itself, directly or through its components.
   "fasteners": [ /* … */ ],
   "requirements": [ /* {"text": "…", "check": {…}} */ ],
   "manufacturing": {"process": "fdm"},       // default process of made parts
-  "verification": {"position_mm": 0.01, "angle_deg": 0.05, "motion_samples": 24},
+  "verification": {"position_mm": 0.01, "angle_deg": 0.05, "motion_steps": 2000},
   "outputs": ["bom", "3mf", "urdf", "sdf"],  // exporters run on every successful build
   "brief": { /* title, summary, key_dimensions, features, assumptions, open_questions */ }
 }
@@ -241,13 +241,17 @@ Optional fields:
   interference), or `{"iso": "H7/g6"}` evaluated from ISO 286 at the measured nominal size
   (isofits). The clearance is measured hole Ø − shaft Ø, adjusted by each part's process allowance
   (FDM's and resin's `hole_allowance_mm`, `shaft_allowance_mm`), within the measurements'
-  uncertainty on mesh parts.
+  uncertainty on mesh parts. A fit that allows interference lets the parts overlap by the ring its
+  measured diameters make (π/4·(D² − d²) over the engaged length, give or take the facets), no more.
 - `limits`: the range of the free motion (`{"angle": [0, 110]}` degrees, `{"travel": [0, 40]}` mm).
   The placed position must lie within it, and motion analysis sweeps it.
 - `offset`: a designed gap along a's Z, for `rigid`, `revolute` and `planar`.
 - `flip`: b's Z runs with a's instead of facing it (a shaft entering a bore from the end opposite
   the bore's declared opening, as Onshape's flip).
-- `overlap`: the parts are meant to overlap here (a heat-set insert's knurls, a modelled thread).
+- `overlap`: b's part is set into a hole of a's part and overlaps its wall (a heat-set insert's
+  knurls, a modelled thread, a pressed pin). a's part has no material on the hole's axis where b's part
+  sits (nor within the hole's radius, when a's end is a measured `hole`): a part set into solid
+  material, where the hole was never cut or is too shallow, is reported as interference.
 
 **Ground and coverage.** Mates, relations and fastener sets connect every instance to `ground`; an
 instance nothing connects is floating, the real-CAD "under-defined component".
@@ -281,7 +285,8 @@ set's `engagement`); and it does not bottom out. A fastener set joins its parts 
 
 The requirement checks are `size`, `fits_within`, `volume`, `mass`, `hole`, `wall`, `bodies` (each
 on a `target`: a part in its own frame, an instance or component path placed, or the whole design),
-`clearance` (between two placed things) and `stack`:
+`clearance` (between two placed things: the least gap where they sit and wherever a range of motion
+moves one against the other, as motion analysis sweeps it, and where) and `stack`:
 
 ```jsonc
 {"text": "The carrier keeps an axial gap under the lid",
@@ -353,10 +358,30 @@ default configuration).
 ## Motion
 
 For every mate with a range of motion (its `limits`, or a full turn for a revolute or cylindrical
-mate without angle limits), motion analysis moves the side of the mate away from `ground` through
-the range, `verification.motion_samples` positions sampled outward from where it sits, and runs
-the interference check at each. It reports the first collision reached ("base.hinge ↔ lid.pin at
--100.0°: lid hits base (17.06 mm³)").
+mate without angle limits), motion analysis moves the side of the mate away from `ground` from
+where it sits towards each end of the range (both ways round, for a full turn), and reports the
+first contact each way and the limit to change ("base.hinge ↔ lid.pin: from 0.0°, lid hits base at
+-99.0° on the way to -100°: limits.angle [-100, 0] run past it; make them [-98.9, 0], or clear base").
+
+It sweeps by conservative advancement, so a collision between two positions is never missed: at each
+position it measures the gap (manifold3d) between each moving instance and every instance it can
+reach, and moves on no further than lets any point travel that gap: the gap over the instance's
+largest distance from the axis, for a turn, or the gap itself, along a slide. Where instances
+touch, a step moves no point further than `verification.position_mm`, which is how closely a
+contact is placed. Two shortcuts keep it fast without losing that certainty:
+
+- what is round about the axis of a turn (a hub on its shaft, a knuckle in its hinge, a duct's
+  wall), to the mesh's tolerance, turns within itself and keeps its gap, so only the rest of each
+  part is moved against the rest of the other;
+- an instance that meets nothing anywhere in a full turn (a blade inside its duct) is cleared at
+  once: what it passes through in a full turn is the solid of revolution of its profile.
+
+A pair that already overlaps where it sits is interference's to report: motion leaves it out and
+says so (`unverified`), as it does for a pair it cannot measure (an open mesh), and for a mate it
+cannot sweep to the ends in `verification.motion_steps` positions (parts that stay within the
+position tolerance of each other all the way). Each sweep is cached by the meshes, placements and
+motions it depends on. A `clearance` requirement on a pair that moves takes the least gap over the
+sweep, and says where.
 
 Rigid mates, fastener sets and rigid components join instances into rigid clusters; the other
 mates join clusters. Relations carry the motion on: a gear driven by a moving gear turns about its
@@ -377,14 +402,14 @@ motion slider moves.
 | Analysis | On | Reports |
 | --- | --- | --- |
 | Structure | design.json, the plan | unknown names and connectors, relations joining the wrong kinds, fasteners that are not catalog parts, unknown materials, parts declared but not placed, ground |
-| Parts | each part | empty or open meshes, the kernel's validity check |
+| Parts | each part | empty meshes, meshes that do not close a solid (manifold3d's test, the one volume, mass, overlaps and gaps all use), the kernel's validity check |
 | Connectors | each part | frame counts, measured features |
 | Mates | each pair of frames | residuals in what the type fixes, limits, fits |
 | Relations | each pair | the type's geometry |
 | Fastener sets | each stack | coaxial, seated, clear, engagement, bottoming out |
 | Coverage | the instances | floating instances |
-| Interference | each pair of placed instances | overlap volume, except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it; pairs inside a component are its own build's |
-| Motion | each mate with a range | the first collision, or why it is not analysed |
+| Interference | each pair of placed instances | overlap volume, and where it is (pieces, box, depth), except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it, and within what the mate allows; pairs inside a component are its own build's |
+| Motion | each mate with a range | the first contact each way and the limit to change, or why it is not analysed |
 | Manufacturing | each made part, in its own frame | the process's checks: FDM (walls, overhangs, bed contact; overhangs reported, not failed, with `supports`), resin (walls, sealed hollows that need a drain hole), CNC milling (inside corners against the tool, pocket depth, setups), sheet metal (thickness, bend radii), injection molding (draft, wall uniformity) |
 | Requirements | as declared | pass, fail or unverified |
 
@@ -484,7 +509,7 @@ change is measured on:
 | --- | --- | --- |
 | [gearbox](../backend/tests/designs/gearbox/) | gears in a set file, a ring gear, shaft fits, a bearing seat, catalog bearing, inserts and screws, a simplified vendor motor, a stack requirement, a configuration | one failing mate: `motor.shaft+sun.bore`, fit 0.200 mm on a 0 … 0.1 fit, because `shaft_clearance` is added to the bore's radius; FDM warnings on the housing's pilot recess and the carrier; motion not analysed (a planetary is a closed loop); the 4:1 and 5:1 configurations both mesh |
 | [enclosure](../backend/tests/designs/enclosure/) | face mates, heat-set inserts by `InsertHole` (`overlap`), fastener sets, BOM, 3MF, URDF and SDF | everything verifies; the `wide` configuration misses the 50 mm envelope requirement |
-| [hinge](../backend/tests/designs/hinge/) | a cylindrical mate with angle limits, motion | the lid hits the stop post at −100°; without the post it sweeps clear |
+| [hinge](../backend/tests/designs/hinge/) | a cylindrical mate with angle limits, motion | the lid hits the stop post at −99.0°, short of its −100° limit; without the post it sweeps clear |
 | [shelf](../backend/tests/designs/shelf/) | a component placed twice, bindings, exports, a flexible component's motion at the parent's level, an indented BOM | each box's hinge collision found at the shelf's level |
 
 Seeded faults in `backend/tests/test_build.py` (a screw too long, a lid placed 0.2 mm off, an

@@ -32,7 +32,7 @@ class Tolerances(Model):
 
     position_mm: float
     angle_deg: float
-    motion_samples: int
+    motion_steps: int
 
 
 class Verification(Model):
@@ -40,7 +40,9 @@ class Verification(Model):
 
     position_mm: float | None = Field(default=None, gt=0, description="Positions agree within this distance")
     angle_deg: float | None = Field(default=None, gt=0, description="Directions agree within this angle")
-    motion_samples: int | None = Field(default=None, ge=2, description="Positions sampled per range of motion")
+    motion_steps: int | None = Field(
+        default=None, ge=10, description="Most positions motion analysis checks per mate before it gives up"
+    )
 
     def resolve(self, defaults: Tolerances) -> Tolerances:
         return defaults.model_copy(update=self.model_dump(exclude_none=True))
@@ -261,8 +263,8 @@ class _Mate(Model):
     fit: Fit | None = None
     overlap: bool = Field(
         default=False,
-        description="The two parts are meant to overlap here: a heat-set insert's "
-        "knurls, a modelled thread, a press fit between frames",
+        description="b's part is set into a hole of a's part and overlaps its wall: a heat-set insert's "
+        "knurls, a modelled thread, a pressed pin; a's part has no material on the hole's axis where b sits",
     )
     flip: bool = Field(
         default=False,

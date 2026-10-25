@@ -53,8 +53,7 @@ Agent 不会一上来就画几何。它先写清楚这个产品由哪些零件�
 Agent 在这一步难免出错，比如把叶轮直径写死成 70 mm，而不是从参数里读。build 结果会是这样：
 
 ```
-✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³
-✗ motion motor.shaft+impeller.bore: motor.shaft ↔ impeller.bore at 0.0°: impeller hits duct (91.11 mm³)
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep
 ✗ requirement Impeller blade tips clear the duct: impeller and duct overlap by 91.1 mm³
 ✓ 151 of 155 results pass
 ```
