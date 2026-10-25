@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Generate the panel UI's API types (vscode-extension/ui/src/api/schema.ts) from the server's OpenAPI schema,
-# which FastAPI derives from the pydantic models in backend/hitlcad. Run it after changing them;
+# Generate the API types of the extension and its panel UI (vscode-extension/src/lib/schema.ts) from the server's
+# OpenAPI schema, which FastAPI derives from the pydantic models in backend/hitlcad. Run it after changing them;
 # CI fails when schema.ts is out of date.
 #
 # Usage: scripts/api-types.sh
@@ -12,4 +12,4 @@ trap 'rm -rf "$work"' EXIT
 
 HITLCAD_DATA_DIR="$work/data" uv run --project "$root" python -c \
   'import json; from hitlcad.api.app import create_app; print(json.dumps(create_app().openapi()))' >"$work/openapi.json"
-npx --prefix "$root/vscode-extension" openapi-typescript "$work/openapi.json" -o "$root/vscode-extension/ui/src/api/schema.ts"
+npx --prefix "$root/vscode-extension" openapi-typescript "$work/openapi.json" -o "$root/vscode-extension/src/lib/schema.ts"

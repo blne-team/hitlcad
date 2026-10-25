@@ -1,7 +1,7 @@
-// The server's API types, generated into schema.ts from its pydantic models (scripts/api-types.sh).
-// All lengths are millimetres, Z up.
+// The server's API types, generated into the extension's src/lib/schema.ts from its pydantic models
+// (scripts/api-types.sh). All lengths are millimetres, Z up.
 
-import type { components, paths } from "./schema";
+import type { components } from "../../../src/lib/schema";
 
 type Schemas = components["schemas"];
 
@@ -26,8 +26,8 @@ export type SelectionItem = Schemas["SelectionItem"];
 export type Pin = Schemas["Pin"];
 export type DesignState = Schemas["DesignState"];
 
-export type DesignEvent =
-  paths["/api/designs/{design_id}/events"]["get"]["responses"][200]["content"]["application/json"][number];
+/** One message of a design's event stream. */
+export type DesignEvent = Schemas["DesignEvent"];
 
 /** A node or edge of the Structure view: its worst result, a failing warning counted apart. */
 export type Status = Result["status"] | "warning" | "none";

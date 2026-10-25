@@ -71,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           npm run api-types
-          git diff --exit-code -- ui/src/api/schema.ts || { echo "::error::run scripts/api-types.sh and commit ui/src/api/schema.ts"; exit 1; }
+          git diff --exit-code -- src/lib/schema.ts || { echo "::error::run scripts/api-types.sh and commit src/lib/schema.ts"; exit 1; }
       - run: npm run lint
       - run: npm test
       - run: npm run package

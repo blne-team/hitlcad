@@ -1,54 +1,20 @@
 /** Typed client for the hitlcad server (global fetch, Node 18+). */
 
 import { errorDetail } from "./lib/errorDetail";
+import type { components } from "./lib/schema";
 import type { RevisionFile } from "./lib/uiState";
 
-export interface DesignInfo {
-  id: string;
-  path: string;
-  name: string;
-  backend: string;
-  revisions: number;
-  open_pins: number;
-  building: boolean;
-  error: string | null;
-}
+type Schemas = components["schemas"];
 
-interface OpenedDesign extends DesignInfo {
-  created: boolean;
-  files: string[];
-}
-
-interface BackendInfo {
-  name: string;
-  title: string;
-  summary: string;
-  available: boolean;
-  detail: string;
-}
-
-interface Capabilities {
-  version: string;
-  backends: BackendInfo[];
-  mcp_url: string;
-}
-
-interface Revision {
-  id: number;
-  summary: string;
-  report: { status: "succeeded" | "failed"; error: string | null; duration_s: number };
-}
-
-interface ProjectResult {
-  path: string;
-  created: string[];
-}
-
-/** The permission-gated parts of a project's agent setup: the prompt hooks, and Codex's config.toml. */
-export interface AgentSetup {
-  hooks: boolean;
-  codex: boolean;
-}
+export type DesignInfo = Schemas["DesignSummary"];
+type OpenedDesign = Schemas["OpenedDesign"];
+type Capabilities = Schemas["Capabilities"];
+type Revision = Schemas["Revision"];
+type ProjectCreated = Schemas["ProjectCreated"];
+/** The permission-gated parts of a project's agent setup (the prompt hooks, Codex's config.toml) and their files. */
+export type AgentSetup = Schemas["AgentSetup"];
+/** What the human allowed of the agent setup. */
+export type Allowed = Pick<AgentSetup, "hooks" | "codex">;
 
 export class ApiError extends Error {
   constructor(
@@ -78,7 +44,7 @@ export class Api {
   /** Waits as long as the build takes: the server ends it at its own deadline. */
   buildDesign = (id: string) => this.request<Revision>("POST", `/api/designs/${encodeURIComponent(id)}/build`, undefined, null);
   /** Create or update a design project; `allowed` is what the human gave permission for. */
-  createProject = (path: string, allowed: AgentSetup) => this.request<ProjectResult>("POST", "/api/projects", { path, ...allowed });
+  createProject = (path: string, allowed: Allowed) => this.request<ProjectCreated>("POST", "/api/projects", { path, ...allowed });
   agentSetup = (path: string) => this.request<AgentSetup>("GET", `/api/projects/agents?path=${encodeURIComponent(path)}`);
   /** Selections and open pins of the designs under `root`, as chat text ("" when there are none). */
   context = (root: string) => this.send("GET", `/api/context?root=${encodeURIComponent(root)}`).then((res) => res.text());

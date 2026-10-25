@@ -1,15 +1,8 @@
 import type * as vscode from "vscode";
+import type { components } from "./lib/schema";
 
 /** A finished build, as sent by the server's /api/activity WebSocket. */
-export interface BuildActivity {
-  id: string;
-  path: string;
-  name: string;
-  revision: number;
-  status: "succeeded" | "failed";
-  origin: "file" | "parameter_edit";
-  error: string | null;
-}
+export type BuildActivity = components["schemas"]["BuildActivity"];
 
 const RETRY_MIN_MS = 2_000;
 const RETRY_MAX_MS = 30_000;

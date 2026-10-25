@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import re
 import sys
@@ -19,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
@@ -30,7 +29,7 @@ from hitlcad.app import HitlCad
 from hitlcad.backends.base import BackendInfo
 from hitlcad.config import DEFAULT_BACKEND, MCP_PATH
 from hitlcad.core.events import DesignState, Event, RevisionCreated
-from hitlcad.core.report import Revision
+from hitlcad.core.report import BuildStatus, Revision
 from hitlcad.core.types import Pick, Pin, SelectionItem
 from hitlcad.designs import agents, project
 from hitlcad.service.bus import DROPPED
@@ -152,9 +151,44 @@ class Capabilities(BaseModel):
     analyses: list[AnalysisInfo] = Field(description="In the order they run: cause before effect")
 
 
-def design_summary(s: DesignState) -> dict[str, Any]:
-    return {"id": s.id, "path": s.path, "name": s.name, "backend": s.backend, "revisions": len(s.revisions),
-            "open_pins": len(s.open_pins), "building": s.building, "error": s.error}  # fmt: skip
+class DesignSummary(BaseModel):
+    id: str
+    path: str
+    name: str
+    backend: str
+    revisions: int
+    open_pins: int
+    building: bool
+    error: str | None
+
+
+class OpenedDesign(DesignSummary):
+    created: bool
+    files: list[str] = Field(description="What creating it wrote")
+
+
+class ProjectCreated(BaseModel):
+    path: str
+    created: list[str] = Field(description="The files written or brought up to date")
+
+
+class BuildActivity(DesignSummary):
+    """A build that finished, one message of the /api/activity WebSocket."""
+
+    revision: int
+    status: BuildStatus
+    origin: Literal["file", "parameter_edit"]
+    error: str | None = Field(description="Why the build failed")
+
+
+#: The WebSockets' messages, which OpenAPI has no routes for, as schema components: the panel and the extension
+#: read their types from the schema as they do every route's.
+MESSAGES = {"DesignEvent": Event, "BuildActivity": BuildActivity}
+
+
+def design_summary(s: DesignState) -> DesignSummary:
+    return DesignSummary(id=s.id, path=s.path, name=s.name, backend=s.backend, revisions=len(s.revisions),
+                         open_pins=len(s.open_pins), building=s.building, error=s.error)  # fmt: skip
 
 
 def create_app(core: HitlCad | None = None) -> FastAPI:
@@ -174,6 +208,19 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     app = FastAPI(title="hitlcad", version=version("hitlcad"), lifespan=lifespan)
     app.state.core = core
+    routes_schema = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            components = routes_schema()["components"]["schemas"]
+            for name, kind in MESSAGES.items():
+                found = TypeAdapter(kind).json_schema(mode="serialization", ref_template="#/components/schemas/{model}")
+                for model, schema in found.pop("$defs", {}).items():
+                    components.setdefault(model, schema)
+                components[name] = found
+        return app.openapi_schema  # type: ignore[return-value]
+
+    app.openapi = openapi  # type: ignore[method-assign]
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=WEBVIEW_ORIGIN,
                        allow_methods=["*"], allow_headers=["*"])  # fmt: skip
     app.add_middleware(OriginCheck, origins=settings.cors_origins)
@@ -201,23 +248,18 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     # ------------------------------------------------------------------ designs
 
     @app.get("/api/designs")
-    async def list_designs() -> list[dict[str, Any]]:
+    async def list_designs() -> list[DesignSummary]:
         return [design_summary(s) for s in designs.list()]
 
     @app.post("/api/designs")
-    async def open_design(body: OpenDesign) -> dict[str, Any]:
+    async def open_design(body: OpenDesign) -> OpenedDesign:
         new = body.create
         s, created = designs.open(body.path, new.backend, new.name) if new else designs.open(body.path)
-        return {**design_summary(s), "created": bool(created), "files": created}
+        return OpenedDesign(**design_summary(s).model_dump(), created=bool(created), files=created)
 
     @app.get("/api/designs/{design_id}")
     async def get_design(design_id: str) -> DesignState:
         return designs.get(design_id)
-
-    @app.get("/api/designs/{design_id}/events")
-    async def list_events(design_id: str, after: int = 0) -> list[Event]:
-        designs.get(design_id)
-        return designs.store.events(design_id, after)
 
     @app.websocket("/api/designs/{design_id}/stream")
     async def stream(socket: WebSocket, design_id: str, after: int = 0) -> None:
@@ -254,10 +296,10 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
             async for design_id, event in _until_gone(socket, queue):
                 if not isinstance(event, RevisionCreated):
                     continue
-                s, rev = designs.get(design_id), event.revision
-                await socket.send_text(json.dumps({
-                    **design_summary(s), "revision": rev.id, "status": rev.report.status.value,
-                    "origin": rev.origin, "error": rev.report.error}))  # fmt: skip
+                rev = event.revision
+                summary = design_summary(designs.get(design_id)).model_dump() | {"error": rev.report.error}
+                activity = BuildActivity(**summary, revision=rev.id, status=rev.report.status, origin=rev.origin)
+                await socket.send_text(activity.model_dump_json())
         except WebSocketDisconnect:
             pass
         finally:
@@ -326,14 +368,14 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         return path.resolve()
 
     @app.post("/api/projects")
-    async def init_project(body: InitProject) -> dict[str, Any]:
+    async def init_project(body: InitProject) -> ProjectCreated:
         path = project_path(body.path)
         try:
             created = project.init_project(path, settings, sys.executable, core.registry.all(),
                                            hooks=body.hooks, codex=body.codex)  # fmt: skip
         except ValueError as e:  # a config file of the human's that is not plain JSON
             raise HTTPException(422, str(e)) from None
-        return {"path": str(path), "created": created}
+        return ProjectCreated(path=str(path), created=created)
 
     @app.get("/api/projects/agents")
     async def agent_setup(path: str) -> agents.AgentSetup:
