@@ -29,9 +29,9 @@ class Context:
     design: DesignSpec | None  # design.json as it is now; None when it does not load
     design_error: str | None  # why design.json does not load
     revision: Revision | None  # the latest successful build of the configuration explored
+    limit: int  # results listed in full per answer (Settings.explore_limit)
     stale: list[str] = field(default_factory=list)  # files changed since that build
     used_by: list[str] = field(default_factory=list)  # names of designs using this one
-    limit: int = 25
 
 
 def _owner(text: str) -> str:
@@ -354,7 +354,7 @@ class DesignGraph:
         rev = self.ctx.state.revision(rev_id)
         if rev is None:
             return f"No revision {rev_id}."
-        return revision_summary(rev)
+        return revision_summary(rev, limit=self.ctx.limit)
 
     # ------------------------------------------------------------------ impact
 
@@ -457,7 +457,7 @@ class DesignGraph:
         return {"nodes": nodes, "edges": edges, "ground": d.ground}
 
 
-def revision_summary(rev: Revision, scope: list[str] | None = None, limit: int = 25) -> str:
+def revision_summary(rev: Revision, scope: list[str] | None = None, *, limit: int) -> str:
     """A build's outcome for an agent: failures first, then a tally; scoped to some addresses when asked."""
     r = rev.report
     head = (

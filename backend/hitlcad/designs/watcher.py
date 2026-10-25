@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from hitlcad.designs.folder import BUILD_DIR
 from hitlcad.service.builds import DEBOUNCE_MS, BuildService
 from hitlcad.service.designs import DesignService
+
+log = logging.getLogger(__name__)
 
 
 class FolderWatcher:
@@ -19,6 +22,7 @@ class FolderWatcher:
     def start(self) -> None:
         if self._task is None:
             self._task = asyncio.get_running_loop().create_task(self._watch())
+            self._task.add_done_callback(_ended)
 
     async def stop(self) -> None:
         if self._task:
@@ -32,9 +36,9 @@ class FolderWatcher:
         changed = self.designs.folders_changed
         while True:
             registered = self.designs.folders()
-            folders = list(registered)
+            folders = [Path(f) for f in registered]
             changed.clear()
-            self.builds.catch_up()  # new folders, and edits made while nothing watched
+            await self.builds.catch_up()  # new folders, and edits made while nothing watched
             if not folders:
                 await changed.wait()
                 continue
@@ -43,7 +47,7 @@ class FolderWatcher:
             restart.add_done_callback(lambda _, stop=stop: stop.set())
             try:
                 async for changes in awatch(*folders, stop_event=stop, debounce=DEBOUNCE_MS, recursive=True,
-                                            watch_filter=lambda _, path: _relevant(Path(path))):  # fmt: skip
+                                            watch_filter=lambda _, path, f=folders: _relevant(f, Path(path))):  # fmt: skip
                     for design_id in {_owner(registered, Path(path)) for _, path in changes}:
                         if design_id:  # skipped when the build's inputs did not change
                             self.builds.schedule_build(design_id)
@@ -53,12 +57,19 @@ class FolderWatcher:
                 restart.cancel()
 
 
+def _ended(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and (error := task.exception()):
+        log.error("the folder watcher stopped: saved files are not rebuilt until hitlcad restarts", exc_info=error)
+
+
 IGNORED = {BUILD_DIR, f".{BUILD_DIR}.tmp", f".{BUILD_DIR}.old", "__pycache__", ".git"}
 
 
-def _relevant(path: Path) -> bool:
-    """Changes that can change a build: not hitlcad's own outputs, caches or editors' temporary files."""
-    return not (IGNORED & set(path.parts)) and not path.name.endswith((".tmp", "~", ".swp"))
+def _relevant(folders: list[Path], path: Path) -> bool:
+    """Changes that can change a build: not hitlcad's own outputs, caches or editors' temporary files. Only
+    the part of `path` inside its design folder counts: the folder itself may be anywhere, under build/ too."""
+    inside = [path.relative_to(f) for f in folders if path.is_relative_to(f)]
+    return any(not IGNORED & set(rel.parts) for rel in inside) and not path.name.endswith((".tmp", "~", ".swp"))
 
 
 def _owner(folders: dict[str, str], path: Path) -> str | None:

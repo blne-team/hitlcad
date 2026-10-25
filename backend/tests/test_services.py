@@ -18,6 +18,7 @@ from hitlcad.app import HitlCad
 from hitlcad.core.types import ComponentRef, Pick
 from hitlcad.designs import agents
 from hitlcad.designs.project import init_project
+from hitlcad.designs.watcher import _relevant
 
 from .conftest import copy_design
 
@@ -118,7 +119,9 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
                          "compare_revisions", "list_geometry", "measure_geometry", "resolve_pins"}  # fmt: skip
 
         async def call(name: str, **args: object) -> str:
-            return (await client.call_tool(name, args)).content[0].text
+            result = await client.call_tool(name, args)
+            assert not result.is_error, result.content[0].text
+            return result.content[0].text
 
         assert "every reference resolves" in await call("build_design", path=path, scope="structure")
         assert "placed: base, lid, insert ×4, screw ×4" in await call("build_design", path=path, scope="structure")
@@ -134,12 +137,13 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
         gap = await call("measure_geometry", path=path, a="lid.screws[0]", b="insert[0]")
         assert "connector lid.screws[0]" in gap and "minimum distance" in gap
         assert "Revision 1 → 2" in await call("compare_revisions", path=path, base=1)
-        assert (await call("build_design", path=str(tmp_path / "nope"))).startswith("ERROR")
+        missing = await client.call_tool("build_design", {"path": str(tmp_path / "nope")})
+        assert missing.is_error and "no design.json in" in missing.content[0].text
         assert "Materials" in await call("list_backends") and "bom" in await call("list_backends")
 
 
 def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp_path: Path) -> None:
-    written = init_project(tmp_path / "project", "http://x", "python", core.registry.all(), hooks=False, codex=False)
+    written = init_project(tmp_path / "project", core.settings, "python", core.registry.all(), hooks=False, codex=False)
     assert ".claude/skills/hitlcad/" in written and ".agents/skills/hitlcad-build123d/" in written
     skill = (tmp_path / "project" / ".claude/skills/hitlcad/SKILL.md").read_text(encoding="utf-8")
     for generated in (
@@ -156,29 +160,47 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
     assert "def build(p, i)" in guide and "frames(" in guide
 
 
-def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(core: HitlCad, tmp_path: Path) -> None:
+def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(
+    core: HitlCad, tmp_path: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     python = str(tmp_path / "Program Files" / "python")  # a path with a space, as on Windows
+    server = core.settings.base_url
     project = tmp_path / "project"
     old = {"type": "command", "command": "python -m hitlcad.cli context --hook codex --server http://x", "timeout": 5}
-    (project / ".codex").mkdir(parents=True)
-    (project / agents.CODEX_HOOKS).write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [old]}]}}),
-                                              encoding="utf-8")  # fmt: skip
-    init_project(project, "http://x", python, core.registry.all(), hooks=True, codex=False)
+    agents.json_file(agents.codex_hooks_file(), lambda c: agents.prompt_hook(c, old))
+    written = init_project(project, core.settings, python, core.registry.all(), hooks=True, codex=True)
+    assert agents.status(project) == agents.AgentSetup(hooks=True, codex=True)
 
-    def handlers(name: str) -> list[dict[str, Any]]:
-        config = json.loads((project / name).read_text(encoding="utf-8"))
-        return [h for g in config["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    def handlers(file: Path) -> list[dict[str, Any]]:
+        config = json.loads(file.read_text(encoding="utf-8"))
+        return [h for g in config.get("hooks", {}).get("UserPromptSubmit", []) for h in g["hooks"]]
 
+    # The hooks name this machine's interpreter: only this machine reads them. The project's committed files
+    # name the server alone.
+    assert {agents.CLAUDE_HOOKS, ".gitignore"} <= set(written)
+    assert agents.CLAUDE_HOOKS in (project / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert not handlers(project / agents.CLAUDE_SETTINGS) and python not in (project / ".mcp.json").read_text()
     # Claude Code starts the hook from its argv, with no shell in between.
-    claude = agents.hook_argv(python, "claude", "http://x")
-    assert handlers(agents.CLAUDE_SETTINGS) == [
-        {"type": "command", "command": python, "args": claude[1:], "timeout": 5}
+    claude = agents.hook_argv(python, "claude", server)
+    assert handlers(project / agents.CLAUDE_HOOKS) == [
+        {"type": "command", "command": python, "args": claude[1:], "timeout": agents.HOOK_TIMEOUT_S}
     ]
     # Codex hands a command line to its shell (cmd.exe /C on Windows, sh elsewhere): once that shell has read it,
     # it is the hook's argv again. The old hook is brought up to date, not doubled.
-    codex = agents.hook_argv(python, "codex", "http://x")
-    [handler] = handlers(agents.CODEX_HOOKS)
+    codex = agents.hook_argv(python, "codex", server)
+    [handler] = handlers(agents.codex_hooks_file())
     assert handler["command"] == agents.command_line(codex)
     echo = agents.command_line([sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))", *codex])
     shell = f'cmd.exe /C "{echo}"' if sys.platform == "win32" else ["/bin/sh", "-c", echo]
     assert json.loads(subprocess.run(shell, capture_output=True, encoding="utf-8", check=True).stdout) == codex
+    assert f'url = "{core.settings.mcp_url}"' in agents.codex_config_file().read_text(encoding="utf-8")
+
+
+def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_path: Path) -> None:
+    design = tmp_path / "build" / ".git" / "gearbox"  # a checkout under folders a design itself ignores
+    folders = [design]
+    assert _relevant(folders, design / "parts" / "gear.py") and _relevant(folders, design / "design.json")
+    for output in ("build/parts/gear.step", "parts/__pycache__/gear.pyc", ".git/index", "parts/gear.py~"):
+        assert not _relevant(folders, design / output)
+    assert not _relevant(folders, tmp_path / "elsewhere.py")

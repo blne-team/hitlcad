@@ -13,15 +13,15 @@ import functools
 from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from hitlcad import catalogs, describe, materials
 from hitlcad.analysis import geometry
-from hitlcad.analysis.model import StructureError
 from hitlcad.app import HitlCad
+from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.report import Revision
 from hitlcad.graph import MARK, revision_summary
 from hitlcad.render.section import joint_frames, section_png
-from hitlcad.service.designs import NotFoundError
 
 INSTRUCTIONS = f"""\
 hitlcad builds, verifies and renders parametric CAD assemblies. A design is a folder: design.json \
@@ -52,14 +52,15 @@ def build_mcp(core: HitlCad) -> MCPServer:
     mcp = MCPServer("hitlcad", instructions=INSTRUCTIONS)
 
     def guard(fn: Any) -> Any:
-        """Turn domain errors into tool results the agent can act on."""
+        """Turn domain errors (no such design, part or revision; invalid files or arguments) into tool errors
+        the agent can act on."""
 
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return await fn(*args, **kwargs)
-            except (NotFoundError, StructureError, ValueError, KeyError, LookupError) as e:
-                return f"ERROR: {e}"
+            except (LookupError, ValueError) as e:
+                raise ToolError(str(e)) from e
 
         return wrapper
 
@@ -102,7 +103,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
 
     @mcp.tool(structured_output=False)
     @guard
-    async def create_design(path: str, name: str, backend: str = "build123d") -> str:
+    async def create_design(path: str, name: str, backend: str = DEFAULT_BACKEND) -> str:
         """Scaffold a design folder at `path` (absolute): design.json, interfaces.py, assembly.py and parts/.
         Declare the structure in design.json, then build_design(path, scope="structure")."""
         state, created = designs.open(path, backend, name)
@@ -154,7 +155,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
             out: list[str | Image] = [revision_summary(r, limit=core.settings.explore_limit) for r in revisions]
             return out + images(state.id, revisions[0])
         rev = await builds.build(state.id, summary, configuration=configuration)
-        text = revision_summary(rev, [scope] if scope else None, core.settings.explore_limit)
+        text = revision_summary(rev, [scope] if scope else None, limit=core.settings.explore_limit)
         if rev.report.status == "succeeded" and configuration is None:
             text += f"\nOutputs in {designs.folder(state.id).build_dir}/ (the human can open them there)."
         if pins := len(designs.get(state.id).open_pins):

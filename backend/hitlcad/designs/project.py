@@ -9,6 +9,7 @@ from typing import Any
 
 from hitlcad import skills
 from hitlcad.backends.base import CADBackend
+from hitlcad.config import Settings
 from hitlcad.designs import agents
 
 AGENT_GUIDE = """\
@@ -31,10 +32,7 @@ missing, run `hitlcad init .` in this folder.
   added it to their message, named by instance and connector. `explore_design(path)` repeats it.
 """
 
-GITIGNORE = """\
-# hitlcad
-__pycache__/
-"""
+IGNORED = ["__pycache__/", agents.CLAUDE_HOOKS]  # the prompt hook names this machine's interpreter
 
 
 def _claude_settings(config: dict[str, Any]) -> bool:
@@ -63,8 +61,19 @@ def _vscode_settings(file: Path, python: str) -> bool:
     return True
 
 
+def _gitignore(file: Path) -> bool:
+    """Add the entries of ``IGNORED`` that ``file`` lacks. Returns True when changed."""
+    lines = file.read_text(encoding="utf-8").splitlines() if file.is_file() else []
+    missing = [entry for entry in IGNORED if entry not in lines]
+    if not missing:
+        return False
+    header = [] if "# hitlcad" in lines else ["# hitlcad"]
+    file.write_text("\n".join([*lines, *header, *missing]) + "\n", encoding="utf-8")
+    return True
+
+
 def init_project(
-    path: Path, server_url: str, python: str, backends: Iterable[CADBackend], *, hooks: bool, codex: bool
+    path: Path, settings: Settings, python: str, backends: Iterable[CADBackend], *, hooks: bool, codex: bool
 ) -> list[str]:
     """Create the project skeleton without overwriting the human's files; `python` is the interpreter
     that builds models (hitlcad's own). hitlcad's entries in the agents' configs and its skills are
@@ -80,29 +89,35 @@ def init_project(
         (designs / ".gitkeep").touch()
         written.append("designs/")
 
-    def hook(agent: str) -> dict[str, Any]:
-        return agents.hook_handler(python, agent, server_url)
+    def hook(agent: str) -> Callable[[dict[str, Any]], bool]:
+        return lambda config: agents.prompt_hook(config, agents.hook_handler(python, agent, settings.base_url))
 
     def mcp_server(config: dict[str, Any]) -> bool:
         servers = config.setdefault("mcpServers", {})
-        wanted = {"type": "http", "url": f"{server_url}/mcp"}
+        wanted = {"type": "http", "url": settings.mcp_url}
         if servers.get("hitlcad") == wanted:
             return False
         servers["hitlcad"] = wanted
         return True
 
-    files: dict[str, list[Callable[[dict[str, Any]], bool]]] = {
-        ".mcp.json": [mcp_server],
-        agents.CLAUDE_SETTINGS: [_claude_settings],
+    def shown(file: Path) -> str:
+        """In the project: its path there; else from the home folder (Codex's user files)."""
+        if file.is_relative_to(root):
+            return file.relative_to(root).as_posix()
+        return str(file).replace(str(Path.home()), "~", 1)
+
+    files: dict[Path, Callable[[dict[str, Any]], bool]] = {
+        root / ".mcp.json": mcp_server,
+        root / agents.CLAUDE_SETTINGS: _claude_settings,
     }
     if hooks:
-        files[agents.CLAUDE_SETTINGS].append(lambda c: agents.prompt_hook(c, hook("claude")))
-        files[agents.CODEX_HOOKS] = [lambda c: agents.prompt_hook(c, hook("codex"))]
-    for name, updates in files.items():
-        if agents.json_file(root, name, lambda c, updates=updates: any([u(c) for u in updates])):
-            written.append(name)
-    if codex and agents.codex_config(root, server_url):
-        written.append(str(agents.codex_config_file()).replace(str(Path.home()), "~", 1))
+        files[root / agents.CLAUDE_HOOKS] = hook("claude")
+        files[agents.codex_hooks_file()] = hook("codex")
+    for file, update in files.items():
+        if agents.json_file(file, update):
+            written.append(shown(file))
+    if codex and agents.codex_config(settings.mcp_url):
+        written.append(shown(agents.codex_config_file()))
 
     if _vscode_settings(root / ".vscode" / "settings.json", python):
         written.append(".vscode/settings.json")
@@ -115,8 +130,6 @@ def init_project(
 
     written += skills.install(root, backends)
 
-    gitignore = root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text(GITIGNORE, encoding="utf-8")
+    if _gitignore(root / ".gitignore"):
         written.append(".gitignore")
     return written

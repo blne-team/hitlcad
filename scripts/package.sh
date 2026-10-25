@@ -35,7 +35,7 @@ cp .python-version "$out/python-version"
 
 echo "==> VS Code extension and panel UI"
 npm --prefix vscode-extension ci --no-audit --no-fund
-(cd vscode-extension && npm run compile && npx vsce package --no-dependencies --out "$out/$name.vsix")
+npm --prefix vscode-extension run package -- --out "$out/$name.vsix"
 
 cp scripts/dist/install.sh scripts/dist/install.ps1 INSTALL.md "$out/"
 chmod +x "$out/install.sh"
