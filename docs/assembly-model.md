@@ -413,8 +413,22 @@ motion slider moves.
 | Coverage | the instances | floating instances |
 | Interference | each pair of placed instances | overlap volume, except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it; pairs inside a component are its own build's |
 | Motion | each mate with a range | the first collision, or why it is not analysed |
-| Manufacturing | each made part, in its own frame | the process's checks: FDM (walls, overhangs, bed contact; overhangs reported, not failed, with `supports`), resin (walls, sealed hollows that need a drain hole), CNC milling (inside corners against the tool, pocket depth, setups), sheet metal (thickness, bend radii), injection molding (draft, wall uniformity) |
+| Manufacturing | each made part, in its own frame | the process's checks: FDM (walls; overhangs, each region bridged between two supports up to `max_bridge_mm` or held at its edge, reported, not failed, with `supports`; bed contact, the base's outline against the part's seen from above and its height against the base's narrowest width, unless `brim`), resin (walls, hollows without a drain at least `min_drain_mm` across), CNC milling (inside corners against the tool, pocket depth against the cutter that finishes each corner, faces with no clear path up), sheet metal (thickness, the inside radius of each bend), injection molding (draft, undercuts along the pull, thick sections against the median wall); each failure lists where |
 | Requirements | as declared | pass, fail or unverified |
+
+Wall thickness (the process checks and the `wall` requirement) is measured once per body. At points
+spread evenly over the surface (`wall_samples`) it is the chord straight through the part to a face
+turned back within 60°, capped where that chord runs along a shell or meets a wall at a slant by the
+largest ball that fits the wall at the chord's middle (or, beside an edge, the narrowest line across
+it). The surface round the thinnest readings is sampled again at an eighth of their thickness; a
+reading stands where at least 3 of the 7 samples nearest it agree, so a real thin wall, which covers
+an area, is found, and one ray glancing off a crease is not. The taper of a knife edge, two faces
+meeting at under 60° (a hole leaving a chamfer), is no wall: a slicer rounds it off at any size.
+Rays and nearest points go through libigl's AABB tree. Inside corners and bends are read on the
+B-rep: an edge is concave by the normals there, turning about it as it runs in its first face, and
+faces meeting tangentially (a fillet's edges) make no corner; a bend is a pair of coaxial cylinders,
+inside r and outside r + the sheet, or a sharp concave edge with the sheet's other side behind both
+faces, so a cut-out's corners are not bends.
 
 Interference uses a bounding-box broad phase before exact manifold3d booleans, and caches each
 pair's overlap by the parts' meshes and transforms, so a rebuild recomputes only what moved.

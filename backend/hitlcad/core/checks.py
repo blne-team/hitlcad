@@ -301,10 +301,12 @@ class _Process(Model):
 
 class FdmProcess(_Process):
     """FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-    Z): wall thickness, overhangs and bed contact. With `supports`, overhangs print on support and are
-    reported, not failed: for shapes that cannot avoid them, like figurines. `hole_allowance_mm` /
-    `shaft_allowance_mm`: how much printed holes come out smaller and shafts larger than modelled, for fit
-    checks."""
+    Z): wall thickness, overhangs and bed contact. An overhang prints where it bridges between two supports
+    no more than `max_bridge_mm` apart (the top of a horizontal hole is such a bridge) or lies within a
+    nozzle's width of what holds it. With `supports`, overhangs print on support and are reported, not
+    failed: for shapes that cannot avoid them, like figurines. With `brim`, a tall, narrow part is held down
+    by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes come out smaller and shafts
+    larger than modelled, for fit checks."""
 
     process: Literal["fdm"]
     nozzle_mm: float = Field(default=0.4, gt=0)
@@ -312,9 +314,18 @@ class FdmProcess(_Process):
     max_overhang_deg: float = Field(
         default=45, ge=0, lt=90, description="Steepest overhang, from vertical, without support"
     )
-    min_bed_contact_share: float = Field(default=0.10, ge=0, le=1, description="Of the footprint's bounding box")
-    ignored_overhang_mm2: float = Field(default=1.0, ge=0, description="Overhangs smaller than this print by bridging")
+    max_bridge_mm: float = Field(default=10.0, ge=0, description="Longest span bridged between two supports")
+    min_bed_contact_share: float = Field(
+        default=0.10, ge=0, le=1, description="Of the part's outline seen from above, the share its base must span"
+    )
+    max_height_to_base: float = Field(
+        default=4.0, gt=0, description="Tallest a part stands, × its base's narrowest width, without a brim"
+    )
+    ignored_overhang_mm2: float = Field(
+        default=1.0, ge=0, description="An overhang that prints on nothing over less than this still prints"
+    )
     supports: bool = Field(default=False, description="Printed with support under its overhangs")
+    brim: bool = Field(default=False, description="Printed with a brim round its base")
     hole_allowance_mm: float = Field(default=0.0, ge=0)
     shaft_allowance_mm: float = Field(default=0.0, ge=0)
     example = {"process": "fdm", "hole_allowance_mm": 0.15}
@@ -329,11 +340,13 @@ class FdmProcess(_Process):
 
 
 class ResinProcess(_Process):
-    """Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and no hollow sealed
-    inside the part, which traps uncured resin. `hole_allowance_mm` / `shaft_allowance_mm` as for FDM."""
+    """Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and every hollow
+    inside the part drained through an opening at least `min_drain_mm` across, or it traps uncured resin
+    (Formlabs' design specifications ask for 3.5 mm). `hole_allowance_mm` / `shaft_allowance_mm` as for FDM."""
 
     process: Literal["resin"]
     min_wall_mm: float = Field(default=0.6, gt=0, description="Thinnest wall that prints and survives washing")
+    min_drain_mm: float = Field(default=3.5, gt=0, description="Narrowest opening resin drains out of a hollow by")
     hole_allowance_mm: float = Field(default=0.0, ge=0)
     shaft_allowance_mm: float = Field(default=0.0, ge=0)
     example = {"process": "resin", "min_wall_mm": 0.6}
@@ -348,12 +361,16 @@ class ResinProcess(_Process):
 
 
 class CncMillingProcess(_Process):
-    """3-axis CNC milling from +Z (the part's own frame): concave vertical corners need a radius of at
-    least the tool radius, and pockets deeper than `max_depth_ratio` × their width are hard to reach."""
+    """3-axis CNC milling from +Z (the part's own frame): every face but the bottom reachable along a clear
+    path up from it, concave vertical corners with at least the tool radius, and no corner deeper than
+    `max_depth_ratio` × the cutter that finishes it (its own diameter, or the tool's where it is sharp)."""
 
     process: Literal["cnc_milling"]
     tool_diameter_mm: float = Field(default=6.0, gt=0)
     max_depth_ratio: float = Field(default=4.0, gt=0)
+    ignored_area_mm2: float = Field(
+        default=1.0, ge=0, description="Faces out of reach over less than this (a sliver at a seam) do not fail"
+    )
     example = {"process": "cnc_milling", "tool_diameter_mm": 6}
 
     def checks(self, body: Body) -> list[ProcessFinding]:
@@ -364,7 +381,9 @@ class CncMillingProcess(_Process):
 
 class SheetMetalProcess(_Process):
     """Sheet metal: the thinnest and the median wall are `thickness_mm` (± `thickness_tolerance_mm`), and
-    every bend's inner radius is at least `min_bend_radius_mm` (no sharp inside corners)."""
+    every bend's inner radius is at least `min_bend_radius_mm`. A bend is a pair of coaxial cylinders, inside
+    r and outside r + the thickness, or a sharp inside edge between two faces each with the sheet's other
+    side behind it (radius 0); the corners of a cut-out are not bends."""
 
     process: Literal["sheet_metal"]
     thickness_mm: float = Field(gt=0)
@@ -379,12 +398,16 @@ class SheetMetalProcess(_Process):
 
 
 class InjectionMoldingProcess(_Process):
-    """Injection molding, pulled along Z of the part's own frame: faces parallel to the pull need at least
-    `min_draft_deg` of draft, and walls should stay within `max_wall_ratio` of each other."""
+    """Injection molding in a two-plate mold that opens along Z of the part's own frame: faces along the pull
+    need at least `min_draft_deg` of draft, every face must leave its mold half on a clear path along Z (no
+    undercuts), and no wall may be over `max_wall_ratio` × the median wall."""
 
     process: Literal["injection_molding"]
     min_draft_deg: float = Field(default=1.0, ge=0)
-    max_wall_ratio: float = Field(default=2.0, gt=1)
+    max_wall_ratio: float = Field(default=2.0, gt=1, description="Thickest wall, × the median wall")
+    ignored_area_mm2: float = Field(
+        default=1.0, ge=0, description="Faces that fail over less than this (a sliver at a seam) do not fail"
+    )
     example = {"process": "injection_molding", "min_draft_deg": 1}
 
     def checks(self, body: Body) -> list[ProcessFinding]:

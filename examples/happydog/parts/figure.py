@@ -219,7 +219,8 @@ def build(p, i):
     ang = radians(60)
     root = Hv((0, -26, 56))
     d = Hd((0, -cos(ang), -sin(ang)))
-    ry, rz = 6.5 * tl * hs, 1.9 * hs
+    ry = 6.5 * tl * hs
+    rz = max(1.9 * hs, (fm * ry / 2) ** 0.5)  # its tip is rounded to rz² / ry: at least half the narrowest detail
     F = frame(Hd((0, -sin(ang), cos(ang))), hx)
     tc = root + d * ry * 0.8
     head.append(ellipsoid("tongue", tc, bump(4.3 * hs, ry, rz), F, "tongue"))
