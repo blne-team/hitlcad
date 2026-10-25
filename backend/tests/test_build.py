@@ -479,6 +479,27 @@ async def test_components_are_built_bound_and_counted(core: HitlCad, tmp_path: P
     assert (tmp_path / "out" / "components" / "box" / "parts" / "lid.step").is_file()
 
 
+async def test_robot_descriptions_give_each_part_its_own_mesh(core: HitlCad, tmp_path: Path) -> None:
+    """The shelf's own part named like its boxes' base: each link still carries its own part's mesh."""
+    copy_design("hinge", tmp_path / "hinge")
+    folder = copy_design("shelf", tmp_path / "shelf")
+    edit_json(folder / "design.json", lambda d: d.update(
+        parts={"base": d["parts"]["plate"]}, ground="base", outputs=["urdf", "sdf"],
+        mates=[{"type": "rigid", "a": "base.slots", "b": "box.foot"}]))  # fmt: skip
+    edit(folder / "assembly.py", '"plate": [Pos()]', '"base": [Pos()]')
+    edit(folder / "parts/plate.py", 'return {"plate":', 'return {"base":')
+    out = tmp_path / "out"
+    report = await build(core, folder, out)
+    assert report.status == "succeeded", report.error
+    urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
+    meshes = {link.get("name"): link.find("visual/geometry/mesh").get("filename") for link in urdf.findall("link")}
+    assert meshes["base"] == "meshes/parts/base.stl", meshes
+    assert meshes["box_0___base"] == "meshes/components/box/parts/base.stl", meshes
+    for rel in ("parts/base.stl", "components/box/parts/base.stl"):
+        assert (out / "urdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
+        assert (out / "sdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
+
+
 async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> None:
     folder = write_design(
         tmp_path / "knob",

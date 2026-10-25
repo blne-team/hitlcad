@@ -11,6 +11,8 @@ from typing import Any
 from hitlcad.backends.subprocess_backend import SubprocessBackend
 
 ASSEMBLY_FILE = "model.blend"
+#: Seconds `blender --version` may take: it starts no UI, and returns in a few seconds even on a cold disk.
+VERSION_TIMEOUT_S = 30
 
 
 class BlenderBackend(SubprocessBackend):
@@ -36,11 +38,15 @@ class BlenderBackend(SubprocessBackend):
         if not exe:
             return None
         try:
-            out = subprocess.run([exe, "--version"], capture_output=True, encoding="utf-8", timeout=30).stdout
+            out = subprocess.run([exe, "--version"], capture_output=True, encoding="utf-8",
+                                 timeout=VERSION_TIMEOUT_S).stdout  # fmt: skip
         except (OSError, subprocess.TimeoutExpired):
             return None
         m = re.search(r"Blender (\d+\.\d+(?:\.\d+)?)", out)
         return m.group(1) if m else None
+
+    def libraries(self) -> dict[str, str | None]:
+        return {"blender": self.version}
 
     def availability(self) -> tuple[bool, str]:
         if not shutil.which(self.binary):

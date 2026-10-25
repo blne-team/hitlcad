@@ -80,8 +80,3 @@ def write_view(built: BuiltDesign, target: Path) -> None:
         return cadview.group(path, name, parts)
 
     view.write(group(built, f"/{root}", root, fr.IDENTITY), built.mesh.bounds, target)
-
-
-def instance_of(view_id: str) -> str:
-    """The instance address of a viewer id: '/gearbox/tilt/planet[2]' -> 'tilt/planet[2]'."""
-    return view_id.strip("/").split("/", 1)[1]

@@ -16,13 +16,12 @@ def matrix(value: Any) -> list[list[float]]:
     """A placement or connector frame as a 4 × 4 matrix: a build123d Location, or a 4 × 4 nested list."""
     from build123d import Location
 
-    if isinstance(value, Location):
-        t = value.wrapped.Transformation()
-        return [[t.Value(r, c) for c in range(1, 5)] for r in range(1, 4)] + [[0.0, 0.0, 0.0, 1.0]]
-    rows = [list(map(float, row)) for row in value] if isinstance(value, list | tuple) else None
-    if rows is None or len(rows) != 4 or any(len(r) != 4 for r in rows):
+    from hitlcad.sdk import rows
+
+    out = rows(value) if isinstance(value, Location | list | tuple) else None
+    if out is None or len(out) != 4 or any(len(r) != 4 for r in out):
         raise ModelError(f"a placement or connector frame is a build123d Location, got {type(value).__name__}")
-    return rows
+    return out
 
 
 def _shape(value: Any, what: str) -> Any:

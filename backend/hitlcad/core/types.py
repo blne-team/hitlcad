@@ -79,16 +79,14 @@ class ParamSpec(Model):
             raise ValueError(f"{self.name}: expected one of {self.choices}")
         if isinstance(raw, bool) or not isinstance(raw, int | float):
             raise ValueError(f"{self.name}: expected a number")
+        if self.type == "int" and not float(raw).is_integer():
+            raise ValueError(f"{self.name}: expected a whole number, got {raw}")
         value: float | int = int(raw) if self.type == "int" else float(raw)
         if self.min is not None and value < self.min:
             raise ValueError(f"{self.name}: {value} is below minimum {self.min}")
         if self.max is not None and value > self.max:
             raise ValueError(f"{self.name}: {value} is above maximum {self.max}")
         return value
-
-
-def param_values(specs: list[ParamSpec]) -> dict[str, Value]:
-    return {p.name: p.value for p in specs}
 
 
 def apply_values(specs: list[ParamSpec], values: dict[str, Any]) -> list[ParamSpec]:

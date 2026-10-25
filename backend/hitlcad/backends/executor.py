@@ -31,11 +31,18 @@ import psutil
 LOG_LIMIT = 64_000
 OUTPUT_FILE = "output.log"
 MEMORY_SAMPLE_S = 0.5
+#: Lines of a process's output an error quotes.
+TAIL_LINES = 40
+
+
+def last_lines(text: str) -> str:
+    """The last TAIL_LINES lines of a process's output: what an error quotes."""
+    return "\n".join(text.strip().splitlines()[-TAIL_LINES:])
 
 
 @dataclass
 class ExecResult:
-    returncode: int | None
+    returncode: int
     output: str
     stopped: str | None  # why hitlcad stopped the process, if it did: "exceeded the 180s time limit"
     duration_s: float
@@ -105,9 +112,13 @@ def _resident(root: psutil.Process) -> int:
 
 
 async def _memory_exceeds(pid: int, limit: int) -> None:
-    """Returns once the process tree of ``pid`` holds more than ``limit`` bytes."""
-    root = psutil.Process(pid)
-    while _resident(root) <= limit:
+    """Returns once the process tree of ``pid`` holds more than ``limit`` bytes, and never otherwise: a process
+    that is gone (it ended before the first sample) holds nothing."""
+    try:
+        root: psutil.Process | None = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        root = None
+    while root is None or _resident(root) <= limit:
         await asyncio.sleep(MEMORY_SAMPLE_S)
 
 
@@ -142,7 +153,7 @@ class LocalExecutor:
         tree = _ProcessTree(proc.pid)
         exited = asyncio.ensure_future(proc.wait())
         limits = {asyncio.ensure_future(asyncio.sleep(timeout_s)): f"exceeded the {timeout_s:.0f}s time limit"}
-        if memory_mb:
+        if memory_mb is not None:
             limits[asyncio.ensure_future(_memory_exceeds(proc.pid, memory_mb << 20))] = (
                 f"used more than {memory_mb} MB of memory"
             )
@@ -159,4 +170,4 @@ class LocalExecutor:
             for limit in limits:
                 limit.cancel()
             tree.close()
-        return ExecResult(proc.returncode, _tail(log), stopped, time.monotonic() - started)
+        return ExecResult(proc.returncode, _tail(log), stopped, time.monotonic() - started)  # type: ignore[arg-type]

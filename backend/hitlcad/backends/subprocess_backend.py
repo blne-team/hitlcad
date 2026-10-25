@@ -18,15 +18,19 @@ from typing import Any, ClassVar
 
 from hitlcad.backends import runtime
 from hitlcad.backends.base import CADBackend, PartsOutcome, PlanOutcome
-from hitlcad.backends.executor import Executor, LocalExecutor
+from hitlcad.backends.executor import Executor, LocalExecutor, last_lines
 from hitlcad.core.types import Value
+
+#: hitlcad's own code that model code runs with, besides an entry script and the model runtime: the SDK and the
+#: catalog providers, relative to the hitlcad package.
+MODEL_CODE = ("sdk/__init__.py", "catalogs/*.py")
 
 
 class SubprocessBackend(CADBackend):
     entry: ClassVar[Path]  # the entry script
 
     def __init__(
-        self, *, executor: Executor | None = None, timeout_s: float, memory_mb: int | None = None,
+        self, *, executor: Executor | None = None, timeout_s: float, memory_mb: int,
         mesh_tolerance_mm: float, mesh_angular_tolerance: float,
     ) -> None:  # fmt: skip
         self.executor = executor or LocalExecutor()
@@ -35,15 +39,24 @@ class SubprocessBackend(CADBackend):
         self.mesh_tolerance_mm = mesh_tolerance_mm
         self.mesh_angular_tolerance = mesh_angular_tolerance
 
+    def code(self) -> list[Path]:
+        """The files of hitlcad's that its child processes run: its entry script, the model runtime, the SDK and the
+        catalog providers."""
+        root = Path(runtime.__file__).parents[1]
+        return [self.entry, Path(runtime.__file__), *sorted(p for pattern in MODEL_CODE for p in root.glob(pattern))]
+
+    def libraries(self) -> dict[str, str | None]:
+        """The versions of the libraries its child processes build with."""
+        return {}
+
     @cached_property
     def _fingerprint(self) -> str:
-        code = b"".join(p.read_bytes() for p in (self.entry, Path(runtime.__file__)))
-        return hashlib.sha256(
-            code + f"{self.name}:{self.mesh_tolerance_mm}:{self.mesh_angular_tolerance}".encode()
-        ).hexdigest()
+        data = {"name": self.name, "code": [hashlib.sha256(p.read_bytes()).hexdigest() for p in self.code()],
+                "libraries": self.libraries(), "mesh": [self.mesh_tolerance_mm, self.mesh_angular_tolerance]}  # fmt: skip
+        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
     def fingerprint(self) -> str:
-        """Its entry script, the model runtime and the mesh tolerances, read once."""
+        """Its code, its libraries' versions and the mesh tolerances, read once."""
         return self._fingerprint
 
     @abstractmethod
@@ -62,8 +75,7 @@ class SubprocessBackend(CADBackend):
         if run.stopped:
             return {"ok": False, "error": f"the build {run.stopped}"}, run.output
         if not result_file.is_file():
-            tail = "\n".join(run.output.strip().splitlines()[-25:])
-            return {"ok": False, "error": f"{_ended(run.returncode)}:\n{tail}"}, run.output
+            return {"ok": False, "error": f"{_ended(run.returncode)}:\n{last_lines(run.output)}"}, run.output
         return json.loads(result_file.read_text(encoding="utf-8")), run.output
 
     async def plan(self, src: Path, values: dict[str, Value], work: Path) -> PlanOutcome:
@@ -89,7 +101,7 @@ class SubprocessBackend(CADBackend):
         return PartsOutcome(files=result["files"], log=log)
 
 
-# Signals that end a build process on POSIX, and why they usually do.
+# Signals that end a build process on POSIX, and why they usually do; by name, as Windows has none of them.
 _SIGNALS = {
     "SIGKILL": "was killed by the system, most often for running out of memory",
     "SIGSEGV": "crashed (segmentation fault)",
@@ -102,11 +114,11 @@ _NTSTATUS = {
 }
 
 
-def _ended(code: int | None) -> str:
+def _ended(code: int) -> str:
     """How the build process ended, when it left no result."""
-    if code is not None and code < 0:
-        sig = signal.Signals(-code)
-        return f"the build process {_SIGNALS.get(sig.name, f'was ended by {sig.name}')}"
+    if code < 0:
+        why = {getattr(signal, name, None): why for name, why in _SIGNALS.items()}.get(-code)
+        return f"the build process {why or f'was ended by signal {-code} ({signal.strsignal(-code)})'}"
     if code in _NTSTATUS:
         return f"the build process {_NTSTATUS[code]}"
     return f"the build process exited with code {code}"

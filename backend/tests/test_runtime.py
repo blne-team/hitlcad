@@ -4,14 +4,19 @@ process that runs it."""
 from __future__ import annotations
 
 import asyncio
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import psutil
 import pytest
 
-from hitlcad.backends.executor import LocalExecutor
-from hitlcad.backends.runtime import ModelError, Runtime, plan
+from hitlcad.backends import runtime
+from hitlcad.backends.executor import LocalExecutor, _memory_exceeds
+from hitlcad.backends.runtime import ModelError, Runtime, _plain, plan
 from hitlcad.backends.subprocess_backend import _ended
 from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.core.report import Reads
@@ -138,3 +143,59 @@ async def test_a_build_process_ended_by_a_signal_says_why(tmp_path: Path) -> Non
     kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
     run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)
     assert _ended(run.returncode) == "the build process was killed by the system, most often for running out of memory"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_build_process_ended_by_a_real_time_signal_says_which() -> None:
+    assert _ended(-40) == f"the build process was ended by signal 40 ({signal.strsignal(40)})"
+
+
+async def test_the_memory_limit_is_reached_only_by_using_memory() -> None:
+    """A process that ended before the first sample holds nothing: its sampler waits, it does not end."""
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(_memory_exceeds(ended.pid, 1 << 30), 1.5)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows ends a build with its server through a job object")
+async def test_a_build_ends_itself_when_its_server_is_killed(tmp_path: Path) -> None:
+    """A server killed outright cannot hold its builds' limits: each build ends itself once its server is gone."""
+    build = "import time; from hitlcad.backends import runtime; runtime.exit_with_parent(); time.sleep(30)"
+    server = (f"import os, subprocess, sys, time; build = subprocess.Popen([sys.executable, '-c', {build!r}], "
+              "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(build.pid, flush=True); time.sleep(1); os._exit(0)")  # fmt: skip
+    pid = int(subprocess.run([sys.executable, "-c", server], capture_output=True, text=True, check=True).stdout)
+    for _ in range(50):
+        if not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        psutil.Process(pid).kill()
+        pytest.fail("the build outlived its server")
+
+
+def test_interface_values_are_plain_numbers() -> None:
+    assert _plain(np.int64(3), "v") == 3 and type(_plain(np.int64(3), "v")) is int
+    assert type(_plain(np.float32(0.5), "v")) is float
+    with pytest.raises(ModelError, match="v is nan"):
+        _plain(np.float32("nan"), "v")
+
+
+def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Path, monkeypatch: Any) -> None:
+    from importlib.metadata import version
+
+    from hitlcad.backends.build123d.backend import Build123dBackend
+
+    def backend() -> Build123dBackend:
+        return Build123dBackend(timeout_s=1, memory_mb=1, mesh_tolerance_mm=0.01, mesh_angular_tolerance=0.1)
+
+    root = Path(runtime.__file__).parents[1]
+    code = {p.relative_to(root).as_posix() for p in backend().code()}
+    assert {"backends/build123d/entry.py", "backends/runtime.py", "sdk/__init__.py", "catalogs/bd_warehouse.py"} <= code
+    assert backend().libraries() == {"build123d": version("build123d"), "bd_warehouse": version("bd_warehouse")}
+    catalog = tmp_path / "catalog.py"
+    monkeypatch.setattr(Build123dBackend, "code", lambda self: [catalog])
+    catalog.write_text("A = 1", encoding="utf-8")
+    before = backend().fingerprint()
+    catalog.write_text("A = 2", encoding="utf-8")
+    assert backend().fingerprint() != before

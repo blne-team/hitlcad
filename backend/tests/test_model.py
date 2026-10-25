@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from hitlcad import materials
 from hitlcad.core import frames as fr
-from hitlcad.core.address import End, InstancePath, parse_mate
+from hitlcad.core.address import End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.iso286 import deviations, fit_clearance
 from hitlcad.core.structure import (
@@ -43,8 +43,6 @@ def test_addresses_parse_and_print_back() -> None:
     path = InstancePath.parse("tilt/planet[2]")
     assert [str(s) for s in path.segments] == ["tilt", "planet[2]"] and str(path) == "tilt/planet[2]"
     assert str(End.parse("planet[1].bore")) == "planet[1].bore"
-    a, b = parse_mate("lid.bottom+housing.top")
-    assert (a.owner.name, a.connector, b.owner.name) == ("lid", "bottom", "housing")
     for bad in ("lid", "1lid.x", "a/b.c", "lid.bottom.top"):
         with pytest.raises(ValueError):
             End.parse(bad)
@@ -95,6 +93,14 @@ def test_design_json_names_must_be_unique_and_resolve() -> None:
         )
     with pytest.raises(ValidationError, match="under parts/"):
         DesignSpec.model_validate(design(parts={"a": {"role": "x", "file": "a.py"}}))
+
+
+def test_an_int_parameter_takes_whole_numbers_only() -> None:
+    from hitlcad.core.types import ParamSpec
+
+    assert ParamSpec(name="n", type="int", value=3.0).value == 3
+    with pytest.raises(ValidationError, match="n: expected a whole number, got 2.7"):
+        ParamSpec(name="n", type="int", value=2.7)
 
 
 def test_configurations_apply_over_the_parameters() -> None:

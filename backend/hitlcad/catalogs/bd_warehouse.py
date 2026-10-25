@@ -25,6 +25,7 @@ seat of a screw's head, at the base of nuts, washers, inserts and bearings):
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import Any
 
 from hitlcad.catalogs import CatalogItem
@@ -103,8 +104,7 @@ def screw(kind: str, size: str, length: float, standard: str) -> CatalogPart:
     native = cls(size=size, length=length, fastener_type=standard, simple=True)
     connectors = {"seat": _location(up=False), "shank": _location(up=False), "tip": _location(-length, up=False)}
     metadata = {**_thread(native), **_clearance(native), "length": float(length),
-                "head_diameter": float(getattr(native, "head_diameter", 0.0)),
-                "head_height": float(getattr(native, "head_height", 0.0))}  # fmt: skip
+                **{k: float(getattr(native, k)) for k in ("head_diameter", "head_height") if hasattr(native, k)}}  # fmt: skip
     return _part(native, "screw", f"{kind} {standard} {size} × {length:g}", connectors, metadata)
 
 
@@ -215,7 +215,7 @@ class BdWarehouseProvider:
     def search(self, query: str, limit: int) -> list[CatalogItem]:
         words = query.lower().replace("×", " ").split()
         scored = []
-        for item in self._index():
+        for item in self._index:
             text = " ".join([item.family, item.designation, *item.sizes]).lower()
             score = sum(1 for w in words if w in text)
             if score:
@@ -227,14 +227,13 @@ class BdWarehouseProvider:
     def _sized(item: CatalogItem, words: list[str]) -> CatalogItem:
         """The item with its call made for the size the query names, when it names one."""
         size = next((s for s in item.sizes for w in words if s.lower().startswith(w)), None)
-        if size is None or not item.sizes:
+        if size is None:
             return item
         return item.model_copy(update={"call": item.call.replace(f"'{item.sizes[0]}'", f"'{size}'", 1)})
 
+    @cached_property
     def _index(self) -> list[CatalogItem]:
-        if not hasattr(self, "_cached"):
-            self._cached = self._items()
-        return self._cached
+        return self._items()
 
 
 PROVIDER = BdWarehouseProvider()
