@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,6 +52,7 @@ from hitlcad.core.structure import PartSpec, Tolerances
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 SETTINGS = AnalysisSettings(overlap_mm3=1e-3, mesh_tolerance_mm=0.01, wall_samples=3000)
+FEW_SAMPLES = replace(SETTINGS, wall_samples=400)  # for checks that read walls roughly or not at all: quicker
 TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 
 
@@ -64,8 +66,8 @@ def part(shape, tmp_path: Path, name: str) -> PartGeometry:
                         cached=False)  # fmt: skip
 
 
-def body(shape, tmp_path: Path, name: str) -> Body:
-    return Body(name, [Leaf(name, part(shape, tmp_path, name), None, fr.IDENTITY)], SETTINGS, TOL)  # type: ignore[arg-type]
+def body(shape, tmp_path: Path, name: str, settings: AnalysisSettings = SETTINGS) -> Body:
+    return Body(name, [Leaf(name, part(shape, tmp_path, name), None, fr.IDENTITY)], settings, TOL)  # type: ignore[arg-type]
 
 
 def finding(findings, name: str):
@@ -171,23 +173,23 @@ def test_sheet_metal_wants_one_thickness_and_bends_of_a_radius(tmp_path: Path) -
 
 def test_molding_wants_draft_no_undercuts_and_even_walls(tmp_path: Path) -> None:
     rules = InjectionMoldingProcess(process="injection_molding", min_draft_deg=1)
-    box = rules.checks(body(Box(40, 40, 20, align=ON), tmp_path, "box"))
+    box = rules.checks(body(Box(40, 40, 20, align=ON), tmp_path, "box", FEW_SAMPLES))
     assert passed(box, "molding_draft") is False  # straight walls drag on the mold
-    ball = rules.checks(body(Sphere(10), tmp_path, "ball"))  # its equator only turns through vertical
+    ball = rules.checks(body(Sphere(10), tmp_path, "ball", FEW_SAMPLES))  # its equator only turns through vertical
     assert passed(ball, "molding_draft") is True and passed(ball, "molding_undercuts") is True
     with BuildPart() as waisted:
         Cone(20, 15, 10, align=ON)
         with Locations(Pos(0, 0, 10)):
             Cone(15, 20, 10, align=ON)
-    hourglass = rules.checks(body(waisted.part, tmp_path, "hourglass"))
+    hourglass = rules.checks(body(waisted.part, tmp_path, "hourglass", FEW_SAMPLES))
     assert passed(hourglass, "molding_draft") is True and passed(hourglass, "molding_undercuts") is False
-    drafted = rules.checks(body(tray(2), tmp_path, "tray"))
+    drafted = rules.checks(body(tray(2), tmp_path, "tray", FEW_SAMPLES))
     assert all(f.passed for f in drafted), drafted  # a 2 mm shell: its rims and ends are no thick sections
-    assert passed(rules.checks(body(tray(-2), tmp_path, "narrowing")), "molding_undercuts") is False
+    assert passed(rules.checks(body(tray(-2), tmp_path, "narrowing", FEW_SAMPLES)), "molding_undercuts") is False
     lumpy = Box(60, 40, 2, align=ON) + Box(10, 10, 20, align=ON)
     assert (
         "over 2 × its median wall (2.00 mm)"
-        in finding(rules.checks(body(lumpy, tmp_path, "lumpy")), "molding_walls").detail
+        in finding(rules.checks(body(lumpy, tmp_path, "lumpy", FEW_SAMPLES)), "molding_walls").detail
     )
 
 
@@ -216,12 +218,12 @@ def test_fdm_bed_contact_is_the_base_under_its_outline_and_its_height(tmp_path: 
     fdm = FdmProcess(process="fdm")
     for name, shape in [("bar", Box(100, 5, 5, align=ON)), ("turned", Rotation(0, 0, 45) * Box(100, 5, 5, align=ON)),
                         ("ring", Cylinder(50, 5, align=ON) - Cylinder(48, 5, align=ON))]:  # fmt: skip
-        assert passed(fdm.checks(body(shape, tmp_path, name)), "fdm_bed_contact") is True, name
-    tower = body(Box(5, 5, 100, align=ON), tmp_path, "tower")
+        assert passed(fdm.checks(body(shape, tmp_path, name, FEW_SAMPLES)), "fdm_bed_contact") is True, name
+    tower = body(Box(5, 5, 100, align=ON), tmp_path, "tower", FEW_SAMPLES)
     tall = finding(fdm.checks(tower), "fdm_bed_contact")
     assert tall.passed is False and "20.0 × that tall" in tall.detail and "brim" in tall.detail
     assert passed(FdmProcess(process="fdm", brim=True).checks(tower), "fdm_bed_contact") is True
-    ball = fdm.checks(body(Pos(0, 0, 10) * Sphere(10), tmp_path, "ball"))
+    ball = fdm.checks(body(Pos(0, 0, 10) * Sphere(10), tmp_path, "ball", FEW_SAMPLES))
     assert passed(ball, "fdm_bed_contact") is False and passed(ball, "fdm_overhangs") is False
 
 
@@ -234,7 +236,7 @@ def test_resin_wants_hollows_drained_and_walls_that_survive(tmp_path: Path) -> N
     assert passed(vented, "resin_drains") is False
     drained = hollow - Cylinder(2, 6, align=ON)  # a 4 mm drain hole through the floor into the hollow
     assert passed(rules.checks(body(drained, tmp_path, "drained")), "resin_drains") is True
-    assert passed(rules.checks(body(Box(30, 30, 0.4, align=ON), tmp_path, "film")), "resin_wall_thickness") is False
+    assert passed(rules.checks(body(Box(10, 10, 0.4, align=ON), tmp_path, "film")), "resin_wall_thickness") is False
 
 
 def test_an_open_mesh_has_no_wall_thickness_to_read(tmp_path: Path) -> None:

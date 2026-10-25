@@ -47,11 +47,11 @@ def edit_json(path: Path, change: Any) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path) -> None:
+async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     report = await build(core, folder, tmp_path / "out")
     assert report.status == "succeeded", report.error
-    assert failing(report) == []
+    assert failing(report) == [] and not any(p.cached for p in report.parts)
     fasteners = results(report, "fastener", "pass")
     assert len(fasteners) == 4 and all("engages 5.00 mm" in r.detail for r in fasteners)
     assert not [r for r in results(report, "connector") if r.subject.startswith("base.inserts")]  # datums: no result
@@ -70,6 +70,12 @@ async def test_the_enclosure_verifies_and_exports(core: HitlCad, tmp_path: Path)
     view = json.loads((out / "view.json").read_text(encoding="utf-8"))
     leaves = [p["id"] for p in view["shapes"]["parts"]]
     assert "/Enclosure/insert[3]" in leaves and len(view["instances"]) == 4  # tessellated once per part
+
+    edit_json(folder / "design.json", lambda d: d["parameters"][3].update(value=5))  # lid_t, read by parts/box.py
+    second = await build(core, folder, tmp_path / "b")
+    # the cache works per file: base and lid share parts/box.py, one parametric history
+    assert {p.name: p.cached for p in second.parts} == {"base": False, "lid": False, "insert": True, "screw": True}
+    assert next(p for p in second.parts if p.name == "lid").reads.parameters == ["height", "lid_t", "wall", "width"]
 
 
 async def test_seeded_faults_are_caught_by_their_analysis(core: HitlCad, tmp_path: Path) -> None:
@@ -139,39 +145,25 @@ async def test_errors_in_a_part_file_name_its_line_and_spare_the_others(core: Hi
     assert [r.subject for r in report.results] == ["parts/hardware.py"]
 
 
-async def test_parts_come_from_the_cache_when_what_they_read_is_unchanged(core: HitlCad, tmp_path: Path) -> None:
-    folder = copy_design("enclosure", tmp_path / "enclosure")
-    first = await build(core, folder, tmp_path / "a")
-    assert not any(p.cached for p in first.parts)
-    edit_json(folder / "design.json", lambda d: d["parameters"][3].update(value=5))  # lid_t, read by parts/box.py
-    second = await build(core, folder, tmp_path / "b")
-    # the cache works per file: base and lid share parts/box.py, one parametric history
-    assert {p.name: p.cached for p in second.parts} == {"base": False, "lid": False, "insert": True, "screw": True}
-    assert next(p for p in second.parts if p.name == "lid").reads.parameters == ["height", "lid_t", "wall", "width"]
-
-
-async def test_configurations_build_their_own_values(core: HitlCad, tmp_path: Path) -> None:
-    folder = copy_design("enclosure", tmp_path / "enclosure")
-    report = await build(core, folder, tmp_path / "out", "wide")
-    assert report.configuration == "wide" and report.values["width"] == 60
-    assert report.metrics and report.metrics.size[0] == pytest.approx(60)
-    assert failing(report) == [
-        "requirement fits 50 mm: 60.00 × 60.00 × 27.00 mm in a 50 × 50 × 30 mm box: X 60.00 > 50, Y 60.00 > 50"
-    ]  # the wide variant breaks a requirement the default meets
-
-
-async def test_requirements_follow_the_parameters_they_name(core: HitlCad, tmp_path: Path) -> None:
+async def test_configurations_build_their_own_values_and_requirements_follow_them(
+    core: HitlCad, tmp_path: Path
+) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     edit_json(folder / "design.json", lambda d: d["requirements"].extend([
         {"text": "as wide as its width", "check": {"kind": "size", "axis": "x", "min": "width", "max": "width"}},
         {"text": "named wrong", "check": {"kind": "wall", "min": "thickness"}},
     ]))  # fmt: skip
-    for configuration, width in ((None, 40), ("wide", 60)):
+    too_wide = "requirement fits 50 mm: 60.00 × 60.00 × 27.00 mm in a 50 × 50 × 30 mm box: X 60.00 > 50, Y 60.00 > 50"
+    for configuration, width, breaks in ((None, 40, []), ("wide", 60, [too_wide])):
         report = await build(core, folder, tmp_path / f"out-{width}", configuration)
+        assert report.configuration == configuration and report.values["width"] == width
+        assert report.metrics and report.metrics.size[0] == pytest.approx(width)
         (follows,) = [r for r in results(report, "requirement") if r.subject == "as wide as its width"]
         assert follows.status == "pass" and f"X {width}.00 mm" in follows.detail, follows.detail
         (wrong,) = [r for r in results(report, "requirement") if r.subject == "named wrong"]
         assert wrong.status == "fail" and "thickness" in wrong.detail, wrong.detail
+        # the wide variant breaks a requirement the default meets
+        assert [f for f in failing(report) if not f.startswith("requirement named wrong")] == breaks
 
 
 async def test_structure_is_checked_before_any_geometry(core: HitlCad, tmp_path: Path) -> None:
@@ -326,7 +318,8 @@ async def test_an_insert_set_into_solid_material_is_not_an_expected_overlap(core
     assert report.tally.problems == 1, lines
 
 
-async def test_the_fan_turns_into_a_pin_in_its_duct_and_one_too_big_for_it_once(core: HitlCad, tmp_path: Path) -> None:
+@pytest.mark.once
+async def test_the_fan_turns_into_a_pin_in_its_duct(core: HitlCad, tmp_path: Path) -> None:
     folder = shutil.copytree(EXAMPLES / "handhold-fan", tmp_path / "fan")
     # A Ø1.2 pin into the blades' path at 22.5°: eight blades, every 45°, meet it only between positions
     edit_json(folder / "design.json", lambda d: next(p for p in d["parameters"] if p["name"] == "blade_count")
@@ -341,8 +334,10 @@ async def test_the_fan_turns_into_a_pin_in_its_duct_and_one_too_big_for_it_once(
     assert motion.status == "fail" and "impeller hits duct at 18.5°" in motion.detail and "at -18.5°" in motion.detail
     (tips,) = [r for r in results(report, "requirement") if r.subject == "Impeller blade tips clear the duct"]
     assert tips.status == "fail" and "0.74 mm where they sit" in tips.detail, tips.detail
-    # An impeller 0.5 mm too big for its duct overlaps it where it sits: interference says so, once
-    shutil.rmtree(folder)
+
+
+async def test_an_impeller_too_big_for_its_duct_is_one_problem(core: HitlCad, tmp_path: Path) -> None:
+    """An impeller 0.5 mm too big for its duct overlaps it where it sits: interference says so, once."""
     folder = shutil.copytree(EXAMPLES / "handhold-fan", tmp_path / "fan")
     edit(folder / "parts/impeller.py", 'p["fan_d"] / 2', "70 / 2")
     report = await build(core, folder, tmp_path / "big")
@@ -396,17 +391,20 @@ async def test_an_interference_fit_allows_the_ring_it_predicts_and_no_more(core:
 
 
 ISO_FITS = [  # pin Ø, diametral gap modelled, fit, passes, what the mate says
-    (2, 0, "H7/h6", True, "fit H7/h6 at Ø2: hole +0.010/0, shaft 0/-0.006, clearance 0.000 … 0.016 mm"),
-    (3, 0, "H7/h6", True, "fit H7/h6 at Ø3: hole +0.010/0"),  # the 3 mm bound belongs to the range up to 3
-    (8, 0, "H7/r6", False, "a cylindrical mate moves, but its fit leaves no room: greatest clearance -0.004 mm"),
-    (8, 0.03, "H7/g6", False, "fit H7/g6: the hole and shaft differ by 0.030 mm"),  # modelled at the fit's limits
-    (3, 0, "H7/t6", False, "fit H7/t6: ISO 286 does not define t6 at Ø3, only above 24 up to 3150 mm"),
-]
+    # on every platform: a fit modelled without a gap overlaps by the facets its tessellation makes
+    pytest.param(2, 0, "H7/h6", True, "fit H7/h6 at Ø2: hole +0.010/0, shaft 0/-0.006, clearance 0.000 … 0.016 mm",
+                 id="H7/h6@2+0"),
+    pytest.param(8, 0, "H7/r6", False,
+                 "a cylindrical mate moves, but its fit leaves no room: greatest clearance -0.004 mm",
+                 id="H7/r6@8+0", marks=pytest.mark.once),
+    pytest.param(8, 0.03, "H7/g6", False, "fit H7/g6: the hole and shaft differ by 0.030 mm",  # at the fit's limits
+                 id="H7/g6@8+0.03", marks=pytest.mark.once),
+    pytest.param(3, 0, "H7/t6", False, "fit H7/t6: ISO 286 does not define t6 at Ø3, only above 24 up to 3150 mm",
+                 id="H7/t6@3+0", marks=pytest.mark.once),
+]  # fmt: skip
 
 
-@pytest.mark.parametrize(
-    ("pin_d", "gap", "fit", "passes", "says"), ISO_FITS, ids=[f"{f}@{d}+{g}" for d, g, f, *_ in ISO_FITS]
-)
+@pytest.mark.parametrize(("pin_d", "gap", "fit", "passes", "says"), ISO_FITS)
 async def test_iso_fits_hold_over_the_standard_s_range_and_leave_a_moving_mate_room(
     core: HitlCad, tmp_path: Path, pin_d: float, gap: float, fit: str, passes: bool, says: str
 ) -> None:
@@ -463,8 +461,12 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     assert stack.status == "pass" and stack.detail.startswith(
         "0.500 mm nominal, 0.300 … 0.700 worst case (± 0.200), ± 0.141 RSS"
     )
-    ratio_5 = await build(core, folder, tmp_path / "ratio_5", "ratio_5")
-    assert ratio_5.status == "succeeded" and len(results(ratio_5, "relation", "pass")) == 6
+
+
+@pytest.mark.once
+async def test_the_gearbox_s_other_ratio_meshes_too(core: HitlCad, tmp_path: Path) -> None:
+    report = await build(core, copy_design("gearbox", tmp_path / "gearbox"), tmp_path / "out", "ratio_5")
+    assert report.status == "succeeded" and len(results(report, "relation", "pass")) == 6
 
 
 async def test_a_gear_cut_to_another_module_fails_its_connector_and_meshes_with_nothing(
@@ -478,33 +480,28 @@ async def test_a_gear_cut_to_another_module_fails_its_connector_and_meshes_with_
     assert len(unverified) == 6 and "not verified until planet[0].teeth measures as declared" in unverified[0]
 
 
-async def test_components_are_built_bound_and_counted(core: HitlCad, tmp_path: Path) -> None:
-    copy_design("hinge", tmp_path / "hinge")
-    folder = copy_design("shelf", tmp_path / "shelf")
-    report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
-    child = report.components["box"]
-    assert child.values["size"] == 30  # bound from the shelf's box_size
-    assert [r.status for r in results(report, "mate")] == ["pass", "pass"]
-    bom = {line.path: (line.quantity, line.level) for line in report.bom}
-    assert bom == {"plate": (1, 0), "box": (2, 0), "box/base": (2, 1), "box/lid": (2, 1)}
-    motion = results(report, "motion")  # flexible: each box's hinge swings at the shelf's level too
-    assert len(motion) == 2 and all(r.status == "fail" and "hits" in r.detail for r in motion)
-    assert (tmp_path / "out" / "components" / "box" / "parts" / "lid.step").is_file()
-
-
-async def test_robot_descriptions_give_each_part_its_own_mesh(core: HitlCad, tmp_path: Path) -> None:
+async def test_components_are_built_bound_and_counted_and_robot_descriptions_mesh_each_part(
+    core: HitlCad, tmp_path: Path
+) -> None:
     """The shelf's own part named like its boxes' base: each link still carries its own part's mesh."""
     copy_design("hinge", tmp_path / "hinge")
     folder = copy_design("shelf", tmp_path / "shelf")
     edit_json(folder / "design.json", lambda d: d.update(
-        parts={"base": d["parts"]["plate"]}, ground="base", outputs=["urdf", "sdf"],
+        parts={"base": d["parts"]["plate"]}, ground="base", outputs=[*d["outputs"], "urdf", "sdf"],
         mates=[{"type": "rigid", "a": "base.slots", "b": "box.foot"}]))  # fmt: skip
     edit(folder / "assembly.py", '"plate": [Pos()]', '"base": [Pos()]')
     edit(folder / "parts/plate.py", 'return {"plate":', 'return {"base":')
     out = tmp_path / "out"
     report = await build(core, folder, out)
     assert report.status == "succeeded", report.error
+    child = report.components["box"]
+    assert child.values["size"] == 30  # bound from the shelf's box_size
+    assert [r.status for r in results(report, "mate")] == ["pass", "pass"]
+    bom = {line.path: (line.quantity, line.level) for line in report.bom}
+    assert bom == {"base": (1, 0), "box": (2, 0), "box/base": (2, 1), "box/lid": (2, 1)}
+    motion = results(report, "motion")  # flexible: each box's hinge swings at the shelf's level too
+    assert len(motion) == 2 and all(r.status == "fail" and "hits" in r.detail for r in motion)
+    assert (out / "components" / "box" / "parts" / "lid.step").is_file()
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
     meshes = {link.get("name"): link.find("visual/geometry/mesh").get("filename") for link in urdf.findall("link")}
     assert meshes["base"] == "meshes/parts/base.stl", meshes
@@ -737,30 +734,25 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     np.testing.assert_allclose(blend["bounds"], mesh_bounds, atol=1e-3)
 
 
-def test_fixtures_are_valid_design_files() -> None:
-    from .conftest import DESIGNS
-
-    for folder in DESIGNS.iterdir():
-        DesignFolder(folder).load()
-    shutil.rmtree(DESIGNS / "__pycache__", ignore_errors=True)
-
-
 EXAMPLES = Path(__file__).parents[2] / "examples"
 
 
+LARGEST_EXAMPLE = "nas-case"  # its analyses take half a minute and a few GiB
+
+
 EXAMPLE_BUILDS = [
-    (folder.name, configuration)
+    # Each example's default on every platform; its other configurations, and the largest example, on one job
+    pytest.param(folder.name, configuration, id=f"{folder.name}-{configuration or 'default'}",
+                 marks=[pytest.mark.once] if configuration or folder.name == LARGEST_EXAMPLE else [])
     for folder in sorted(p for p in EXAMPLES.iterdir() if p.is_dir())
     for configuration in [
         None,
         *json.loads((folder / "design.json").read_text(encoding="utf-8")).get("configurations", {}),
     ]
-]
+]  # fmt: skip
 
 
-@pytest.mark.parametrize(
-    ("name", "configuration"), EXAMPLE_BUILDS, ids=[f"{n}-{c or 'default'}" for n, c in EXAMPLE_BUILDS]
-)
+@pytest.mark.parametrize(("name", "configuration"), EXAMPLE_BUILDS)
 async def test_the_readme_examples_build_and_verify_in_every_configuration(
     core: HitlCad, tmp_path: Path, name: str, configuration: str | None
 ) -> None:

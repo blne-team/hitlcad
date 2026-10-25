@@ -23,8 +23,6 @@ from hitlcad.render.base import NullRenderer
 
 from .conftest import copy_design
 
-pytestmark = pytest.mark.geometry
-
 
 def face_index(shape, test) -> int:
     return next(k for k, f in enumerate(shape.faces()) if test(f))
@@ -39,6 +37,7 @@ async def test_a_new_design_is_scaffolded_and_waits_for_parts(core: HitlCad, tmp
     assert await core.builds.rebuild(state.id) is None
 
 
+@pytest.mark.geometry
 async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
@@ -62,6 +61,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     assert next(p["value"] for p in saved["parameters"] if p["name"] == "lid_t") == 6
 
 
+@pytest.mark.geometry
 async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
@@ -98,6 +98,7 @@ async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad,
     }
 
 
+@pytest.mark.geometry
 async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCad, tmp_path: Path) -> None:
     copy_design("hinge", tmp_path / "hinge")
     copy_design("shelf", tmp_path / "shelf")
@@ -111,6 +112,7 @@ async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCa
     assert "Parts rebuilt in 2: base, lid" in text
 
 
+@pytest.mark.geometry
 async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     path = str(folder)
@@ -208,10 +210,11 @@ def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_
     assert not _relevant(folders, tmp_path / "elsewhere.py")
 
 
+@pytest.mark.geometry
 async def test_a_history_another_version_wrote_is_set_aside_and_a_new_one_begins(
     core: HitlCad, settings: Any, tmp_path: Path
 ) -> None:
-    state, _ = core.designs.open(copy_design("enclosure", tmp_path / "enclosure"))
+    state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
     log = settings.data_dir / "designs" / state.id / "events.jsonl"
     with log.open("a", encoding="utf-8") as f:  # what a release whose events had another field wrote
         f.write(json.dumps({"type": "design_updated", "seq": 9, "ts": "2026-01-01T00:00:00Z", "renamed": True}) + "\n")

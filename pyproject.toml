@@ -68,6 +68,9 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
-markers = ["geometry: needs build123d and Blender"]
+markers = [
+  "geometry: builds or measures geometry, with build123d and Blender",
+  "once: an exhaustive case: CI runs it on one job",
+]
 # A numeric warning (a division by zero, an invalid value) is a NaN on its way into a report: fail on it
 filterwarnings = ["error::RuntimeWarning"]

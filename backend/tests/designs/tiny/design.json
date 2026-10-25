@@ -1,0 +1,12 @@
+{
+  "hitlcad": 2,
+  "name": "Tiny",
+  "backend": "build123d",
+  "parameters": [
+    {"name": "width", "value": 10, "min": 1, "max": 50}
+  ],
+  "ground": "box",
+  "parts": {
+    "box": {"role": "a box: for tests that only need a design that builds", "file": "parts/box.py", "material": "PLA"}
+  }
+}

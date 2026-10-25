@@ -10,13 +10,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import psutil
 import pytest
 
 from hitlcad.backends import runtime
 from hitlcad.backends.executor import LocalExecutor, _memory_exceeds
-from hitlcad.backends.runtime import ModelError, Runtime, _plain, plan
+from hitlcad.backends.runtime import ModelError, Runtime, plan
 from hitlcad.backends.subprocess_backend import _ended
 from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.core.report import Reads
@@ -62,7 +61,9 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
     bad = write_design(
         tmp_path / "bad",
         {
-            "interfaces.py": "def a(p, i):\n    return i.b\n\n\ndef b(p, i):\n    return i.a\n\n\ndef obj(p, i):\n    return object()\n",
+            "interfaces.py": "import numpy\n\n\ndef a(p, i):\n    return i.b\n\n\ndef b(p, i):\n    return i.a\n\n\n"
+            "def obj(p, i):\n    return object()\n\n\ndef counts(p, i):\n    return [numpy.int64(3), numpy.float32(0.5)]\n\n\n"
+            "def ratio(p, i):\n    return numpy.float32('nan')\n",
             "parts/x.py": "def build(p, i):\n    return p['missing']\n",
             "parts/y.py": "def build(p, i):\n    return 1 / 0\n",
         },
@@ -72,6 +73,9 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
         rt.interface("a")
     with pytest.raises(ModelError, match="numbers, strings, booleans"):
         rt.interface("obj")
+    assert [type(v) for v in rt.interface("counts")] == [int, float]  # numpy's numbers, as plain ones
+    with pytest.raises(ModelError, match="interface value 'ratio' is nan"):
+        rt.interface("ratio")
     with pytest.raises(ModelError, match="no parameter 'missing'; parameters: w"):
         rt.call_build("parts/x.py", "px")
     try:
@@ -104,23 +108,34 @@ def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None
     assert key(values={}) is None  # t no longer exists
 
 
+# A build process that starts a grandchild (one that would run for a minute) and says which, then waits on it or not
+GRANDCHILD = ("import subprocess, sys; child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+              "print(child.pid, flush=True)")  # fmt: skip
+
+
+async def gone(pid: int) -> bool:
+    """Whether process `pid` ends within a few seconds (a zombie has ended: only its parent's wait is left)."""
+    for _ in range(50):
+        try:
+            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                return True
+        except psutil.NoSuchProcess:
+            return True
+        await asyncio.sleep(0.1)
+    psutil.Process(pid).kill()
+    return False
+
+
 async def test_a_build_process_past_its_deadline_ends_with_what_it_started(tmp_path: Path) -> None:
-    # The child starts a grandchild that would write a file after the deadline, then waits on it.
-    late = "import pathlib, time; time.sleep(3); pathlib.Path('alive').touch()"
-    parent = f"import subprocess, sys; subprocess.run([sys.executable, '-c', {late!r}])"
-    run = await LocalExecutor().run([sys.executable, "-c", parent], tmp_path, timeout_s=1)
+    run = await LocalExecutor().run([sys.executable, "-c", GRANDCHILD + "; child.wait()"], tmp_path, timeout_s=1)
     assert run.stopped == "exceeded the 1s time limit"
-    await asyncio.sleep(4)
-    assert not (tmp_path / "alive").exists()
+    assert await gone(int(run.output.split()[0]))
 
 
 async def test_a_build_process_that_finishes_leaves_nothing_it_started_behind(tmp_path: Path) -> None:
-    late = "import pathlib, time; time.sleep(2); pathlib.Path('alive').touch()"
-    parent = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {late!r}])"
-    run = await LocalExecutor().run([sys.executable, "-c", parent], tmp_path, timeout_s=30)
+    run = await LocalExecutor().run([sys.executable, "-c", GRANDCHILD], tmp_path, timeout_s=30)
     assert (run.returncode, run.stopped) == (0, None)
-    await asyncio.sleep(3)
-    assert not (tmp_path / "alive").exists()
+    assert await gone(int(run.output.split()[0]))
 
 
 async def test_a_build_process_over_its_memory_is_stopped(tmp_path: Path) -> None:
@@ -139,15 +154,11 @@ async def test_a_build_process_inherits_the_environment(tmp_path: Path, monkeypa
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-async def test_a_build_process_ended_by_a_signal_says_why(tmp_path: Path) -> None:
+async def test_a_build_process_ended_by_a_signal_says_which_and_why(tmp_path: Path) -> None:
     kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
     run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)
     assert _ended(run.returncode) == "the build process was killed by the system, most often for running out of memory"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-def test_a_build_process_ended_by_a_real_time_signal_says_which() -> None:
-    assert _ended(-40) == f"the build process was ended by signal 40 ({signal.strsignal(40)})"
+    assert _ended(-40) == f"the build process was ended by signal 40 ({signal.strsignal(40)})"  # a real-time one
 
 
 async def test_the_memory_limit_is_reached_only_by_using_memory() -> None:
@@ -165,20 +176,7 @@ async def test_a_build_ends_itself_when_its_server_is_killed(tmp_path: Path) -> 
     server = (f"import os, subprocess, sys, time; build = subprocess.Popen([sys.executable, '-c', {build!r}], "
               "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(build.pid, flush=True); time.sleep(1); os._exit(0)")  # fmt: skip
     pid = int(subprocess.run([sys.executable, "-c", server], capture_output=True, text=True, check=True).stdout)
-    for _ in range(50):
-        if not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
-            break
-        await asyncio.sleep(0.1)
-    else:
-        psutil.Process(pid).kill()
-        pytest.fail("the build outlived its server")
-
-
-def test_interface_values_are_plain_numbers() -> None:
-    assert _plain(np.int64(3), "v") == 3 and type(_plain(np.int64(3), "v")) is int
-    assert type(_plain(np.float32(0.5), "v")) is float
-    with pytest.raises(ModelError, match="v is nan"):
-        _plain(np.float32("nan"), "v")
+    assert await gone(pid), "the build outlived its server"
 
 
 def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Path, monkeypatch: Any) -> None:
