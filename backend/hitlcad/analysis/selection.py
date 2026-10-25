@@ -81,10 +81,11 @@ def describe_build_pick(built: BuiltDesign, point: Vec, normal: Vec | None, ref:
                          component=canonical, connector=address)  # fmt: skip
 
 
-def describe_file_pick(path: Path, point: Vec, normal: Vec | None, ref: ComponentRef | None) -> SelectionItem:
+def describe_file_pick(path: Path, point: Vec, normal: Vec | None, ref: ComponentRef | None, tolerance: float,
+                       angular_tolerance: float) -> SelectionItem:  # fmt: skip
     """A click in the file viewer, on the file's parts as `cadview.open_model` opens them: the exact component
     of a part, or a point on one."""
-    parts = cadview.open_model(path)
+    parts = cadview.open_model(path, tolerance, angular_tolerance)
     if ref is None:
         k, where = _nearest([(features, fr.IDENTITY) for _, features in parts], point)
         name = parts[k][1].name

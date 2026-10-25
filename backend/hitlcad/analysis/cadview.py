@@ -113,13 +113,15 @@ def geometry(objects: list[ObjectMesh]) -> trimesh.Trimesh:
     return clean(trimesh.Trimesh(whole.vertices, whole.faces))
 
 
-def open_model(path: Path) -> list[tuple[str, Features]]:
-    """A loose model file as its parts, placed, by viewer id: a STEP file's parts (e.g. '/asm/block'), or a
-    mesh file as one part of its objects."""
+def open_model(path: Path, tolerance: float, angular_tolerance: float) -> list[tuple[str, Features]]:
+    """A loose model file as its parts, placed, by viewer id: a STEP file's parts (e.g. '/asm/block'), meshed
+    as a build meshes its parts (`Settings.mesh_tolerance_mm`, `mesh_angular_tolerance`), or a mesh file as one
+    part of its objects."""
     from hitlcad.analysis.features import BrepFeatures, MeshFeatures
 
     if path.suffix.lower() in BREP:  # a STEP file names parts, not objects within them
-        return [(view_id, BrepFeatures(view_id.rsplit("/", 1)[-1], shape, lambda s=shape: _tessellated(s), list))
+        return [(view_id, BrepFeatures(view_id.rsplit("/", 1)[-1], shape,
+                                       lambda s=shape: _tessellated(s, tolerance, angular_tolerance), list))
                 for view_id, shape in _step_parts(load_step(path), path.stem).items()]  # fmt: skip
     objects = object_meshes(load_mesh(path))
     if not objects:
@@ -127,10 +129,10 @@ def open_model(path: Path) -> list[tuple[str, Features]]:
     return [(f"/{path.stem}/{path.stem}", MeshFeatures(path.stem, lambda: geometry(objects), lambda: objects))]
 
 
-def _tessellated(shape: Shape) -> trimesh.Trimesh:
+def _tessellated(shape: Shape, tolerance: float, angular_tolerance: float) -> trimesh.Trimesh:
     import trimesh
 
-    vertices, triangles = shape.tessellate(0.01)
+    vertices, triangles = shape.tessellate(tolerance, angular_tolerance)
     return trimesh.Trimesh([(v.X, v.Y, v.Z) for v in vertices], triangles)
 
 
@@ -208,9 +210,9 @@ def leaves(node: dict[str, Any]) -> list[dict[str, Any]]:
     return [node]
 
 
-def write_view(source: Path, target: Path) -> None:
+def write_view(source: Path, target: Path, tolerance: float, angular_tolerance: float) -> None:
     """A loose model file's view, for the file viewer."""
-    view, parts = View(), open_model(source)
+    view, parts = View(), open_model(source, tolerance, angular_tolerance)
     tree = group(
         f"/{source.stem}", source.stem, [view.part(f, vid, vid.rsplit("/", 1)[-1], fr.IDENTITY) for vid, f in parts]
     )
@@ -218,12 +220,13 @@ def write_view(source: Path, target: Path) -> None:
     view.write(tree, np.array([corners.min(axis=0), corners.max(axis=0)]), target)
 
 
-def cached_view(source: Path, cache_dir: Path) -> Path:
-    """The view of a loose model file, cached by its content."""
-    target = cache_dir / f"{hashlib.sha256(source.read_bytes()).hexdigest()[:24]}.json"
+def cached_view(source: Path, cache_dir: Path, tolerance: float, angular_tolerance: float) -> Path:
+    """The view of a loose model file, cached by its content and how finely it is meshed."""
+    key = hashlib.sha256(source.read_bytes() + f"{tolerance:g} {angular_tolerance:g}".encode()).hexdigest()
+    target = cache_dir / f"{key[:24]}.json"
     if not target.is_file():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        write_view(source, target)
+        write_view(source, target, tolerance, angular_tolerance)
     return target
 
 

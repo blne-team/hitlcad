@@ -398,7 +398,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         """A model file tessellated for the 3D file viewer (three-cad-viewer's instanced format)."""
         source = model_file(path)
         try:
-            view = await asyncio.to_thread(cadview.cached_view, source, settings.data_dir / "cache" / "cad")
+            view = await asyncio.to_thread(cadview.cached_view, source, settings.data_dir / "cache" / "cad",
+                                           settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
         except Exception as e:  # any file: its reader's error, whatever its kind, is what the panel shows
             log.exception("could not convert %s", source)
             raise HTTPException(422, f"could not convert {source.name}: {e}") from None
@@ -408,9 +409,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def describe_file(body: DescribeFilePick) -> SelectionItem:
         source = model_file(body.path)
         try:
-            return await asyncio.to_thread(
-                selection.describe_file_pick, source, body.point, body.normal, body.component
-            )
+            return await asyncio.to_thread(selection.describe_file_pick, source, body.point, body.normal, body.component,
+                                           settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
         except (LookupError, ValueError) as e:  # no such part, or a mesh asked for a face
             raise HTTPException(422, f"could not describe the selection: {e}") from None
 
