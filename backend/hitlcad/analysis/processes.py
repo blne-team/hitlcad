@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -43,11 +44,29 @@ def _fmt(p: Any) -> str:
 logging.getLogger("trimesh.sample").setLevel(logging.ERROR)
 
 
-def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> tuple[np.ndarray, np.ndarray]:
-    """Points spread evenly over the surface and the wall thickness straight through the part at each
-    (inf: not measured, where the ray left through a face not turned back towards it)."""
+@dataclass(frozen=True)
+class Walls:
+    """Wall thickness straight through a part at points spread evenly over its surface (inf: not measured, where
+    the ray left through a face not turned back towards it), and the thinnest of them."""
+
+    points: np.ndarray
+    thickness: np.ndarray
+    thinnest: float | None
+    at: np.ndarray | None
+
+
+def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
     points, faces = trimesh.sample.sample_surface_even(mesh, samples, seed=0)
-    inward = -mesh.face_normals[faces]
+    thickness = _through(mesh, points, -mesh.face_normals[faces])
+    measured = np.isfinite(thickness)
+    if not measured.any():
+        return Walls(points, thickness, None, None)
+    thinnest = int(np.argmin(np.where(measured, thickness, np.inf)))
+    return Walls(points, thickness, float(thickness[thinnest]), points[thinnest])
+
+
+def _through(mesh: trimesh.Trimesh, points: np.ndarray, inward: np.ndarray) -> np.ndarray:
+    """The wall thickness straight through the part from each point along its inward direction."""
     step = max(1, RAY_BATCH // len(mesh.faces))
     casts = [(start, *mesh.ray.intersects_id(points[start : start + step], inward[start : start + step],
                                              return_locations=True, multiple_hits=True))
@@ -64,7 +83,7 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> tuple[np.ndarray, np.
     through_wall = np.einsum("ij,ij->i", mesh.face_normals[hit], inward[ray]) >= math.cos(math.radians(WALL_EXIT_DEG))
     thickness = np.full(len(points), np.inf)
     thickness[ray[through_wall]] = distance[through_wall]
-    return points, thickness
+    return thickness
 
 
 def _on_bed(mesh: trimesh.Trimesh, tolerance: float) -> np.ndarray:
@@ -84,12 +103,12 @@ def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
 
 def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | None = None) -> ProcessFinding:
     """No wall thinner than `minimum`; under `cannot` (a size and what it is), the wall does not form at all."""
-    points, thickness = wall_thickness(body.mesh, body.settings.wall_samples)
-    measured = np.isfinite(thickness)
-    if not measured.any():
+    walls = body.walls
+    if walls.thinnest is None:
         return ProcessFinding(name=name, passed=None, detail="not measurable: the mesh is not closed")
-    thinnest = int(np.argmin(np.where(measured, thickness, np.inf)))
-    value = float(thickness[thinnest])
+    thickness = walls.thickness
+    measured = np.isfinite(thickness)
+    value = walls.thinnest
     if value >= minimum:
         return ProcessFinding(name=name, passed=True, detail=f"thinnest wall {value:.2f} mm (minimum {minimum:g} mm)")
     thin_share = float(np.mean(thickness[measured] < minimum))
@@ -98,7 +117,7 @@ def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | No
     )
     share = f"{thin_share:.0%}" if thin_share >= 0.01 else "under 1%"
     return ProcessFinding(name=name, passed=False,
-                          detail=f"thinnest wall {value:.2f} mm at {_fmt(points[thinnest])}{worse}; {share} of the "
+                          detail=f"thinnest wall {value:.2f} mm at {_fmt(walls.at)}{worse}; {share} of the "
                                  f"surface is under the {minimum:g} mm minimum")  # fmt: skip
 
 
@@ -216,12 +235,11 @@ def cnc_milling_checks(body: Body, rules: CncMillingProcess) -> list[ProcessFind
 
 
 def sheet_metal_checks(body: Body, rules: SheetMetalProcess) -> list[ProcessFinding]:
-    _, thickness = wall_thickness(body.mesh, body.settings.wall_samples)
-    measured = thickness[np.isfinite(thickness)]
-    if not len(measured):
+    measured = body.walls.thickness[np.isfinite(body.walls.thickness)]
+    if body.walls.thinnest is None:
         walls = ProcessFinding(name="sheet_thickness", passed=None, detail="not measurable: the mesh is not closed")
     else:
-        thinnest, median = float(measured.min()), float(np.median(measured))
+        thinnest, median = body.walls.thinnest, float(np.median(measured))
         ok = all(abs(v - rules.thickness_mm) <= rules.thickness_tolerance_mm for v in (thinnest, median))
         walls = ProcessFinding(name="sheet_thickness", passed=ok,
                                detail=f"thinnest {thinnest:.2f} mm, median {median:.2f} mm (sheet "
@@ -254,16 +272,15 @@ def injection_molding_checks(body: Body, rules: InjectionMoldingProcess) -> list
                            detail=f"every wall has at least {rules.min_draft_deg:g}° of draft along Z" if area == 0 else
                            f"{area:.0f} mm² of walls have under {rules.min_draft_deg:g}° of draft along Z: they "
                            "drag on the mold")  # fmt: skip
-    _, thickness = wall_thickness(mesh, body.settings.wall_samples)
-    measured = thickness[np.isfinite(thickness)]
-    if not len(measured):
+    if body.walls.thinnest is None:
         return [
             draft,
             ProcessFinding(name="molding_walls", passed=None, detail="not measurable: the mesh is not closed"),
         ]
-    ratio = float(measured.max() / measured.min())
+    thinnest, thickest = body.walls.thinnest, float(np.max(body.walls.thickness[np.isfinite(body.walls.thickness)]))
+    ratio = thickest / thinnest
     walls = ProcessFinding(name="molding_walls", passed=ratio <= rules.max_wall_ratio,
-                           detail=f"walls from {measured.min():.2f} to {measured.max():.2f} mm ({ratio:.1f} ×, "
+                           detail=f"walls from {thinnest:.2f} to {thickest:.2f} mm ({ratio:.1f} ×, "
                                   f"limit {rules.max_wall_ratio:g} ×)" + ("" if ratio <= rules.max_wall_ratio else
                                   ": thick sections sink and warp"))  # fmt: skip
     return [draft, walls]

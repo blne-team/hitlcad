@@ -222,7 +222,7 @@ def build(p, i):
     ry, rz = 6.5 * tl * hs, 1.9 * hs
     F = frame(Hd((0, -sin(ang), cos(ang))), hx)
     tc = root + d * ry * 0.8
-    head.append(ellipsoid("tongue", tc, (4.3 * hs, ry, rz), F, "tongue"))
+    head.append(ellipsoid("tongue", tc, bump(4.3 * hs, ry, rz), F, "tongue"))
     pts = [tc + F @ Vector((0, v * ry, rz * (1 - v * v) ** 0.5 * 0.97)) for v in (0.7, 0.35, 0.0, -0.35, -0.6)]
     raised("tongue_groove", pts, 0.35 * hs, "mouth", head)
 
