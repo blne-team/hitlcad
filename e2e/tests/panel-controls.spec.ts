@@ -223,12 +223,30 @@ test("explode moves the parts of a design whose part is placed twice (box[0], bo
   await openPanel(page, { name: "design", id: twiceId });
   await viewerReady(page);
   await expect(page.locator(".tcv_cad_tree")).toContainText("box[1]");
+  // The model alone: the screenshots compare where its parts are, not the controls over it.
+  await page.addStyleTag({ content: ".tcv_cad_toolbar, .tcv_cad_navigation, .viewport-hint, .side { visibility: hidden !important; }" });
   const canvas = page.locator(".cad-stage canvas").first();
   const before = await canvas.screenshot();
-  await page.locator(".tcv_button_explode").click();
-  await page.waitForTimeout(2500); // the explode plays for 2 s
+  await page.locator(".tcv_button_explode").dispatchEvent("click");
+  await page.waitForTimeout(800); // it eases out over a few frames, then stays
+  const apart = await canvas.screenshot();
+  expect(apart.equals(before), "the parts moved apart").toBe(false);
+  await page.waitForTimeout(500);
+  expect((await canvas.screenshot()).equals(apart), "and stay apart").toBe(true);
+  await page.getByLabel("How far apart").fill("3");
+  await page.waitForTimeout(800);
+  expect((await canvas.screenshot()).equals(apart), "further apart").toBe(false);
+  await page.locator(".tcv_button_explode").dispatchEvent("click");
+  await page.waitForTimeout(800);
+  await expect(page.locator(".explode-spread")).toHaveCount(0);
+  expect((await canvas.screenshot()).equals(before), "back together as built").toBe(true);
   expect(errors).toEqual([]);
-  expect((await canvas.screenshot()).equals(before), "the parts moved apart").toBe(false);
+});
+
+test("explode is off for a model of one shape: there is nothing to pull apart", async ({ page }) => {
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  await expect(page.locator(".tcv_button_explode")).toBeHidden();
 });
 
 test("every viewer control can be clicked at any editor width: nothing floats over it", async ({ page }) => {

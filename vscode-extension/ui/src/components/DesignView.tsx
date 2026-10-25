@@ -10,6 +10,7 @@ import { deliveryStatus } from "../lib/delivery";
 import { toExtension } from "../lib/host";
 import { selectionMarker } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
+import { ExplodeSpread } from "./ExplodeSpread";
 import { MotionControl } from "./MotionControl";
 import { ReviewPanel } from "./ReviewPanel";
 import { SelectionBox } from "./SelectionBox";
@@ -36,6 +37,8 @@ export function DesignView({ id }: { id: string }) {
   const [viewError, setViewError] = useState<{ url: string | null; message: string } | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
   const [motion, setMotion] = useState<CadMotion | null>(null);
+  const [exploded, setExploded] = useState(false);
+  const [spread, setSpread] = useState(1);
 
   const revisions = useMemo(() => state?.revisions ?? [], [state?.revisions]);
   const revision = currentRevision(revisions, ui.revision, ui.configuration);
@@ -93,41 +96,22 @@ export function DesignView({ id }: { id: string }) {
 
   return (
     <div className="design">
-      <div className="viewport">
-        {data !== null && !modelError && (
-          <CadCanvas data={data} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} onPick={onPick} onError={(message) => setViewError({ url: current.url, message })} />
-        )}
-        {!current.url && (
-          <div className="viewport-message">
-            {revision?.report.status === "failed" ? (
-              <p>Revision {revision.id} failed to build. The error is under Results.</p>
-            ) : state.building ? (
-              <p>Building…</p>
-            ) : (
-              <p>No build yet. Ask your agent to declare the parts in design.json and write their code; every save builds.</p>
-            )}
-          </div>
-        )}
-        {modelError && <p className="viewport-message fail">{modelError}</p>}
-        {pinError && <p className="viewport-message fail">{pinError}</p>}
-
-        <header className="float stage-title">
+      <header className="stagebar">
+        <div className="stage-title">
           <h1 title={state.name}>{state.name}</h1>
-          <div className="stage-meta">
-            <span className="design-path" title={state.path}>
-              {shortPath(state.path)}
+          <span className="design-path" title={state.path}>
+            {shortPath(state.path)}
+          </span>
+          <span className="muted tiny">{state.backend}</span>
+          {ui.configuration && <span className="config-chip">{ui.configuration}</span>}
+          {size && (
+            <span className="model-size" aria-label="Model size">
+              {size.map((v) => v.toFixed(1)).join(" × ")} mm
             </span>
-            <span className="muted tiny">{state.backend}</span>
-            {ui.configuration && <span className="config-chip">{ui.configuration}</span>}
-            {size && (
-              <span className="model-size" aria-label="Model size">
-                {size.map((v) => v.toFixed(1)).join(" × ")} mm
-              </span>
-            )}
-          </div>
+          )}
           <StatusLine design={state} connected={live.connected} />
-        </header>
-        <div className="float stage-actions" role="toolbar" aria-label="Design">
+        </div>
+        <div className="stage-actions" role="toolbar" aria-label="Design">
           <div className="rev-switch">
             <button
               type="button"
@@ -178,10 +162,30 @@ export function DesignView({ id }: { id: string }) {
             ⤢
           </button>
         </div>
+      </header>
+
+      <div className={`viewport${exploded ? " exploded" : ""}`}>
+        {data !== null && !modelError && (
+          <CadCanvas data={data} placing={ui.placing} markers={markers} ghost={ghost} motion={motion} spread={spread} onExplode={setExploded} onPick={onPick} onError={(message) => setViewError({ url: current.url, message })} />
+        )}
+        {!current.url && (
+          <div className="viewport-message">
+            {revision?.report.status === "failed" ? (
+              <p>Revision {revision.id} failed to build. The error is under Results.</p>
+            ) : state.building ? (
+              <p>Building…</p>
+            ) : (
+              <p>No build yet. Ask your agent to declare the parts in design.json and write their code; every save builds.</p>
+            )}
+          </div>
+        )}
+        {modelError && <p className="viewport-message fail">{modelError}</p>}
+        {pinError && <p className="viewport-message fail">{pinError}</p>}
 
         {data !== null && !modelError && revision && revision.report.motions.length > 0 && (
           <MotionControl key={revision.id} motions={revision.report.motions} onMotion={setMotion} />
         )}
+        {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
         {!ui.placing && data !== null && !sel.items.length && (
           <p className="viewport-hint select-hint">

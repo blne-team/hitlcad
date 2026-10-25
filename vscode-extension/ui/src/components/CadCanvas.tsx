@@ -13,6 +13,10 @@ interface Props {
   ghost?: unknown;
   /** Instances moved along a mate's range of motion. */
   motion?: CadMotion | null;
+  /** How far the toolbar's explode pulls the shapes apart, times their distance from the model's middle. */
+  spread?: number;
+  /** The toolbar's explode turned on or off; a new model starts as built. */
+  onExplode?: (on: boolean) => void;
   /** A click on the model; `additive` when shift was held. */
   onPick: (pick: Pick, additive: boolean) => void;
   onReady?: (bounds: CadBounds | null) => void;
@@ -35,7 +39,13 @@ export function CadCanvas(props: Props) {
     const now = latest.current;
     let cad: CadView;
     try {
-      cad = new CadView(stage.current, props.data, now.dark, (pick, additive) => latest.current.onPick(pick, additive));
+      cad = new CadView(
+        stage.current,
+        props.data,
+        now.dark,
+        (pick, additive) => latest.current.onPick(pick, additive),
+        (on) => latest.current.onExplode?.(on),
+      );
     } catch (e) {
       now.onError(e instanceof Error ? e.message : String(e)); // a view JSON the viewer cannot show
       return;
@@ -43,6 +53,8 @@ export function CadCanvas(props: Props) {
     cad.setMarkers(now.markers);
     cad.setGhost(now.ghost ?? null);
     cad.setMotion(now.motion ?? null);
+    if (now.spread !== undefined) cad.setSpread(now.spread);
+    now.onExplode?.(false);
     view.current = cad;
     now.onReady?.(cad.bounds);
     return () => {
@@ -58,6 +70,9 @@ export function CadCanvas(props: Props) {
   useEffect(() => view.current?.setMarkers(props.markers), [props.markers]);
   useEffect(() => view.current?.setGhost(props.ghost ?? null), [props.ghost]);
   useEffect(() => view.current?.setMotion(props.motion ?? null), [props.motion]);
+  useEffect(() => {
+    if (props.spread !== undefined) view.current?.setSpread(props.spread);
+  }, [props.spread]);
 
   // Without an exact shape there are no faces, edges or vertices to filter picks by
   return <div ref={stage} className="cad-stage" data-exact={exactShapes(props.data).size > 0} />;

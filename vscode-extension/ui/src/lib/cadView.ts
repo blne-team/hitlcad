@@ -39,6 +39,7 @@ export interface CadMotion {
 
 const TREE_WIDTH = 240;
 const CLICK_SLOP_PX = 4; // a press that moves further is an orbit, not a click
+const EASE = 0.25; // of the way to an explode's new spread, each frame
 const COMPONENT_PATH = /^(.*)\/(faces|edges|vertices)\/\2_(\d+)$/;
 const TOPO = { faces: "face", edges: "edge", vertices: "vertex" } as const;
 const PIN_COLOR = "#F5C400";
@@ -54,25 +55,32 @@ const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: fals
 /** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
 export const instanceOf = (viewerPath: string): string => viewerPath.replace(/^\/+/, "").split("/").slice(1).join("/");
 
+interface ViewNode {
+  id: string;
+  exact?: boolean;
+  parts?: ViewNode[];
+}
+
+/** Every node of a view's tree: the design, its assemblies and its shapes. */
+function nodes(data: unknown): ViewNode[] {
+  const out: ViewNode[] = [];
+  const walk = (node: ViewNode) => {
+    out.push(node);
+    node.parts?.forEach(walk);
+  };
+  walk((data as { shapes: ViewNode }).shapes);
+  return out;
+}
+
 /**
  * The ids of a view's exact shapes: B-rep parts, whose faces, edges and vertices are the part's own, numbered
  * as the server numbers them (it marks them `exact`). A click on one names its component; a click on any
  * other shape (a mesh) is a point.
  */
-export function exactShapes(data: unknown): Set<string> {
-  interface Node {
-    id: string;
-    exact?: boolean;
-    parts?: Node[];
-  }
-  const out = new Set<string>();
-  const walk = (node: Node) => {
-    if (node.exact) out.add(node.id);
-    node.parts?.forEach(walk);
-  };
-  walk((data as { shapes: Node }).shapes);
-  return out;
-}
+export const exactShapes = (data: unknown): Set<string> => new Set(nodes(data).filter((n) => n.exact).map((n) => n.id));
+
+/** The ids of a view's shapes, the leaves of its tree: what an explode pulls apart. */
+export const shapesOf = (data: unknown): string[] => nodes(data).filter((n) => !n.parts?.length).map((n) => n.id);
 
 const decode = (data: unknown): Shapes => {
   if (!isInstancedFormat(data)) throw new Error("the server sent a model the viewer cannot read");
@@ -85,7 +93,8 @@ const flat = (a: ArrayLike<number> | number[][]): ArrayLike<number> => (Array.is
  * hitlcad's own markers and compare ghost drawn into its scene.
  *
  * The one place that reaches past the viewer's documented API: `idPicker` and the shape filter
- * (clicks), and `scene` with the three.js the viewer publishes as `window.THREE` (overlays).
+ * (clicks), `scene` with the three.js the viewer publishes as `window.THREE` (overlays), and
+ * `nestedGroup` (parts moved by a motion or an explode).
  * three-cad-viewer is pinned; re-check `pick` and the overlay code when upgrading it.
  */
 export class CadView {
@@ -96,11 +105,22 @@ export class CadView {
   private readonly observer: ResizeObserver;
   private readonly canvas: HTMLCanvasElement;
   private readonly markers: Three.Group;
-  private readonly extent: number;
+  /** Markers drawn at a size on screen, not in the model: their unit is one CSS pixel (see `sizeMarkers`). */
+  private readonly onScreen: Three.Object3D[] = [];
   private ghost: Three.Group | null = null;
   private readonly rootId: string;
   private readonly exact: Set<string>;
-  private readonly moved = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
+  /** Every group `place` has moved, as built. */
+  private readonly built = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
+  /** Each shape's way out from the model's middle, in its parent's frame: its offset at a spread of 1. */
+  private readonly outward = new Map<Three.Object3D, Three.Vector3>();
+  private motion: CadMotion | null = null;
+  private exploded = false;
+  /** How far an explode pulls the shapes apart: times each one's distance from the model's middle. */
+  private spreadOut = 1;
+  private spread = 0;
+  private spreadTo = 0;
+  private tween = 0;
   private press: { x: number; y: number } | null = null;
   private canvasSize: { width: number; height: number };
 
@@ -109,13 +129,14 @@ export class CadView {
     data: unknown,
     dark: boolean,
     private readonly onPick: (pick: Pick, additive: boolean) => void,
+    private readonly onExplode: (on: boolean) => void,
   ) {
     this.exact = exactShapes(data);
+    const ids = shapesOf(data);
     const shapes = decode(data);
     this.rootId = shapes.id;
     const bb = shapes.bb;
     this.bounds = bb ? { min: [bb.xmin, bb.ymin, bb.zmin], max: [bb.xmax, bb.ymax, bb.zmax] } : null;
-    this.extent = bb ? Math.hypot(bb.xmax - bb.xmin, bb.ymax - bb.ymin, bb.zmax - bb.zmin) : 100;
 
     // Start at the container's size (at least 1 px: the viewer ignores 0); `fit` then subtracts the viewer's own chrome.
     this.canvasSize = { width: Math.max(container.clientWidth, 1), height: Math.max(container.clientHeight, 1) };
@@ -129,7 +150,7 @@ export class CadView {
       tools: true,
       measureTools: true,
       selectTool: false, // hitlcad's own selection, which reaches the agent, replaces the viewer's
-      explodeTool: true,
+      explodeTool: ids.length > 1, // one shape: nothing to pull apart
       zebraTool: true,
       zscaleTool: false,
       studioTool: false,
@@ -139,13 +160,18 @@ export class CadView {
     this.display = new Display(container, options);
     this.viewer = new Viewer(this.display, options, null);
     this.viewer.render(shapes, RENDER, VIEW);
-    // three.js finds an animated node by a track name it parses, and a part named with brackets or dots
-    // (motor_screw[0], a STEP file's Part.1) does not parse: the viewer's explode threw. Name its tracks by uuid.
-    (this.viewer.animation as unknown as { _prepareSelector: (id: string) => string })._prepareSelector = (id) =>
-      this.viewer.nestedGroup.groups[id]!.uuid;
     this.three = window.THREE as typeof Three; // set by the Viewer constructor
     this.markers = new this.three.Group();
     this.viewer.scene.add(this.markers);
+    this.viewer.scene.onBeforeRender = (renderer, _scene, camera) => this.sizeMarkers(renderer, camera);
+    this.explodeFrom(ids);
+    // The toolbar's explode button (and its key, x) calls the viewer's setExplode, which only armed a clip to
+    // play from a slider. Here the shapes come apart on the click and stay apart until the next.
+    this.viewer.setExplode = (flag: boolean) => {
+      this.exploded = flag;
+      this.toward(flag ? this.spreadOut : 0);
+      this.onExplode(flag);
+    };
 
     this.canvas = this.viewer.renderer.domElement;
     this.canvas.addEventListener("pointerdown", this.onDown);
@@ -168,6 +194,7 @@ export class CadView {
   /** Replace the numbered markers (pins and selected items). */
   setMarkers(markers: CadMarker[]): void {
     this.clear(this.markers);
+    this.onScreen.length = 0;
     let pins = 0;
     let selected = 0;
     for (const m of markers) {
@@ -181,31 +208,27 @@ export class CadView {
    * back (`null`). The build places parts as assembled; this only previews the motion the build swept.
    */
   setMotion(motion: CadMotion | null): void {
-    for (const [group, base] of this.moved) {
-      group.position.copy(base.position);
-      group.quaternion.copy(base.quaternion);
+    this.motion = motion;
+    this.place();
+  }
+
+  /** How far the toolbar's explode pulls the shapes apart, times each one's distance from the model's middle. */
+  setSpread(spread: number): void {
+    this.spreadOut = spread;
+    if (this.exploded) this.toward(spread);
+  }
+
+  /** Ease the explode's spread to `spread` over a few frames (0: as built). */
+  private toward(spread: number) {
+    this.spreadTo = spread;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      cancelAnimationFrame(this.tween);
+      this.tween = 0;
+      this.spread = spread;
+      this.place();
+    } else if (!this.tween) {
+      this.tween = requestAnimationFrame(this.ease);
     }
-    this.moved.clear();
-    if (motion && motion.amount !== 0) {
-      const T = this.three;
-      const axis = new T.Vector3(...motion.axis).normalize();
-      const origin = new T.Vector3(...motion.origin);
-      const step =
-        motion.kind === "angle"
-          ? new T.Matrix4()
-              .makeTranslation(origin.x, origin.y, origin.z)
-              .multiply(new T.Matrix4().makeRotationAxis(axis, (motion.amount * Math.PI) / 180))
-              .multiply(new T.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z))
-          : new T.Matrix4().makeTranslation(axis.x * motion.amount, axis.y * motion.amount, axis.z * motion.amount);
-      for (const instance of motion.instances) {
-        const group = this.viewer.nestedGroup.groups[`${this.rootId}/${instance}`];
-        if (!group) continue;
-        this.moved.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone() });
-        const placed = step.clone().multiply(new T.Matrix4().compose(group.position, group.quaternion, group.scale));
-        placed.decompose(group.position, group.quaternion, new T.Vector3());
-      }
-    }
-    this.redraw();
   }
 
   /** Show an earlier revision's model as an X-ray ghost, or remove it (`null`). */
@@ -223,6 +246,7 @@ export class CadView {
   }
 
   dispose(): void {
+    cancelAnimationFrame(this.tween);
     this.observer.disconnect();
     this.canvas.removeEventListener("pointerdown", this.onDown);
     this.canvas.removeEventListener("pointerup", this.onUp);
@@ -253,6 +277,72 @@ export class CadView {
 
   private redraw() {
     this.viewer.update(true, false);
+  }
+
+  // ------------------------------------------------------------------ parts moved: a mate's motion, an explode
+
+  /** Each shape's way out from the middle of the model as built: from its middle, as far again. */
+  private explodeFrom(ids: string[]) {
+    const T = this.three;
+    const { groups, rootGroup } = this.viewer.nestedGroup;
+    if (!rootGroup) return;
+    this.viewer.scene.updateMatrixWorld(true);
+    const middle = new T.Box3().setFromObject(rootGroup).getCenter(new T.Vector3());
+    for (const id of ids) {
+      const group = groups[id];
+      const parent = group?.parent;
+      const box = parent ? new T.Box3().setFromObject(group) : null;
+      if (!parent || !box || box.isEmpty()) continue;
+      const center = box.getCenter(new T.Vector3());
+      const out = center.clone().multiplyScalar(2).sub(middle);
+      this.outward.set(group, parent.worldToLocal(out).sub(parent.worldToLocal(center)));
+    }
+  }
+
+  private readonly ease = () => {
+    this.spread += (this.spreadTo - this.spread) * EASE;
+    if (Math.abs(this.spreadTo - this.spread) < 0.002) this.spread = this.spreadTo;
+    this.tween = this.spread === this.spreadTo ? 0 : requestAnimationFrame(this.ease);
+    this.place();
+  };
+
+  /** Put every moved group back as built, then move it along the motion and out by the explode's spread. */
+  private place() {
+    const T = this.three;
+    for (const [group, base] of this.built) {
+      group.position.copy(base.position);
+      group.quaternion.copy(base.quaternion);
+    }
+    const hold = (group: Three.Object3D) => {
+      if (!this.built.has(group)) this.built.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone() });
+    };
+    const motion = this.motion;
+    if (motion && motion.amount !== 0) {
+      const axis = new T.Vector3(...motion.axis).normalize();
+      const origin = new T.Vector3(...motion.origin);
+      const step =
+        motion.kind === "angle"
+          ? new T.Matrix4()
+              .makeTranslation(origin.x, origin.y, origin.z)
+              .multiply(new T.Matrix4().makeRotationAxis(axis, (motion.amount * Math.PI) / 180))
+              .multiply(new T.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z))
+          : new T.Matrix4().makeTranslation(axis.x * motion.amount, axis.y * motion.amount, axis.z * motion.amount);
+      for (const instance of motion.instances) {
+        const group = this.viewer.nestedGroup.groups[`${this.rootId}/${instance}`];
+        if (!group) continue;
+        hold(group);
+        const placed = step.clone().multiply(new T.Matrix4().compose(group.position, group.quaternion, group.scale));
+        placed.decompose(group.position, group.quaternion, new T.Vector3());
+      }
+    }
+    if (this.spread !== 0) {
+      for (const [group, out] of this.outward) {
+        hold(group);
+        group.position.addScaledVector(out, this.spread);
+      }
+    }
+    this.viewer.idPicker?.setDirty(); // the pick buffer shows the parts where they were drawn last
+    this.redraw();
   }
 
   private readonly onDown = (e: PointerEvent) => {
@@ -315,25 +405,54 @@ export class CadView {
     return tex;
   }
 
-  /** A label `size` mm across: the viewer's camera is orthographic, so sprites are sized in model units. */
-  private sprite(map: Three.Texture, at: Three.Vector3, size: number): Three.Sprite {
+  /**
+   * A group at `at` whose unit is one CSS pixel on screen, so what it holds keeps its size however far the
+   * camera zooms, on a small model or a large one.
+   */
+  private onScreenAt(at: Three.Vector3): Three.Group {
+    const group = new this.three.Group();
+    group.position.copy(at);
+    this.onScreen.push(group);
+    return group;
+  }
+
+  /**
+   * Size the on-screen markers for the frame about to be drawn: after three.js has placed the scene and before
+   * it draws it, so they are never a frame behind the camera.
+   */
+  private sizeMarkers(renderer: Three.WebGLRenderer, camera: Three.Camera) {
+    if (!this.onScreen.length) return;
+    const height = renderer.getSize(new this.three.Vector2()).y;
+    for (const group of this.onScreen) group.scale.setScalar(this.pixel(group.position, camera, height));
+    this.markers.updateMatrixWorld(true);
+  }
+
+  /** The model's length of one CSS pixel at `at`, as `camera` sees it on a canvas `height` pixels high. */
+  private pixel(at: Three.Vector3, camera: Three.Camera, height: number): number {
+    const ortho = camera as Three.OrthographicCamera;
+    if (ortho.isOrthographicCamera) return (ortho.top - ortho.bottom) / ortho.zoom / height;
+    const persp = camera as Three.PerspectiveCamera;
+    const depth = -at.clone().applyMatrix4(persp.matrixWorldInverse).z;
+    return (2 * depth * Math.tan((persp.fov * Math.PI) / 360)) / persp.zoom / height;
+  }
+
+  /** A label `size` px across in an on-screen group; `center` is the point of it at its position (Sprite.center). */
+  private sprite(map: Three.Texture, at: Three.Vector3, size: number, center: [number, number] = [0.5, 0.5]): Three.Sprite {
     const s = new this.three.Sprite(new this.three.SpriteMaterial({ map, depthTest: false, transparent: true }));
     s.position.copy(at);
     s.scale.set(size, size, 1);
+    s.center.set(...center);
     s.renderOrder = 11;
     return s;
   }
 
   private pin(m: CadMarker, n: number): Three.Group {
     const T = this.three;
-    const radius = Math.max(this.extent * 0.006, 0.2);
     const normal = new T.Vector3(...(m.normal ?? [0, 0, 1])).normalize();
-    const tip = new T.Vector3(...m.point);
-    const head = tip.clone().addScaledVector(normal, radius * 7);
-    const group = new T.Group();
-    const dot = new T.Mesh(new T.SphereGeometry(radius, 16, 12), new T.MeshBasicMaterial({ color: PIN_COLOR }));
-    dot.position.copy(tip);
-    group.add(dot, new T.LineSegments(new T.BufferGeometry().setFromPoints([tip, head]), new T.LineBasicMaterial({ color: INK })));
+    const head = normal.clone().multiplyScalar(28);
+    const group = this.onScreenAt(new T.Vector3(...m.point));
+    const dot = new T.Mesh(new T.SphereGeometry(4, 16, 12), new T.MeshBasicMaterial({ color: PIN_COLOR }));
+    group.add(dot, new T.LineSegments(new T.BufferGeometry().setFromPoints([new T.Vector3(), head]), new T.LineBasicMaterial({ color: INK })));
     const tex = this.label(
       String(n),
       (ctx, s) => {
@@ -348,30 +467,24 @@ export class CadView {
       },
       96,
     );
-    group.add(this.sprite(tex, head, radius * 8));
+    group.add(this.sprite(tex, head, 26));
     return group;
   }
 
   private selection(m: CadMarker, n: number): Three.Group {
     if (m.box) return this.partSelection(m.box, n);
     const T = this.three;
-    const radius = Math.max(this.extent * 0.018, 0.4);
     const normal = new T.Vector3(...(m.normal ?? [0, 0, 1])).normalize();
-    const point = new T.Vector3(...m.point);
-    const center = point.clone().addScaledVector(normal, radius * 0.15); // off the surface: no z-fighting
+    const group = this.onScreenAt(new T.Vector3(...m.point));
     const ring = new T.Mesh(
-      new T.RingGeometry(radius * 0.9, radius * 1.35, 40),
+      new T.RingGeometry(8, 12, 40),
       new T.MeshBasicMaterial({ color: SELECT_COLOR, side: T.DoubleSide, depthTest: false, transparent: true, opacity: 0.95 }),
     );
-    ring.position.copy(center);
     ring.quaternion.setFromUnitVectors(new T.Vector3(0, 0, 1), normal);
     ring.renderOrder = 9;
-    const dot = new T.Mesh(new T.SphereGeometry(radius * 0.22, 12, 8), new T.MeshBasicMaterial({ color: SELECT_COLOR, depthTest: false }));
-    dot.position.copy(center);
+    const dot = new T.Mesh(new T.SphereGeometry(2.5, 12, 8), new T.MeshBasicMaterial({ color: SELECT_COLOR, depthTest: false }));
     dot.renderOrder = 9;
-    const tag = point.clone().addScaledVector(normal, radius * 1.4).add(new T.Vector3(0, 0, radius * 2.6)); // beside the ring
-    const group = new T.Group();
-    group.add(ring, dot, this.selectionTag(n, tag, radius * 1.8));
+    group.add(ring, dot, this.selectionTag(n, [-0.55, -0.55])); // up and to the right of the ring
     return group;
   }
 
@@ -385,13 +498,15 @@ export class CadView {
     );
     lines.position.copy(box.getCenter(new T.Vector3()));
     lines.renderOrder = 9;
-    const size = Math.max(this.extent * 0.018, 0.4) * 1.8;
+    const tag = this.onScreenAt(new T.Vector3(...max));
+    tag.add(this.selectionTag(n, [0, 0]));
     const group = new T.Group();
-    group.add(lines, this.selectionTag(n, new T.Vector3(max[0], max[1], max[2]).add(new T.Vector3(0, 0, size)), size));
+    group.add(lines, tag);
     return group;
   }
 
-  private selectionTag(n: number, at: Three.Vector3, size: number): Three.Sprite {
+  /** A selection's number, 18 px across; `center` as for `sprite`. */
+  private selectionTag(n: number, center: [number, number]): Three.Sprite {
     const tex = this.label(
       String(n),
       (ctx, s) => {
@@ -403,7 +518,7 @@ export class CadView {
       },
       64,
     );
-    return this.sprite(tex, at, size);
+    return this.sprite(tex, new this.three.Vector3(), 18, center);
   }
 
   /** The faces and true edges of `shapes`, drawn on top like an X-ray so the old shape shows inside the new one. */

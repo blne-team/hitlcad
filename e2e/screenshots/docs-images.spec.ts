@@ -31,7 +31,7 @@ async function designView(page: Page, id: string, tab: string, size: { width: nu
 
 /** Everything over the model: the tours show the model alone. */
 const BARE =
-  ".float, .review, .tcv_cad_toolbar, .tcv_cad_navigation, .tcv_cad_info_wrapper, .tcv_toggle_tools_wrapper, .tcv_shape_filter, .tcv_cad_animation, .viewport-hint, .motion-control { visibility: hidden !important; }";
+  ".review, .tcv_cad_toolbar, .tcv_cad_navigation, .tcv_cad_info_wrapper, .tcv_toggle_tools_wrapper, .tcv_shape_filter, .viewport-hint, .motion-control, .explode-spread { visibility: hidden !important; } .stagebar { display: none !important; }";
 
 /** Write docs/images/<file>, a GIF `width` pixels wide at 12 frames a second, from ffmpeg's input arguments. */
 function gif(input: string[], file: string, width: number) {
@@ -155,8 +155,8 @@ const swing =
   };
 
 /**
- * The model alone, in a few seconds: it comes apart into its parts (`explode` of the viewer's full explode, which
- * moves each part 2.5 times its distance from the origin) and goes back together, then `inside` shows what the
+ * The model alone, in a few seconds: it comes apart into its parts (the explode's spread: each part moves
+ * `explode` times its distance from the model's middle) and goes back together, then `inside` shows what the
  * outside hides. Filmed as docs/images/<file>.
  */
 async function tour(browser: Browser, id: string, file: string, explode: number, inside: Inside) {
@@ -168,10 +168,14 @@ async function tour(browser: Browser, id: string, file: string, explode: number,
   await film.page.addStyleTag({ content: BARE });
   await film.frame();
   film.hold(6);
+  // The controls are hidden: driven by events. Explode on, at no spread yet; then the spread, frame by frame.
+  const spread = ".explode-spread input"; // from 0 to 3: `slide` goes there by its fraction
   await film.page.locator(".tcv_button_explode").dispatchEvent("click");
-  await film.slide(".tcv_animation_slider", 0, explode, 8);
+  await film.slide(spread, 0, 0, 1);
+  await film.page.waitForTimeout(500);
+  await film.slide(spread, 0, explode / 3, 8);
   film.hold(10);
-  await film.slide(".tcv_animation_slider", explode, 0, 8);
+  await film.slide(spread, explode / 3, 0, 8);
   await film.page.locator(".tcv_button_explode").dispatchEvent("click");
   film.hold(4);
   await inside(film);
@@ -182,7 +186,7 @@ async function tour(browser: Browser, id: string, file: string, explode: number,
 
 test("handhold-fan", async ({ page, browser }) => {
   const id = await build("handhold-fan");
-  await tour(browser, id, "tour-fan.gif", 0.4, peel(["nozzle", "intake_guard", "duct"]));
+  await tour(browser, id, "tour-fan.gif", 0.6, peel(["nozzle", "intake_guard", "duct"]));
 
   await designView(page, id, "Structure", { width: 1280, height: 600 });
   await shot(page, "design-structure.png");
@@ -217,15 +221,15 @@ test("handhold-fan", async ({ page, browser }) => {
 
 test("robot-arm", async ({ page, browser }) => {
   const id = await build("robot-arm");
-  await tour(browser, id, "tour-robot.gif", 0.15, swing(2));
+  await tour(browser, id, "tour-robot.gif", 0.25, swing(2));
 });
 
 test("happydog", async ({ page, browser }) => {
   const id = await build("happydog");
-  await tour(browser, id, "tour-dog.gif", 0.4, async () => {});
+  await tour(browser, id, "tour-dog.gif", 0.6, async () => {});
 });
 
 test("nas-case", async ({ page, browser }) => {
   const id = await build("nas-case");
-  await tour(browser, id, "tour-nas.gif", 0.25, peel(["side_left_rear", "side_right_rear", "rear_shell"]));
+  await tour(browser, id, "tour-nas.gif", 0.4, peel(["side_left_rear", "side_right_rear", "rear_shell"]));
 });

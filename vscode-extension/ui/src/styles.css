@@ -282,11 +282,12 @@ code {
   margin-left: 6px;
 }
 
-/* ------------------------------------------------------------------ 3D editor and file viewer: the model fills the
-   tab, and everything else floats over it on glass */
+/* ------------------------------------------------------------------ 3D editor and file viewer: a bar along the top
+   with the name, the status and the actions; under it the model, with the review floating over it on glass */
 
 .design {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
@@ -296,33 +297,27 @@ code {
 }
 
 .viewport {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--studio);
   overflow: hidden;
 }
 
-.float {
-  position: absolute;
-  z-index: 6;
-  background: var(--glass);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--glass-rule);
-  border-radius: var(--radius-m);
-  box-shadow: var(--glass-shadow);
-}
-
-.stage-title {
-  top: 10px;
-  left: 10px;
-  max-width: calc(100% - 460px);
-  min-width: 160px;
-  padding: 6px 12px 7px;
+/* the bar wraps its actions under the title when the tab is narrow */
+.stagebar {
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 4px 10px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--rule);
 }
-.stage-meta {
+.stage-title {
+  flex: 1 1 320px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -332,19 +327,19 @@ code {
 }
 .stage-title h1 {
   font-size: var(--step-1);
+  max-width: 32ch;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .stage-actions {
-  top: 10px;
-  right: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  padding: 4px;
 }
+
 .rev-switch {
   display: flex;
   align-items: center;
@@ -384,7 +379,7 @@ code {
 /* the review panel and the selection, down the right-hand side */
 .side {
   position: absolute;
-  top: 60px;
+  top: 10px;
   right: 10px;
   bottom: 52px;
   width: min(400px, calc(100% - 20px));
@@ -450,6 +445,32 @@ code {
   pointer-events: none;
   text-align: center;
   padding: 24px;
+}
+/* the explode's spread, while it is on: just above the viewer's toolbar, and the hint above it */
+.explode-spread {
+  position: absolute;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-family: var(--narrow);
+  font-weight: 600;
+  font-size: var(--step--1);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
+  border-radius: 999px;
+  box-shadow: var(--glass-shadow);
+}
+.explode-spread input[type="range"] {
+  width: 120px;
+}
+.viewport.exploded .viewport-hint {
+  bottom: 96px;
 }
 /* above the viewer's toolbar, which floats along the bottom */
 .viewport-hint {
@@ -809,15 +830,6 @@ details summary {
 }
 
 @media (max-width: 900px) {
-  .stage-title {
-    max-width: calc(100% - 20px);
-  }
-  .stage-actions {
-    top: 70px;
-  }
-  .side {
-    top: 120px;
-  }
   .rev-label {
     min-width: 0;
   }
@@ -885,8 +897,7 @@ details summary {
   position: absolute;
   inset: 0;
 }
-/* three-cad-viewer in the studio: its toolbar a pill floating along the bottom, its tree and tools below the
-   title, its colours ours */
+/* three-cad-viewer in the studio: its toolbar a pill floating along the bottom, its colours ours */
 .cad-stage .tcv_cad_viewer,
 .cad-stage .tcv_cad_view {
   background: transparent;
@@ -922,7 +933,7 @@ details summary {
   bottom: 58px;
 }
 .cad-stage .tcv_cad_navigation {
-  margin-top: 84px;
+  margin-top: 6px;
   margin-left: 6px;
 }
 .cad-stage .tcv_filter_menu {
@@ -1106,7 +1117,7 @@ details summary {
 .motion-control {
   position: absolute;
   left: 50%;
-  top: 60px; /* below the title and actions */
+  top: 10px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
