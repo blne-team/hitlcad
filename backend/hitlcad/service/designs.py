@@ -25,11 +25,24 @@ class NotFoundError(LookupError):
     pass
 
 
+class DesignError(ValueError):
+    """What was asked cannot be done with the design's files as they are, or not as asked: the caller's to
+    fix (the API answers 422), not a bug."""
+
+
 def _absolute(path: str | Path) -> DesignFolder:
     """Agents and the panel run elsewhere than the server, so relative paths would be ambiguous."""
     if not Path(path).expanduser().is_absolute():
-        raise ValueError(f"design path must be absolute, got {str(path)!r}")
+        raise DesignError(f"design path must be absolute, got {str(path)!r}")
     return DesignFolder(Path(path))
+
+
+def load(folder: DesignFolder) -> DesignSpec:
+    """The folder's design.json; a DesignError says what is wrong with it."""
+    try:
+        return folder.load()
+    except ValueError as e:
+        raise DesignError(str(e)) from None
 
 
 class DesignService:
@@ -57,7 +70,7 @@ class DesignService:
 
     def list(self) -> list[DesignState]:
         states = [self.get(i) for i in self.folders().values()]
-        return sorted(states, key=lambda s: s.updated_at or s.created_at or 0, reverse=True)  # type: ignore[arg-type, return-value]
+        return sorted(states, key=lambda s: s.updated_at, reverse=True)
 
     def emit(self, design_id: str, event: Event) -> Event:
         state = self.get(design_id)  # raises NotFoundError for unknown designs
@@ -90,9 +103,9 @@ class DesignService:
             if backend is None:
                 raise NotFoundError(f"no {DESIGN_FILE} in {folder.path}")
             if backend not in self.registry.names():
-                raise ValueError(f"unknown backend {backend!r}; available: {', '.join(self.registry.names())}")
+                raise DesignError(f"unknown backend {backend!r}; available: {', '.join(self.registry.names())}")
             created = folder.scaffold(name or folder.path.name, backend)
-        design = folder.load()
+        design = load(folder)
         design_id = self.id_for(folder.path)
         if design_id is None:
             design_id = new_id("dsg")

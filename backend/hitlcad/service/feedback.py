@@ -4,6 +4,7 @@ their parts' B-rep or meshes, their connectors) and carried onto each new build.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ class FeedbackService:
         self.anchors = anchors
         self.loaded = loaded  # built revisions kept in memory: picks and carries reload the same few
         self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
+        self._lock = threading.Lock()  # built() runs in worker threads
 
     # ------------------------------------------------------------------ builds of revisions
 
@@ -42,13 +44,17 @@ class FeedbackService:
         from hitlcad.build.pipeline import load_built
 
         key = (design_id, rev.id)
-        if key not in self._loaded:
-            folder = Path(self.designs.get(design_id).path)
-            self._loaded[key] = load_built(rev.report, rev.spec, folder, self.revision_dir(design_id, rev))
+        with self._lock:
+            built = self._loaded.get(key)
+        if built is None:  # loaded outside the lock: other builds stay available meanwhile
+            built = load_built(rev.report, rev.spec, Path(self.designs.get(design_id).path),
+                               self.revision_dir(design_id, rev))  # fmt: skip
+        with self._lock:
+            self._loaded[key] = built
+            self._loaded.move_to_end(key)
             while len(self._loaded) > self.loaded:
                 self._loaded.popitem(last=False)
-        self._loaded.move_to_end(key)
-        return self._loaded[key]
+        return built
 
     async def describe_picks(self, design_id: str, revision: int | None, picks: list[Pick]) -> list[SelectionItem]:
         from hitlcad.analysis.selection import describe_build_pick

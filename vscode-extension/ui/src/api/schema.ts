@@ -127,23 +127,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/catalog": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Catalog */
-        get: operations["catalog_api_catalog_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/designs/{design_id}/parameters": {
         parameters: {
             query?: never;
@@ -638,8 +621,6 @@ export interface components {
             version: string;
             /** Backends */
             backends: components["schemas"]["BackendInfo"][];
-            /** Mcp Url */
-            mcp_url: string;
         };
         /**
          * Catalog
@@ -690,34 +671,6 @@ export interface components {
             metadata: {
                 [key: string]: number | boolean | string;
             };
-        };
-        /** CatalogItem */
-        CatalogItem: {
-            /** Provider */
-            provider: string;
-            /**
-             * Family
-             * @description screw, nut, washer, insert, bearing, …
-             */
-            family: string;
-            /** Designation */
-            designation: string;
-            /**
-             * Call
-             * @description How model code makes it
-             */
-            call: string;
-            /** Sizes */
-            sizes: string[];
-            /**
-             * Connectors
-             * @description Connector -> kind and meaning
-             */
-            connectors: {
-                [key: string]: string;
-            };
-            /** Material */
-            material: string | null;
         };
         /**
          * ClearanceCheck
@@ -2919,38 +2872,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Structure"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    catalog_api_catalog_get: {
-        parameters: {
-            query: {
-                query: string;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CatalogItem"][];
                 };
             };
             /** @description Validation Error */
