@@ -743,8 +743,9 @@ export interface components {
         };
         /**
          * CncMillingProcess
-         * @description 3-axis CNC milling from +Z (the part's own frame): concave vertical corners need a radius of at
-         *     least the tool radius, and pockets deeper than `max_depth_ratio` × their width are hard to reach.
+         * @description 3-axis CNC milling from +Z (the part's own frame): every face but the bottom reachable along a clear
+         *     path up from it, concave vertical corners with at least the tool radius, and no corner deeper than
+         *     `max_depth_ratio` × the cutter that finishes it (its own diameter, or the tool's where it is sharp).
          */
         CncMillingProcess: {
             /**
@@ -762,6 +763,12 @@ export interface components {
              * @default 4
              */
             max_depth_ratio: number;
+            /**
+             * Ignored Area Mm2
+             * @description Faces out of reach over less than this (a sliver at a seam) do not fail
+             * @default 1
+             */
+            ignored_area_mm2: number;
         };
         /**
          * ComponentRef
@@ -1255,10 +1262,12 @@ export interface components {
         /**
          * FdmProcess
          * @description FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-         *     Z): wall thickness, overhangs and bed contact. With `supports`, overhangs print on support and are
-         *     reported, not failed: for shapes that cannot avoid them, like figurines. `hole_allowance_mm` /
-         *     `shaft_allowance_mm`: how much printed holes come out smaller and shafts larger than modelled, for fit
-         *     checks.
+         *     Z): wall thickness, overhangs and bed contact. An overhang prints where it bridges between two supports
+         *     no more than `max_bridge_mm` apart (the top of a horizontal hole is such a bridge) or lies within a
+         *     nozzle's width of what holds it. With `supports`, overhangs print on support and are reported, not
+         *     failed: for shapes that cannot avoid them, like figurines. With `brim`, a tall, narrow part is held down
+         *     by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes come out smaller and shafts
+         *     larger than modelled, for fit checks.
          */
         FdmProcess: {
             /**
@@ -1284,14 +1293,26 @@ export interface components {
              */
             max_overhang_deg: number;
             /**
+             * Max Bridge Mm
+             * @description Longest span bridged between two supports
+             * @default 10
+             */
+            max_bridge_mm: number;
+            /**
              * Min Bed Contact Share
-             * @description Of the footprint's bounding box
+             * @description Of the part's outline seen from above, the share its base must span
              * @default 0.1
              */
             min_bed_contact_share: number;
             /**
+             * Max Height To Base
+             * @description Tallest a part stands, × its base's narrowest width, without a brim
+             * @default 4
+             */
+            max_height_to_base: number;
+            /**
              * Ignored Overhang Mm2
-             * @description Overhangs smaller than this print by bridging
+             * @description An overhang that prints on nothing over less than this still prints
              * @default 1
              */
             ignored_overhang_mm2: number;
@@ -1301,6 +1322,12 @@ export interface components {
              * @default false
              */
             supports: boolean;
+            /**
+             * Brim
+             * @description Printed with a brim round its base
+             * @default false
+             */
+            brim: boolean;
             /**
              * Hole Allowance Mm
              * @default 0
@@ -1564,8 +1591,9 @@ export interface components {
         };
         /**
          * InjectionMoldingProcess
-         * @description Injection molding, pulled along Z of the part's own frame: faces parallel to the pull need at least
-         *     `min_draft_deg` of draft, and walls should stay within `max_wall_ratio` of each other.
+         * @description Injection molding in a two-plate mold that opens along Z of the part's own frame: faces along the pull
+         *     need at least `min_draft_deg` of draft, every face must leave its mold half on a clear path along Z (no
+         *     undercuts), and no wall may be over `max_wall_ratio` × the median wall.
          */
         InjectionMoldingProcess: {
             /**
@@ -1580,9 +1608,16 @@ export interface components {
             min_draft_deg: number;
             /**
              * Max Wall Ratio
+             * @description Thickest wall, × the median wall
              * @default 2
              */
             max_wall_ratio: number;
+            /**
+             * Ignored Area Mm2
+             * @description Faces that fail over less than this (a sliver at a seam) do not fail
+             * @default 1
+             */
+            ignored_area_mm2: number;
         };
         /** InstanceInfo */
         InstanceInfo: {
@@ -2123,8 +2158,9 @@ export interface components {
         };
         /**
          * ResinProcess
-         * @description Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and no hollow sealed
-         *     inside the part, which traps uncured resin. `hole_allowance_mm` / `shaft_allowance_mm` as for FDM.
+         * @description Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and every hollow
+         *     inside the part drained through an opening at least `min_drain_mm` across, or it traps uncured resin
+         *     (Formlabs' design specifications ask for 3.5 mm). `hole_allowance_mm` / `shaft_allowance_mm` as for FDM.
          */
         ResinProcess: {
             /**
@@ -2138,6 +2174,12 @@ export interface components {
              * @default 0.6
              */
             min_wall_mm: number;
+            /**
+             * Min Drain Mm
+             * @description Narrowest opening resin drains out of a hollow by
+             * @default 3.5
+             */
+            min_drain_mm: number;
             /**
              * Hole Allowance Mm
              * @default 0
@@ -2440,7 +2482,9 @@ export interface components {
         /**
          * SheetMetalProcess
          * @description Sheet metal: the thinnest and the median wall are `thickness_mm` (± `thickness_tolerance_mm`), and
-         *     every bend's inner radius is at least `min_bend_radius_mm` (no sharp inside corners).
+         *     every bend's inner radius is at least `min_bend_radius_mm`. A bend is a pair of coaxial cylinders, inside
+         *     r and outside r + the thickness, or a sharp inside edge between two faces each with the sheet's other
+         *     side behind it (radius 0); the corners of a cut-out are not bends.
          */
         SheetMetalProcess: {
             /**
