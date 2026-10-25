@@ -60,12 +60,12 @@ class Analysis(Protocol):
 
 
 def result(analysis: str, subject: str, status: Status | bool | None, detail: str, about: Iterable[str] = (),
-           values: dict[str, Any] | None = None, severity: Severity = "error") -> Result:  # fmt: skip
+           values: dict[str, Any] | None = None, severity: Severity = "error", cause: str = "") -> Result:  # fmt: skip
     if not isinstance(status, str):
         status = "unverified" if status is None else "pass" if status else "fail"
     clean = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in (values or {}).items()}
     return Result(analysis=analysis, subject=subject, status=status, severity=severity, detail=detail,
-                  about=sorted(set(about)), values=clean)  # fmt: skip
+                  about=sorted(set(about)), values=clean, cause=cause)  # fmt: skip
 
 
 def structural(subject: str, error: StructureError, about: Iterable[str] = ()) -> Result:
@@ -103,5 +103,6 @@ def default_analyses() -> list[Analysis]:
     from hitlcad.analysis.relations import Relations
     from hitlcad.analysis.structure import Structure
 
+    # Cause before effect: where results share a cause (`Result.cause`), the earliest analysis's lead the problem.
     return [Structure(), Parts(), Connectors(), Mates(), Relations(), Fasteners(), Coverage(), Interference(), Motion(),
             Manufacturing(), Requirements()]  # fmt: skip

@@ -415,6 +415,16 @@ class Body:
         return gap(self.manifold, other.manifold, float(np.linalg.norm(span)))
 
 
+@dataclass(frozen=True)
+class Moved:
+    """The least gap a mate's motion brings two bodies to."""
+
+    gap_mm: float
+    where: str  # "at 30.0° of lid.hinge+base.pin"
+    complete: bool  # the sweep reached the ends of every range
+    mate: str
+
+
 class BuildBodies:
     """The bodies of a built design, by address, for requirement checks."""
 
@@ -455,20 +465,21 @@ class BuildBodies:
     def placed(self, address: str) -> Body:
         return self._body("placed", address, lambda: self.built.leaves_of(address))
 
-    def moved_gap(self, a: Body, b: Body) -> tuple[float, str, bool] | None:
+    def moved_gap(self, a: Body, b: Body) -> Moved | None:
         """The least gap between two bodies while a mate moves one against the other, as motion analysis
-        sweeps it; where; and whether the sweep reached the ends of every range. None when no mate does."""
+        sweeps it. None when no mate does."""
         from hitlcad.analysis.motion import Plan, sweep
 
         pairs = {frozenset((p.path, q.path)) for p in a.leaves for q in b.leaves}
-        found: tuple[float, str, bool] | None = None
+        found: Moved | None = None
         for plan in self.built.motion_plans:
             if not isinstance(plan, Plan):
                 continue
             for least in sweep(plan, self.settings, self.cache).least:
-                if frozenset((least.a, least.b)) not in pairs or found and found[0] <= least.gap_mm:
+                if frozenset((least.a, least.b)) not in pairs or found and found.gap_mm <= least.gap_mm:
                     continue
                 unit = "°" if least.kind == "angle" else " mm"
                 at = "in a full turn" if least.at is None else f"at {least.at:.1f}{unit}"
-                found = (least.gap_mm, f"{at} of {plan.link.source.address}", least.complete)
+                mate = plan.link.source.address
+                found = Moved(least.gap_mm, f"{at} of {mate}", least.complete, mate)
         return found

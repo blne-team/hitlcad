@@ -24,7 +24,7 @@ dependencies = [
   # rays and nearest points on a mesh through its AABB tree, in C++: wall thickness, overhang and undercut checks
   "libigl>=2.6.3",  # an AABB tree for rays and nearest points: wall thickness as chord and inscribed ball
   "scipy>=1.13",  # nearest samples, convex hulls and connected regions for the manufacturing checks
-  "networkx>=3",  # trimesh needs it to measure meshes that are not closed
+  "networkx>=3",  # the loops of mates motion finds; trimesh needs it to measure meshes that are not closed
   "tomlkit>=0.15.1",
   "bd-warehouse>=0.4.0",  # the standard-parts catalog provider: ISO/ASME fasteners, inserts, bearings
   "lxml>=6.1.3",  # trimesh needs it to read 3MF (the file viewer)

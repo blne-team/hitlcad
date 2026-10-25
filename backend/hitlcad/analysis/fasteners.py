@@ -13,7 +13,7 @@ from hitlcad.analysis.base import Context, label, result, structural
 from hitlcad.analysis.mates import allowance
 from hitlcad.analysis.model import BuiltDesign, Leaf, PlacedFrame, StructureError
 from hitlcad.core import frames as fr
-from hitlcad.core.report import Result
+from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import FastenerSet
 
 #: What a fastener's catalog provider must give.
@@ -157,14 +157,17 @@ class Fasteners:
             problems.append(f"engagement {engagement:.2f} mm in {label(into)}, needs {k * d:.2f} ({k:g} × Ø{d:g})")
         radius = FREE_REACH * min(into.measured.values.get("diameter", d), d - MINOR_PITCHES * pitch) / 2
         free, stop = free_depth(leaves, seat, into, radius, past + ctx.tol.position_mm)
+        cause = ""
         if past > free + ctx.tol.position_mm:
             values["free_mm"] = free
+            cause = Cause.overlap(seat.instance, stop)  # it reaches into what stops it: when that is all, its cause
             problems.append(f"bottoms out: it reaches {past:.2f} mm past the opening of {label(into)}, where {stop} "
                             f"stops it at {free:.2f}")  # fmt: skip
         status: bool | None = False if problems else (None if notes else True)
         head = f"{label(seat)} through {', '.join(label(h) for h in through)} into {label(into)}"
         detail = "; ".join(problems + notes) or f"seated, clears, engages {engagement:.2f} mm"
-        return result(self.name, fs.address, status, f"{head}: {detail}", about, values)
+        return result(self.name, fs.address, status, f"{head}: {detail}", about, values,
+                      cause=cause if len(problems) == 1 else "")  # fmt: skip
 
     @staticmethod
     def _thread(into: PlacedFrame, thread: str, d: float, pitch: float, tol: Any) -> str | None:

@@ -49,6 +49,10 @@ class _Check(Model):
     def targets(self) -> list[str]:
         return []
 
+    def cause(self, build: BuildBodies) -> str:
+        """Why it failed, where another analysis reports that too (`report.Cause`); empty when it is its own."""
+        return ""
+
 
 class _Bounded(Model):
     min: Number | None = None
@@ -214,7 +218,7 @@ class ClearanceCheck(_Bounded, _Check):
             moved = build.moved_gap(a, b)
         except Unmeasurable as e:  # a mesh is not closed
             return None, f"not measurable: {e}"
-        least, where, complete = moved or (sitting, "", True)
+        least, where, complete = (moved.gap_mm, moved.where, moved.complete) if moved else (sitting, "", True)
         if least >= sitting:
             passed, detail = self.bounds(sitting, build, "mm")
             detail = f"{a.name} to {b.name}: {detail}"
@@ -224,6 +228,16 @@ class ClearanceCheck(_Bounded, _Check):
         if passed and not complete:
             return None, f"{detail}; its motion was not swept to the ends (see motion)"
         return passed, detail
+
+    def cause(self, build: BuildBodies) -> str:
+        """The two overlap where they sit, or a mate's motion brings one against the other."""
+        from hitlcad.core.report import Cause
+
+        a, b = (build.placed(name) for name in self.between)
+        if a.overlap(b) > build.overlap_mm3:
+            return Cause.overlap(*self.between)
+        moved = build.moved_gap(a, b)
+        return Cause.contact(moved.mate, *self.between) if moved and moved.gap_mm <= 0 else ""
 
 
 class StackCheck(_Bounded, _Check):

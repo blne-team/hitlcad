@@ -17,10 +17,11 @@ from typing import Any
 from hitlcad.core.address import INTERFACE_PREFIX, End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.events import DesignState
-from hitlcad.core.report import BuildReport, Result, Revision
+from hitlcad.core.report import BuildReport, Finding, Problem, Result, Revision, problems, tally
 from hitlcad.designs.folder import DESIGN_FILE
 
 MARK = {"pass": "✓", "fail": "✗", "unverified": "?"}
+WARNING = "!"
 
 
 @dataclass
@@ -123,30 +124,18 @@ class DesignGraph:
         latest = s.current_revision
         if latest and latest.report.status == "failed":
             lines.append(f"  ✗ the latest build (rev {latest.id}) failed: {latest.report.error}")
-        lines += self._lines([r for r in self.results if r.status != "pass"])
+        if self.report:
+            lines += problem_lines(self.results, self.report.problems, self.ctx.limit)
         lines += self._pins()
         if s.selection:
             lines += [f"  selected: {item.label}" for item in s.selection]
-        lines.append("  " + self._tally())
+        lines.append("  " + (self.report.tally.text if self.report else "not built yet"))
         lines.append("  parts: " + ", ".join(self._counted(made, instances)) if made else "  parts: none")
         if bought:
             lines.append("  catalog: " + ", ".join(self._counted(bought, instances)))
         if d.components:
             lines.append("  components: " + ", ".join(f"{n} ({c.design})" for n, c in d.components.items()))
         return "\n".join(lines)
-
-    def _tally(self) -> str:
-        by: dict[str, list[str]] = defaultdict(list)
-        for r in self.results:
-            by[r.analysis].append(r.status)
-        if not by:
-            return "no results yet"
-        parts = []
-        for analysis, statuses in by.items():
-            ok = statuses.count("pass")
-            extra = "".join(f", {statuses.count(s)} {s}" for s in ("fail", "unverified") if statuses.count(s))
-            parts.append(f"{analysis} {ok}/{len(statuses)}{extra}")
-        return "results: " + "; ".join(parts)
 
     @staticmethod
     def _counted(names: list[str], instances: dict[str, list[str]]) -> list[str]:
@@ -271,9 +260,8 @@ class DesignGraph:
             lines.append("  binds: " + ", ".join(f"{k} = {v}" for k, v in use.bind.items()))
         child = self.report.components.get(name) if self.report else None
         if child:
-            failing = child.failing()
-            lines.append(f"  its build: {child.status.value}, {len(child.parts)} parts, {len(failing)} failing results")
-            lines += self._lines(failing, 10)
+            lines.append(f"  its build: {child.status.value}, {len(child.parts)} parts, {child.tally.text}")
+            lines += problem_lines(child.results, child.problems, 10)
         lines.append(f"  instances: {', '.join(self._instances().get(name, [])) or 'not placed'}")
         lines += self._joints(name)
         lines += self._lines(self._about(name, *self._instances().get(name, [])))
@@ -343,9 +331,8 @@ class DesignGraph:
         latest = self.ctx.state.latest(name)
         lines = [f"configuration {name}: " + ", ".join(f"{k} = {v}" for k, v in values.items())]
         if latest:
-            failing = latest.report.failing()
-            lines.append(f"  latest build rev {latest.id}: {len(failing)} failing results")
-            lines += self._lines(failing, 10)
+            lines.append(f"  latest build rev {latest.id}: {latest.report.tally.text}")
+            lines += problem_lines(latest.report.results, latest.report.problems, 10)
         else:
             lines.append("  not built yet: build_design(path, configuration=…)")
         return "\n".join(lines)
@@ -458,7 +445,7 @@ class DesignGraph:
 
 
 def revision_summary(rev: Revision, scope: list[str] | None = None, *, limit: int) -> str:
-    """A build's outcome for an agent: failures first, then a tally; scoped to some addresses when asked."""
+    """A build's outcome for an agent: its problems, then a tally; scoped to some addresses when asked."""
     r = rev.report
     head = (
         f"Revision {rev.id}"
@@ -471,20 +458,17 @@ def revision_summary(rev: Revision, scope: list[str] | None = None, *, limit: in
         lines.append(f"Error:\n{r.error}")
         if r.log_tail:
             lines.append(f"Log tail:\n{r.log_tail}")
-    results = r.results
+    results, found, counts = r.results, r.problems, r.tally
     if scope:
         graph = DesignGraph(
             Context(state=DesignState(id=""), design=rev.spec.design, design_error=None, revision=rev, limit=limit)
         )
         results = graph._about(*scope)
+        found = problems(results)
+        counts = tally(results, found)
         lines.append(f"Scoped to {', '.join(scope)}: {len(results)} of {len(r.results)} results")
-    order = {"fail": 0, "unverified": 1, "pass": 2}
-    shown = [x for x in sorted(results, key=lambda x: order[x.status]) if x.status != "pass"]
-    lines += [f"  {MARK[x.status]} {x.analysis} {x.subject}: {x.detail}" for x in shown[:limit]]
-    if len(shown) > limit:
-        lines.append(f"  … {len(shown) - limit} more not passing")
-    passing = sum(x.status == "pass" for x in results)
-    lines.append(f"  ✓ {passing} of {len(results)} results pass")
+    lines += problem_lines(results, found, limit)
+    lines.append(f"  {counts.text}")
     if m := r.metrics:
         lines.append(f"Assembly: {m.size[0]:.2f} × {m.size[1]:.2f} × {m.size[2]:.2f} mm, {len(r.instances)} instances"
                      + (f", {r.mass.mass_g:.1f} g" if r.mass else ""))  # fmt: skip
@@ -492,3 +476,31 @@ def revision_summary(rev: Revision, scope: list[str] | None = None, *, limit: in
     if r.parts:
         lines.append(f"Parts: {len(r.parts) - len(cached)} rebuilt, {len(cached)} from the cache")
     return "\n".join(lines)
+
+
+def problem_lines(results: list[Result], found: list[Problem], limit: int) -> list[str]:
+    """One line per problem: what leads it, its copies at their pattern indices, and what else saw it."""
+    lines = []
+    for p in found[:limit]:
+        lead, *also = p.findings
+        r = results[lead.results[0]]
+        mark = WARNING if p.status == "fail" and p.severity == "warning" else MARK[p.status]
+        line = f"  {mark} {r.analysis} {r.subject}{_copies(lead)}: {r.detail}"
+        if also:
+            line += " (also: " + ", ".join(_named(results[f.results[0]], f) for f in also) + ")"
+        lines.append(line)
+    if len(found) > limit:
+        lines.append(f"  … {len(found) - limit} more problems: focus a part, instance or connector for detail")
+    return lines
+
+
+def _copies(f: Finding) -> str:
+    """' ×4 at [0, 1, 2, 3]' for a finding of several results."""
+    if len(f.results) == 1:
+        return ""
+    return f" ×{len(f.results)}" + (f" at [{', '.join(map(str, f.indices))}]" if f.indices else "")
+
+
+def _named(r: Result, f: Finding) -> str:
+    subject = f"'{r.subject}'" if " " in r.subject else r.subject
+    return f"{r.analysis} {subject}" + (f" ×{len(f.results)}" if len(f.results) > 1 else "")

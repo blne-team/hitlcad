@@ -53,13 +53,15 @@ Agent 不会一上来就画几何。它先写清楚这个产品由哪些零件�
 Agent 在这一步难免出错，比如把叶轮直径写死成 70 mm，而不是从参数里读。build 结果会是这样：
 
 ```
-✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep
-✗ requirement Impeller blade tips clear the duct: impeller and duct overlap by 91.1 mm³
-✓ 151 of 155 results pass
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep (also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')
+? requirement Intake guard is finger-safe: no opening wider than 7 mm: no check: the human judges it
+1 problem (2 failing checks), 1 unverified; 130 checks pass
 ```
 
-Agent build 完读到的就是这段输出，所以不等你看，它已经把叶轮改好、重新跑了一遍。再比如电机螺孔只有 6 mm 深，
-却选了 M3 × 12 的螺钉，每颗螺钉都会报一条 `bottoms out: 8.50 mm into a 6.00 mm deep motor.screw_holes[0]`。
+Agent build 完读到的就是这段输出：一个错误一行，同一个错误连带失败的其他检查也写在这一行里。所以不等你看，
+它已经把叶轮改好、重新跑了一遍。再比如电机螺孔只有 6 mm 深，却选了 M3 × 12 的螺钉，四颗螺钉合成一行
+`✗ fastener motor_screw.seat:motor_mount.motor_screws>motor.screw_holes ×4 at [0, 1, 2, 3]`，说的是
+`bottoms out: it reaches 8.50 mm past the opening of motor.screw_holes[0], where motor stops it at 6.00`。
 
 全部通过之后，就轮到你了。在开头的动图里，你点了风道的安装孔，又在喷嘴上钉了一条批注，
 下一条消息就会带上这些：
@@ -77,27 +79,31 @@ Open pins (resolve them with resolve_pins once addressed):
 
 ## 都检查些什么？
 
-拿吹风机来说，每次 build 检查 155 项：
+拿吹风机来说，每次 build 检查 134 项：
 
 ![吹风机的 Results 页](docs/images/design-results.png)
 
-下面引用的都是这次 build 的实际输出。
+下面引用的都是这次 build 的实际输出。有检查没通过时，这一页先列问题，和 Agent 读到的那几行一样：
+同一个错误导致的几项失败合成一条，阵列里的多个副本也合成一条。
 
 - **Parts**（26）：每个零件都是合法的实体，网格闭合。
-- **Connectors**（51）：Agent 声明的每个特征都能在几何体里找到并量出尺寸：
+- **Connectors**（40）：Agent 声明的每个特征都能在几何体里找到并量出尺寸：
   `duct.mount_bore: Ø73.850 × 58.50 deep`。
 - **Mates**（27）：连在一起的特征对得上，扣掉打印机的补偿量之后，配合间隙和要求一致：
-  `fit 0.200 mm (hole Ø73.850, shaft Ø73.500) after process allowances`。
+  `fit 0.200 mm (hole Ø73.850, shaft Ø73.500, after process allowances (0.15 hole, 0 shaft)), needs 0.05 … 0.5`。
 - **Fastener sets**（10）：每颗螺钉都能落座、穿过通孔、吃上螺纹：
   `motor_screw[0].seat through motor_mount.motor_screws[0] into motor.screw_holes[3]: seated, clears, engages 4.50 mm`。
 - **Coverage**（1）：没有悬空的零件：`all 24 instances connect to duct`。
-- **Interference**（7）：零件之间互不干涉，除非连接本来就要求重叠，比如热熔进风道的螺母嵌件。
-- **Motion**（5）：运动件在整个行程里扫一遍，看会不会撞：
-  `motor.shaft ↔ impeller.bore moves through a full turn (24 positions) without collision`。
+- **Interference**（1）：零件之间互不干涉，除非连接本来就要求重叠，比如热熔进风道的螺母嵌件；
+  连接本来就要求的 6 处重叠会列出来，但不算作检查。
+- **Motion**（1）：运动件在整个行程里扫一遍，看会不会撞：
+  `motor.shaft ↔ impeller.bore moves through a full turn without collision (nothing in its reach meets its sweep)`；
+  被其他连接固定住、不会动的 4 个 mate 会列出来，但不算作检查。
 - **Manufacturing**（21）：每个零件按自己的加工工艺和摆放方向检查，比如壁厚
-  `duct: thinnest wall 1.48 mm (minimum 0.8 mm)`，还有悬垂和热床接触面。FDM、光固化、CNC、钣金、
+  `duct: thinnest wall 2.49 mm (minimum 0.8 mm)`，还有悬垂和热床接触面。FDM、光固化、CNC、钣金、
   注塑各有一套规则。
-- **Requirements**（7）：设计说明（brief）里的需求逐条测量：`impeller to duct: 0.74 mm (needs ≥ 0.4)`。
+- **Requirements**（7）：设计说明（brief）里的需求逐条测量，运动过程也算在内：
+  `impeller to duct: 0.73 mm (needs ≥ 0.4) in a full turn of motor.shaft+impeller.bore`。
   像“进风口护网不会伤到手指”这种程序判断不了的，就留给你来判断。
 
 其他内容见[装配模型文档](docs/assembly-model.md)：ISO 286 配合、公差累积、齿轮关系、多配置。
@@ -112,7 +118,7 @@ Open pins (resolve them with resolve_pins once addressed):
 <td width="50%"><a href="examples/nas-case"><img src="docs/images/tour-nas.gif" alt="NAS 机箱拆成各个打印件，再隐藏后壳和侧板，露出内部"></a></td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/handhold-fan"><b>手持吹风机</b></a><br>就是上面演示的那个：一台 750 W 电机加 13 个零件，算上螺钉和嵌件一共 24 个实例，155 项检查。build123d。</td>
+<td valign="top"><a href="examples/handhold-fan"><b>手持吹风机</b></a><br>就是上面演示的那个：一台 750 W 电机加 13 个零件，算上螺钉和嵌件一共 24 个实例，134 项检查。build123d。</td>
 <td valign="top"><a href="examples/nas-case"><b>NAS 机箱</b></a><br>能装四块 3.5 寸硬盘的 micro-ATX NAS，拆成九块打印，每块都放得进 256 mm 的热床，用 32 颗 M3 螺钉配热熔螺母固定。97 个实例，435 项检查。build123d。</td>
 </tr>
 <tr>

@@ -4,17 +4,20 @@ connects is floating: placed, but related to nothing (the real-CAD "under-define
 from __future__ import annotations
 
 import dataclasses
+from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from hitlcad.analysis.base import Context, pair, result, structural
 from hitlcad.analysis.fasteners import stacks
+from hitlcad.analysis.mates import agree
 from hitlcad.analysis.model import BuiltDesign, PlacedFrame, StructureError
 from hitlcad.analysis.relations import relation_pairs
 from hitlcad.core import frames as fr
 from hitlcad.core.address import InstancePath
-from hitlcad.core.report import Result
+from hitlcad.core.report import Cause, Result
+from hitlcad.core.structure import _Mate
 
 
 @dataclass
@@ -90,6 +93,45 @@ def top(instance: str) -> str:
     return str(InstancePath.parse(instance).head)
 
 
+def hops(built: BuiltDesign, found: list[Link]) -> dict[str, int]:
+    """How many links each top-level instance is from `ground`; one nothing connects to it is left out."""
+    if built.spec.ground is None:
+        return {}
+    grounded = [a for a, _ in built.select(InstancePath.parse(built.spec.ground).head)]
+    neighbours: defaultdict[str, set[str]] = defaultdict(set)
+    for link in found:
+        a, b = top(link.a.instance), top(link.b.instance)
+        neighbours[a].add(b)
+        neighbours[b].add(a)
+    out, todo = dict.fromkeys(grounded, 0), deque(grounded)
+    while todo:
+        at = todo.popleft()
+        for n in neighbours[at] - out.keys():
+            out[n] = out[at] + 1
+            todo.append(n)
+    return out
+
+
+def misplaced(built: BuiltDesign, found: list[Link]) -> dict[str, str]:
+    """Top-level instances a mate whose frames disagree puts somewhere else, with that mate's cause: of its two
+    instances the one further from ground, or both when they are as far."""
+    try:
+        far = hops(built, found)
+    except StructureError:  # no ground placed: the structure analysis says so
+        far = {}
+    out: dict[str, str] = {}
+    for link in found:
+        mate = link.source
+        if not isinstance(mate, _Mate) or agree(mate, link.a, link.b, built.tolerances).passed:
+            continue
+        a, b = top(link.a.instance), top(link.b.instance)
+        da, db = far.get(a, len(far)), far.get(b, len(far))
+        for x, d in ((a, da), (b, db)):
+            if d == max(da, db):
+                out.setdefault(x, Cause.mate(mate.address, a, b))
+    return out
+
+
 class Coverage:
     name = "coverage"
 
@@ -100,20 +142,9 @@ class Coverage:
         if not instances or built.spec.ground is None:
             return out  # the structure analysis says what is missing
         try:
-            grounded = [a for a, _ in built.select(InstancePath.parse(built.spec.ground).head)]
+            reached = hops(built, links(built)[0])
         except StructureError:
             return out
-        found, _ = links(built)
-        neighbours: dict[str, set[str]] = {a: set() for a in instances}
-        for link in found:
-            a, b = top(link.a.instance), top(link.b.instance)
-            neighbours[a].add(b)
-            neighbours[b].add(a)
-        reached, todo = set(grounded), list(grounded)
-        while todo:
-            for n in neighbours[todo.pop()] - reached:
-                reached.add(n)
-                todo.append(n)
         floating = [a for a in instances if a not in reached]
         out += [result(self.name, a, False, f"{a} is floating: no mate, relation or fastener set connects it to "
                        f"{built.spec.ground}", [a]) for a in floating]  # fmt: skip

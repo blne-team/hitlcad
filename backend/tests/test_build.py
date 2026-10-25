@@ -19,6 +19,7 @@ from hitlcad.analysis import cadview
 from hitlcad.app import HitlCad
 from hitlcad.core.report import BuildReport
 from hitlcad.designs.folder import DesignFolder
+from hitlcad.graph import problem_lines
 
 from .conftest import copy_design, results, write_design
 
@@ -106,6 +107,9 @@ async def test_a_fastener_needs_the_into_thread_and_an_iso_273_clearance_hole(co
     text = "\n".join(r.detail for r in results(report, "fastener", "fail"))
     assert "its M3-0.5 thread does not fit the M5-0.8 thread of insert[0].thread" in text
     assert "the M3-0.5 shank does not clear lid.screws[0]: Ø3.100 as made, ISO 273 asks Ø3.2 (fine)" in text
+    # The four stacks fail alike: one problem, at their four indices
+    (stacks,) = [line for line in problem_lines(report.results, report.problems, 10) if " fastener " in line]
+    assert stacks.startswith("  ✗ fastener screw.seat:lid.screws>insert.thread ×4 at [0, 1, 2, 3]: screw[0].seat")
 
 
 async def test_floating_parts_and_broken_references(core: HitlCad, tmp_path: Path) -> None:
@@ -316,6 +320,10 @@ async def test_an_insert_set_into_solid_material_is_not_an_expected_overlap(core
     report = await build(core, folder, tmp_path / "out")
     inserts = [r for r in results(report, "interference", "fail") if "+insert[" in r.subject]
     assert len(inserts) == 4 and all("the hole is not cut there" in r.detail for r in inserts), failing(report)
+    # The screws threaded into them reach into the base for the same reason: one problem, four times over
+    lines = problem_lines(report.results, report.problems, 10)
+    assert lines[0].startswith("  ✗ interference base+insert[0] ×4 at [0, 1, 2, 3]: "), lines
+    assert report.tally.problems == 1, lines
 
 
 async def test_the_fan_turns_into_a_pin_in_its_duct_and_one_too_big_for_it_once(core: HitlCad, tmp_path: Path) -> None:
@@ -343,6 +351,12 @@ async def test_the_fan_turns_into_a_pin_in_its_duct_and_one_too_big_for_it_once(
     assert "about 0.2" in overlap.detail
     (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
     assert motion.status == "unverified" and "already overlap" in motion.detail
+    # The README's seeded mistake: one problem, its interference leading and naming what else it fails
+    (line, judged) = problem_lines(report.results, report.problems, 10)
+    assert line.startswith("  ✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³"), line
+    assert line.endswith("(also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')")
+    assert judged.startswith("  ? requirement Intake guard is finger-safe")
+    assert report.tally.text.startswith("1 problem (2 failing checks), 1 unverified; ")
 
 
 PRESS = {

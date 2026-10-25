@@ -8,7 +8,11 @@ modelled without a gap (an ISO fit at its basic size) only what those facets mak
 sets b's part into a hole of a's part (an insert, a thread, a pressed pin): the overlap is where b
 presses into the hole's wall, and a has no material on the hole's axis where b sits (nor within the
 hole's radius, when a's end is a measured hole). A part set into solid material, where its hole was
-never cut or is too shallow, overlaps it there too, and that overlap is reported."""
+never cut or is too shallow, overlaps it there too, and that overlap is reported.
+
+An overlap's cause (`Cause`) is the pair's overlap, unless a mate whose frames disagree puts one of the two
+elsewhere (that mate's), or the overlap is a fastener's in the host of the part it is threaded into, set where
+its hole is not cut (that part's in its host)."""
 
 from __future__ import annotations
 
@@ -19,11 +23,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from hitlcad.analysis.base import Context, ResultCache, result
-from hitlcad.analysis.coverage import Link, links, top
+from hitlcad.analysis.coverage import Link, links, misplaced, top
 from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
-from hitlcad.core.report import Result
+from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import Tolerances
 
 if TYPE_CHECKING:
@@ -115,7 +119,10 @@ class Interference:
         leaves = ctx.built.leaves()
         found, _ = links(ctx.built)
         ok_pairs = allowed(found)
+        astray = misplaced(ctx.built, found)
         out: list[Result] = []
+        failed: list[tuple[int, str, str]] = []
+        unset: dict[frozenset[str], str] = {}  # a part set into a hole that is not cut, and its host: their cause
         checked = 0
         pad = ctx.tol.position_mm
         for i, a in enumerate(leaves):
@@ -137,9 +144,19 @@ class Interference:
                                       f"{allowance.why}", [a.path, b.path], {"overlap_mm3": shared}, severity="info"))  # fmt: skip
                     continue
                 text, values = where(a.manifold ^ b.manifold)
+                cause = astray.get(top(a.path)) or astray.get(top(b.path)) or Cause.overlap(a.path, b.path)
+                if allowance and allowance.kind == "set":
+                    unset[frozenset((a.path, b.path))] = cause
+                failed.append((len(out), a.path, b.path))
                 out.append(result(self.name, f"{a.path}+{b.path}", False, f"{a.path} and {b.path} overlap by "
                                   f"{shared:.2f} mm³{text}" + (f"; {excess}" if excess else ""), [a.path, b.path],
-                                  {"overlap_mm3": shared, **values}))  # fmt: skip
+                                  {"overlap_mm3": shared, **values}, cause=cause))  # fmt: skip
+        # A fastener threaded into a part set where its hole is not cut overlaps the host for the same reason.
+        threaded = {k.a.instance: k.b.instance for k in found if k.role == "into"}
+        for n, a, b in failed:
+            for x, y in ((a, b), (b, a)):
+                if cause := unset.get(frozenset((threaded.get(x, ""), y))):
+                    out[n] = out[n].model_copy(update={"cause": cause})
         if not any(r.status == "fail" for r in out):
             out.append(result(self.name, "interference", True, f"no unexpected overlaps among {len(leaves)} instances "
                               f"({checked} pairs close enough to check)", [], {"pairs_checked": checked}))  # fmt: skip

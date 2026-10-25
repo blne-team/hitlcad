@@ -88,7 +88,8 @@ class Requirements:
                 continue
             try:
                 passed, detail = req.check.verify(ctx.bodies)
+                cause = req.check.cause(ctx.bodies) if passed is False else ""
             except StructureError as e:
-                passed, detail = False, f"{e}"
-            out.append(result(self.name, req.text, passed, detail, req.check.targets()))
+                passed, detail, cause = False, f"{e}", ""
+            out.append(result(self.name, req.text, passed, detail, req.check.targets(), cause=cause))
         return out

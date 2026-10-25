@@ -344,3 +344,35 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
     assert [m.detail for m in built.measured[("a", "teeth")]] == ["no parameter 'teeth'"] * 2
     relations = Relations().run(Context(built, None, None, None))  # type: ignore[arg-type]
     assert [r.status for r in relations] == ["unverified"] * 2
+
+
+def test_results_with_one_cause_are_one_problem_and_pattern_copies_fold() -> None:
+    """The README's seeded mistake fails two checks and leaves a motion unverified: one problem. Four screws too
+    long are one problem at four indices. Info results are no checks, and the tally counts problems."""
+    from hitlcad.core.report import BuildReport, Cause, Result
+    from hitlcad.graph import problem_lines
+
+    overlap = Cause.overlap("impeller", "duct")
+    found = [
+        Result(analysis="part", subject="duct", status="pass", detail="closed mesh"),
+        *(Result(analysis="fastener", subject="screw.seat:lid.screws>base.holes", status="fail",
+                 detail=f"screw[{k}].seat into base.holes[{k}]: bottoms out at {6 + k / 10:.2f}") for k in range(4)),
+        Result(analysis="interference", subject="duct+impeller", status="fail", detail="overlap by 91.11 mm³",
+               cause=overlap),
+        Result(analysis="interference", subject="base+insert[0]", status="pass", severity="info", detail="expected"),
+        Result(analysis="motion", subject="motor.shaft+impeller.bore", status="unverified", detail="already overlap",
+               cause=overlap),
+        Result(analysis="requirement", subject="Impeller blade tips clear the duct", status="fail",
+               detail="impeller and duct overlap by 91.1 mm³", cause=overlap),
+        Result(analysis="requirement", subject="Finger-safe", status="unverified", detail="the human judges it"),
+    ]  # fmt: skip
+    report = BuildReport(status="succeeded", duration_s=1, results=found)
+    assert problem_lines(report.results, report.problems, 10) == [
+        "  ✗ fastener screw.seat:lid.screws>base.holes ×4 at [0, 1, 2, 3]: screw[0].seat into base.holes[0]: "
+        "bottoms out at 6.00",
+        "  ✗ interference duct+impeller: overlap by 91.11 mm³ (also: motion motor.shaft+impeller.bore, "
+        "requirement 'Impeller blade tips clear the duct')",
+        "  ? requirement Finger-safe: the human judges it",
+    ]
+    assert report.tally.text == "2 problems (6 failing checks), 1 unverified; 1 check passes"
+    assert BuildReport.model_validate_json(report.model_dump_json()).problems == report.problems

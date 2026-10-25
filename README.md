@@ -58,14 +58,16 @@ whole assembly again. Agents make mistakes here. Suppose it typed the impeller's
 70 mm instead of reading it from the parameters. The build comes back with:
 
 ```
-✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep
-✗ requirement Impeller blade tips clear the duct: impeller and duct overlap by 91.1 mm³
-✓ 151 of 155 results pass
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep (also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')
+? requirement Intake guard is finger-safe: no opening wider than 7 mm: no check: the human judges it
+1 problem (2 failing checks), 1 unverified; 130 checks pass
 ```
 
-That is the text your agent reads after the build, so it fixes the impeller and tries again before
-you've looked. Pick M3 × 12 screws for a motor with 6 mm deep holes and you get
-`bottoms out: 8.50 mm into a 6.00 mm deep motor.screw_holes[0]`, once per screw.
+That is the text your agent reads after the build: one line per mistake, naming the other checks
+it fails, so it fixes the impeller and tries again before you've looked. Pick M3 × 12 screws for a
+motor with 6 mm deep holes and the four screws come back as one line, `✗ fastener
+motor_screw.seat:motor_mount.motor_screws>motor.screw_holes ×4 at [0, 1, 2, 3]`, that says
+`bottoms out: it reaches 8.50 mm past the opening of motor.screw_holes[0], where motor stops it at 6.00`.
 
 Once it builds clean, you look at it. In the clip at the top, you click the duct's mounting bore and
 pin a note to the nozzle. Your next message to the agent carries this along:
@@ -83,28 +85,31 @@ which. Pins stay attached to their part when it's rebuilt, until the agent resol
 
 ## How much does it check?
 
-For the blower, 155 things on every build:
+For the blower, 134 checks on every build:
 
 ![The Results tab for the blower](docs/images/design-results.png)
 
-Each line below is quoted from that build.
+Each line below is quoted from that build. When some fail, the tab lists problems first, the same
+lines your agent reads: the checks one mistake fails together, a pattern's copies as one.
 
 - **Parts** (26). Every part is a valid solid with a closed mesh.
-- **Connectors** (51). Each feature the agent declared is found in the geometry and measured:
+- **Connectors** (40). Each feature the agent declared is found in the geometry and measured:
   `duct.mount_bore: Ø73.850 × 58.50 deep`.
 - **Mates** (27). Joined features line up, and fits are what was asked for after the printer's
-  allowance: `fit 0.200 mm (hole Ø73.850, shaft Ø73.500) after process allowances`.
+  allowance: `fit 0.200 mm (hole Ø73.850, shaft Ø73.500, after process allowances (0.15 hole, 0 shaft)), needs 0.05 … 0.5`.
 - **Fastener sets** (10). Each screw seats, clears its hole and bites:
   `motor_screw[0].seat through motor_mount.motor_screws[0] into motor.screw_holes[3]: seated, clears, engages 4.50 mm`.
 - **Coverage** (1). Nothing floats: `all 24 instances connect to duct`.
-- **Interference** (7). No two parts overlap unless a joint says they should, like a heat-set insert
-  melted into the duct.
-- **Motion** (5). Moving parts are swept through their range:
-  `motor.shaft ↔ impeller.bore moves through a full turn (24 positions) without collision`.
+- **Interference** (1). No two parts overlap unless a joint says they should, like a heat-set insert
+  melted into the duct; the 6 overlaps joints expect are listed, not counted.
+- **Motion** (1). Moving parts are swept through their range:
+  `motor.shaft ↔ impeller.bore moves through a full turn without collision (nothing in its reach meets its sweep)`;
+  the 4 mates other joints hold still are listed, not counted.
 - **Manufacturing** (21). Each part is checked against its process in the orientation it's made:
-  `duct: thinnest wall 1.48 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, resin printing, CNC
+  `duct: thinnest wall 2.49 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, resin printing, CNC
   milling, sheet metal and injection molding each have their own rules.
-- **Requirements** (7). The brief's requirements, measured: `impeller to duct: 0.74 mm (needs ≥ 0.4)`.
+- **Requirements** (7). The brief's requirements, measured, through the motion too:
+  `impeller to duct: 0.73 mm (needs ≥ 0.4) in a full turn of motor.shaft+impeller.bore`.
   "The intake guard is finger-safe" isn't something a program can settle, so that one is yours.
 
 The [assembly model](docs/assembly-model.md) covers the rest: ISO 286 fits, tolerance stacks, gear
@@ -120,7 +125,7 @@ Each one comes apart into its parts, goes back together, and then shows what the
 <td width="50%"><a href="examples/nas-case"><img src="docs/images/tour-nas.gif" alt="The NAS case comes apart into its printed pieces, then its rear shell and side panels are hidden to show what is inside"></a></td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/handhold-fan"><b>Hand-held blower</b></a><br>The blower from the walkthrough: 13 parts around a 750 W motor, 24 instances with the screws and inserts, 155 checks. build123d.</td>
+<td valign="top"><a href="examples/handhold-fan"><b>Hand-held blower</b></a><br>The blower from the walkthrough: 13 parts around a 750 W motor, 24 instances with the screws and inserts, 134 checks. build123d.</td>
 <td valign="top"><a href="examples/nas-case"><b>NAS case</b></a><br>A micro-ATX NAS for four 3.5" drives, printed as nine pieces that each fit a 256 mm bed and held together by 32 M3 screws in heat-set inserts. 97 instances, 435 checks. build123d.</td>
 </tr>
 <tr>

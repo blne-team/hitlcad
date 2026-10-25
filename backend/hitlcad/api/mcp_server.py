@@ -36,7 +36,8 @@ then build_design(path, scope="structure") checks it before any geometry exists.
 - search_catalog(query) before modelling a screw, nut, insert or bearing.
 - Write interfaces.py, the part files and assembly.py with your own file tools; saving rebuilds.
 - build_design(path) verifies every connector, mate, relation, fastener set and requirement \
-({describe.CHECK_KINDS}); failures come first, with section views through failing joints. \
+({describe.CHECK_KINDS}); it answers one line per problem (the checks one mistake fails, together), \
+with section views through failing joints. \
 scope="<part or instance>" answers about one part of a large product.
 - explore_design(path, focus) answers about the design or one part, instance, connector, mate, \
 parameter (with its impact), interfaces.<name>, configuration or 'rev N'. It also tells you what the \
@@ -70,9 +71,8 @@ def build_mcp(core: HitlCad) -> MCPServer:
         directory = feedback.revision_dir(design_id, rev)
         if preview and (directory / preview.path).is_file():
             out += [describe.PREVIEW_CAPTION, Image(data=(directory / preview.path).read_bytes(), format="png")]
-        failing = [
-            r for r in rev.report.results if r.status == "fail" and r.analysis in ("mate", "fastener", "relation")
-        ]
+        leads = [rev.report.results[p.findings[0].results[0]] for p in rev.report.problems if p.status == "fail"]
+        failing = [r for r in leads if r.analysis in ("mate", "fastener", "relation")]  # one per problem
         if failing and rev.report.status == "succeeded":
             built = feedback.built(design_id, rev)
             for result in failing[:3]:
@@ -139,7 +139,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         """Build and verify the design. scope="structure" checks design.json, interfaces.py and assembly.py
         without building geometry (seconds). scope="<part or instance>" builds (unchanged parts come from the
         cache) and answers about that part. configuration="<name>" builds one configuration, "all" every one.
-        Failures come first, with section views through failing joints."""
+        One line per problem, the checks one mistake fails named together; section views through failing joints."""
         state = designs.ensure(path)
         if scope == "structure":
             results, plan = await builds.check_structure(state.id)

@@ -59,10 +59,14 @@ item), or scale (too large for one context).
    `build_design(path, scope="<part>")`. Unchanged part files come from the cache.
 5. **Assembly.** assembly.py places every instance from interface values (or with the SDK's
    `mate_to`), so placements follow the same numbers as the geometry.
-6. **Verify.** `build_design(path)` lists failures first: frames that do not agree, fits out of
-   range, fasteners that do not clear or engage, collisions (also through each mate's range of
-   motion), floating instances, process problems, requirements. Fix the cause, not the check. Look
-   at the preview and the section views.
+6. **Verify.** `build_design(path)` answers one line per problem: frames that do not agree, fits out
+   of range, fasteners that do not clear or engage, collisions (also through each mate's range of
+   motion), floating instances, process problems, requirements. A line leads with the check closest
+   to the mistake and names the others it fails, `(also: requirement '…')`: fix that one cause and
+   they pass with it. `×4 at [0, 1, 2, 3]` is one problem at each of a pattern's copies. `✗` fails,
+   `!` is a warning, `?` no check could settle (and a requirement with no check is the human's to
+   judge). The last line counts problems, not checks: `1 problem (2 failing checks), 1 unverified;
+   130 checks pass`. Look at the preview and the section views.
 7. Before changing a parameter or interface value, `explore_design(path, "<name>")` shows what reads
    it and what it affects. After a change, `compare_revisions` shows what moved.
 8. Configurations: `build_design(path, configuration="all")` verifies every variant.

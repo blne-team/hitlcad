@@ -462,6 +462,42 @@ faces, so a cut-out's corners are not bends.
 Interference uses a bounding-box broad phase before exact manifold3d booleans, and caches each
 pair's overlap by the parts' meshes and transforms, so a rebuild recomputes only what moved.
 
+### Problems, not checks
+
+One mistake can fail several checks: an impeller typed 2 mm too large overlaps its duct
+(interference), misses the clearance a requirement asks (requirement) and leaves its motion
+unchecked (motion). A result names its `cause` where its analysis can tell, as a key of what it is
+about, and the report (`BuildReport.problems`) groups the results that do not pass by it:
+
+| Cause | Means | Set by |
+| --- | --- | --- |
+| `overlap:A\|B` | instances A and B share volume where they sit | interference (an overlap nothing expects, or more than a joint allows); motion (a range left unchecked only because of it); a `clearance` requirement between A and B; a mate whose fit measures the shaft larger than its hole; a fastener that bottoms out against B |
+| `contact:M:A\|B` | moving mate M brings A against B | motion (its first contacts, when all are A and B); a `clearance` requirement that comes to no gap through M |
+| `mate:M:A\|B` | mate M's frames on A and B disagree | mates; interference, for an overlap of the one M puts elsewhere (the end further from ground) |
+| `loop:M1,M2,…` | the mates close a loop of motion, not analysed without a solver | motion, for each mate in the loop |
+
+Instances are named by their top-level instance, so a component's leaves meet the requirements
+that name the component. An overlap of a fastener in the host of the insert it is threaded into,
+where the insert's hole is not cut, has the insert's cause. A result whose analysis cannot tell is
+its own problem.
+
+The analyses run cause before effect (structure, parts, connectors, mates, relations, fastener sets,
+coverage, interference, motion, manufacturing, requirements), so the earliest one's result leads
+its problem and the rest are named with it. Problems alike but for pattern indices and numbers (four
+screws each too long) fold into one, with ×N and the indices. `build_design`, `hitlcad build` and
+the panel's Results show the same lines and the same tally, problems rather than checks. The
+blower with its impeller typed as 70 mm:
+
+```
+✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³ in 7 pieces within x 4.00 … 22.00, y -34.20 … 35.00, z -35.00 … 35.00, about 0.25 mm deep (also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')
+? requirement Intake guard is finger-safe: no opening wider than 7 mm: no check: the human judges it
+1 problem (2 failing checks), 1 unverified; 130 checks pass
+```
+
+A warning (`!`) is a problem whose failing checks are all warnings (manufacturing's, a mesh that does
+not close), counted apart. Info results (an overlap a
+joint expects, a mate others hold still) are listed under their analysis but are not checks.
+
 ## Outputs
 
 `build/` after a successful build of the default configuration:
@@ -520,7 +556,7 @@ agent's own tools (reviewed as diffs); no tool edits them.
 | `list_backends()` | backends, materials, catalog providers, exporters |
 | `create_design(path, name, backend)` | scaffold the folder |
 | `search_catalog(query, limit)` | standard parts: designation, call, sizes, connectors |
-| `build_design(path, scope, configuration, summary)` | `scope="structure"`: the plan check, no geometry, in seconds. `scope="<address>"`: a build (unchanged part files come from the cache) answered for that address. `configuration`: one variant, or `"all"`. Failures first, what changed, a tally; images: the preview, and a section through each failing mate, relation or fastener set along its axis |
+| `build_design(path, scope, configuration, summary)` | `scope="structure"`: the plan check, no geometry, in seconds. `scope="<address>"`: a build (unchanged part files come from the cache) answered for that address. `configuration`: one variant, or `"all"`. Its problems (below), what changed, a tally; images: the preview, and a section through the failing mate, relation or fastener set that leads each problem, along its axis |
 | `explore_design(path, focus, configuration)` | the design graph (below) |
 | `compare_revisions(path, base, target)` | parameters, file diffs, results that changed status, parts rebuilt, size, mass |
 | `list_geometry(path, target, kind, revision)` | faces, edges or vertices of an instance (placed) or `part <name>` (its frame) |
@@ -530,7 +566,7 @@ agent's own tools (reviewed as diffs); no tool edits them.
 **The design graph** (`graph.py`) is a projection of design.json, the latest build report of the
 configuration explored and the event log. Without a focus, `explore_design` gives the overview:
 counts, components used and designs using this one, configurations, staleness (files changed since
-the build), failing and unverified results, open pins, the selection, a tally per analysis, the
+the build), its problems, open pins, the selection, the tally, the
 parts. With a focus it gives that node and its neighbours: a part's role, file, process, size and
 mass, what it read, its connectors as measured, its instances, joints, results and pins; a
 parameter's or interface value's impact, following recorded reads backwards (interface values →
@@ -570,7 +606,7 @@ caught by the analysis that owns them.
 | Connector kind | `ConnectorSpec` union | its fields and `measure(shape, frame, tol, nominals)` |
 | Mate type | `MateSpec` union | its free motion and `verify(fa, fb, symmetry, tol)` |
 | Relation type | `RelationSpec` union | the kinds it joins, `verify`, `ratio` |
-| Requirement check | `RequirementCheck` union | `verify(build)` |
+| Requirement check | `RequirementCheck` union | `verify(build)`, and `cause(build)` when another analysis sees its failure too |
 | Manufacturing process | `Manufacturing` union | `checks(body)`, `allowance(feature)` |
 | Analysis | `Analysis` protocol, `analysis.base.default_analyses` | `run(ctx) -> [Result]` |
 | Catalog provider | `CatalogProvider`, entry points `hitlcad.catalogs` | helpers returning `CatalogPart`s, `search` |

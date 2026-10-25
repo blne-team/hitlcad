@@ -39,7 +39,7 @@ from hitlcad.analysis.interference import Allowance, allowed, beyond, boxes_touc
 from hitlcad.analysis.model import SEARCH_MM, WIDEN, AnalysisSettings, BuiltDesign, Leaf, StructureError, gap
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import ClearanceCheck
-from hitlcad.core.report import Result
+from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import Axis, Tolerances, _Mate, _Relation
 from hitlcad.core.types import Model
 
@@ -194,6 +194,7 @@ def plans(built: BuiltDesign) -> list[Plan | Result]:
     moving_links = [k for k in all_links if isinstance(k.source, _Mate) and not k.rigid]
     world = World(leaves, clusters, ground, moving_links, [k for k in all_links if isinstance(k.source, _Relation)],
                   allowed(all_links), built.tolerances, _tracked(built))  # fmt: skip
+    loops = _loops(moving_links, clusters)
     out: list[Plan | Result] = []
     for link in moving_links:
         mate: _Mate = link.source
@@ -209,12 +210,29 @@ def plans(built: BuiltDesign) -> list[Plan | Result]:
         side_a = clusters.side(link.a.instance, moving_links, exclude=link, ground=ground)
         if side_b is None and side_a is None:
             out.append(result(NAME, mate.address, None, f"{label(link.a)} ↔ {label(link.b)}: in a closed loop of "
-                              "mates, it moves only with the rest of the loop; not analysed without a solver", about))  # fmt: skip
+                              "mates, it moves only with the rest of the loop; not analysed without a solver", about,
+                              cause=loops[id(link)]))  # fmt: skip
             continue
         moving, sign = (side_b, 1.0) if side_b is not None else (side_a, -1.0)
         assert moving is not None
         free = mate.verify(link.a.frame, mate.facing(link.b.frame), "axial", built.tolerances).free
         out.append(Plan(link, ranges, moving, sign, free, world))
+    return out
+
+
+def _loops(moving: list[Link], clusters: _Clusters) -> dict[int, str]:
+    """The loop of each mate in a closed loop of mates (`Cause.loop`): one block of the graph whose nodes are
+    clusters and moving mates, each mate between its two clusters."""
+    import networkx as nx
+
+    graph = nx.Graph()
+    for n, k in enumerate(moving):
+        graph.add_edges_from([(clusters.find(k.a.instance), n), (n, clusters.find(k.b.instance))])
+    out = {}
+    for block in nx.biconnected_components(graph):
+        group = [moving[n] for n in block if isinstance(n, int)]
+        if len(group) > 1:
+            out |= dict.fromkeys(map(id, group), Cause.loop([k.source.address for k in group]))
     return out
 
 
@@ -246,9 +264,11 @@ class Motion:
                           "a solver", about)  # fmt: skip
         if swept.contacts:
             first = min(swept.contacts, key=lambda c: abs(c.at - plan.free.get(c.kind, 0.0)))
+            causes = {Cause.contact(mate.address, c.a, c.b) for c in swept.contacts}
             return result(self.name, mate.address, False, f"{pair}: {self._contacts(plan, swept.contacts)}",
                           [*about, *(p for c in swept.contacts for p in (c.a, c.b))],
-                          {first.kind: first.at, "overlap_mm3": first.overlap_mm3})  # fmt: skip
+                          {first.kind: first.at, "overlap_mm3": first.overlap_mm3},
+                          cause=causes.pop() if len(causes) == 1 else "")  # fmt: skip
         ranges = ", ".join("a full turn" if continuous else f"{lo:g} … {hi:g}{_unit(kind)}"
                            for kind, lo, hi, continuous in plan.ranges)  # fmt: skip
         problems = [f"{s.a} and {s.b} stay {s.gap_mm:.3f} mm apart from {s.at:.2f}{_unit(s.kind)} on, too close to "
@@ -257,11 +277,14 @@ class Motion:
         problems += [f"{a} against {b} is not measurable: {why}" for a, b, why in swept.unmeasurable]
         problems += [f"{a} and {b} already overlap by {mm3:.2f} mm³ where they sit (see interference), so their "
                      "motion is not checked" for a, b, mm3 in swept.resting]  # fmt: skip
+        # Overlaps where they sit, and nothing else, are the interference analysis's problem.
+        resting = {Cause.overlap(a, b) for a, b, _ in swept.resting}
         if problems:
             return result(self.name, mate.address, None, f"{pair} moves through {ranges} without collision as far as "
                           f"it was checked; " + "; ".join(problems),
                           [*about, *(p for s in swept.stopped for p in (s.a, s.b)),
-                           *(p for a, b, *_ in [*swept.unmeasurable, *swept.resting] for p in (a, b))])  # fmt: skip
+                           *(p for a, b, *_ in [*swept.unmeasurable, *swept.resting] for p in (a, b))],
+                          cause=resting.pop() if len(resting) == 1 and len(problems) == len(swept.resting) else "")  # fmt: skip
         checked = f"{swept.positions} positions checked" if swept.positions else "nothing in its reach meets its sweep"
         return result(self.name, mate.address, True, f"{pair} moves through {ranges} without collision ({checked})",
                       about, {"positions": swept.positions})  # fmt: skip

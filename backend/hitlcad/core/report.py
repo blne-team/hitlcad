@@ -2,19 +2,23 @@
 
 Every analysis reports `Result`s. A result names the addresses it is about, so the design graph
 and the tools present the findings of any analysis, including ones added later, without code of
-their own.
+their own. One mistake can fail several checks (an impeller too large overlaps its duct and misses
+the clearance its requirement asks), so a result also names its `cause` where its analysis can tell,
+and the report groups the results that share one into a `Problem`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from hitlcad.core.address import InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.structure import Measured, Tolerances
 from hitlcad.core.types import Matrix, Model, Value, utcnow
@@ -28,16 +32,143 @@ class BuildStatus(StrEnum):
     FAILED = "failed"
 
 
+class Cause:
+    """The keys of `Result.cause`: problems more than one analysis can see, each by what it is about. Instances
+    are named by their top-level instance (a part's or a component's), so a component's leaves meet the
+    requirements that name the component.
+
+        overlap:A|B      A and B share volume where they sit
+        contact:M:A|B    moving mate M brings A against B
+        mate:M:A|B       mate M's frames on A and B disagree: one of them is not where M puts it
+        loop:M1,M2,…     those mates close a loop of motion, which is not analysed without a solver
+    """
+
+    @staticmethod
+    def overlap(a: str, b: str) -> str:
+        return f"overlap:{_pair(a, b)}"
+
+    @staticmethod
+    def contact(mate: str, a: str, b: str) -> str:
+        return f"contact:{mate}:{_pair(a, b)}"
+
+    @staticmethod
+    def mate(mate: str, a: str, b: str) -> str:
+        return f"mate:{mate}:{_pair(a, b)}"
+
+    @staticmethod
+    def loop(mates: list[str]) -> str:
+        return "loop:" + ",".join(sorted(set(mates)))
+
+
+def _pair(a: str, b: str) -> str:
+    return "|".join(sorted(str(InstancePath.parse(x).head) for x in (a, b)))
+
+
 class Result(Model):
     """One finding of one analysis."""
 
     analysis: str = Field(description="The analysis that found it: structure, connector, mate, interference, …")
     subject: str = Field(description="What it is about, in the address grammar")
     status: Status
-    severity: Severity = "error"
+    severity: Severity = Field(default="error", description="info: not a check (an overlap expected, a mate held)")
     detail: str
     about: list[str] = Field(default_factory=list, description="Addresses it concerns: instances, parts, connectors")
     values: dict[str, float | str | bool] = Field(default_factory=dict)
+    cause: str = Field(default="", description="The problem it follows from, where other analyses may see it too "
+                       "(`Cause`: 'overlap:duct|impeller'); empty, it is its own")  # fmt: skip
+
+
+class Finding(Model):
+    """Results alike but for their pattern indices and numbers (screw[0] … screw[3] each too long), as one."""
+
+    results: list[int] = Field(description="Indices into the report's results; the first stands for the rest")
+    indices: list[int] = Field(description="The pattern indices they are at")
+
+
+class Problem(Model):
+    """The results that share a cause, and problems alike but for their pattern indices, as one."""
+
+    status: Literal["fail", "unverified"]
+    severity: Severity = Field(description="error, or warning when every failing check in it is a warning")
+    findings: list[Finding] = Field(description="The first analysis to run that saw it leads; the rest saw it too")
+
+
+class Tally(Model):
+    """A report's results counted by problem; info results are not checks."""
+
+    problems: int = Field(default=0, description="Failing problems")
+    failing: int = Field(default=0, description="Failing checks in them")
+    warnings: int = Field(default=0, description="Failing problems of warnings only")
+    unverified: int = Field(default=0, description="Problems no check could settle")
+    passing: int = Field(default=0, description="Passing checks")
+    text: str = Field(default="", description="As the agent reads it: '2 problems (5 failing checks), 1 unverified; "
+                      "147 checks pass'")  # fmt: skip
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+_NUMBER = re.compile(r"(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?")
+_INDEX = re.compile(r"\[(\d+)\]")
+
+
+def _shape(r: Result) -> tuple[str, ...]:
+    """What a result says but for its numbers: results of the same shape differ by pattern index and measure."""
+    return r.analysis, r.status, r.severity, _NUMBER.sub("#", r.subject), _NUMBER.sub("#", r.detail)
+
+
+def problems(results: list[Result]) -> list[Problem]:
+    """The results that do not pass, one problem per cause, failing errors first, then warnings, then the
+    unverified. Analyses run cause before effect (structure, parts, connectors, mates, … requirements: see
+    `analysis.base.default_analyses`), so within a problem the earliest analysis's results lead."""
+    rank: dict[str, int] = {}
+    by_cause: dict[str, list[int]] = {}
+    for i, r in enumerate(results):
+        rank.setdefault(r.analysis, len(rank))
+        if r.status != "pass":
+            by_cause.setdefault(r.cause or f"#{i}", []).append(i)
+    alike: dict[tuple[Any, ...], list[list[list[int]]]] = {}
+    for members in by_cause.values():
+        members.sort(key=lambda i: (rank[results[i].analysis], results[i].status != "fail", i))
+        findings: dict[tuple[str, ...], list[int]] = {}
+        for i in members:
+            findings.setdefault(_shape(results[i]), []).append(i)
+        alike.setdefault(tuple(findings), []).append(list(findings.values()))
+    out = []
+    for copies in alike.values():
+        merged = [sum(column, []) for column in zip(*copies, strict=True)]
+        members = [results[i] for i in sum(merged, [])]
+        failing = [r for r in members if r.status == "fail"]
+        out.append(Problem(
+            status="fail" if failing else "unverified",
+            severity="error" if any(r.severity == "error" for r in failing or members) else "warning",
+            findings=[Finding(results=ids, indices=sorted({k for i in ids if (k := _index(results[i])) is not None}))
+                      for ids in merged],
+        ))  # fmt: skip
+    order = {("fail", "error"): 0, ("fail", "warning"): 1}
+    return sorted(out, key=lambda p: (order.get((p.status, p.severity), 2), p.findings[0].results[0]))
+
+
+def _index(r: Result) -> int | None:
+    found = _INDEX.search(r.subject) or _INDEX.search(r.detail)
+    return int(found.group(1)) if found else None
+
+
+def tally(results: list[Result], found: list[Problem]) -> Tally:
+    errors = [p for p in found if p.status == "fail" and p.severity == "error"]
+    t = Tally(
+        problems=len(errors),
+        failing=sum(results[i].status == "fail" for p in errors for f in p.findings for i in f.results),
+        warnings=sum(p.status == "fail" and p.severity == "warning" for p in found),
+        unverified=sum(p.status == "unverified" for p in found),
+        passing=sum(r.status == "pass" and r.severity != "info" for r in results),
+    )
+    said = [f"{_count(t.problems, 'problem')} ({_count(t.failing, 'failing check')})" if t.problems else "no problems"]
+    said += [_count(t.warnings, "warning")] if t.warnings else []
+    said += [f"{t.unverified} unverified"] if t.unverified else []
+    t.text = f"{', '.join(said)}; {_count(t.passing, 'check')} pass{'es' if t.passing == 1 else ''}"
+    return t
 
 
 class MeshMetrics(Model):
@@ -168,9 +299,18 @@ class BuildReport(Model):
     instances: list[InstanceInfo] = Field(default_factory=list)
     components: dict[str, BuildReport] = Field(default_factory=dict, description="Each component's own build")
     results: list[Result] = Field(default_factory=list)
+    problems: list[Problem] = Field(default_factory=list, description="The results that do not pass, by cause")
+    tally: Tally = Field(default_factory=Tally)
     motions: list[MotionRange] = Field(default_factory=list)
     bom: list[BomLine] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _grouped(self) -> BuildReport:
+        """Problems and tally follow from the results, so a report read back is grouped by today's rules."""
+        self.problems = problems(self.results)
+        self.tally = tally(self.results, self.problems)
+        return self
 
     def artifact(self, role: str) -> Artifact | None:
         return next((a for a in self.artifacts if a.role == role), None)
