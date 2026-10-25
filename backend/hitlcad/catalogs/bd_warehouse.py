@@ -77,6 +77,23 @@ def _part(
                        native=native)  # fmt: skip
 
 
+def _thread(native: Any) -> dict[str, Any]:
+    """A threaded part's thread: its size ("M3-0.5"), major diameter and pitch, what fastener sets match."""
+    return {"thread": native.thread_size, "thread_diameter": float(native.thread_diameter),
+            "thread_pitch": float(native.thread_pitch)}  # fmt: skip
+
+
+def _clearance(native: Any) -> dict[str, float]:
+    """A screw's clearance holes. bd_warehouse's Close, Normal and Loose are ISO 273's fine, medium and coarse series
+    for metric sizes (ASME B18.2.8's for inch sizes); a few sizes have none."""
+    try:
+        holes = native.clearance_hole_diameters
+    except (KeyError, ValueError):
+        return {}
+    return {f"clearance_{series}": float(holes[fit]) for series, fit in
+            (("fine", "Close"), ("medium", "Normal"), ("coarse", "Loose"))}  # fmt: skip
+
+
 def screw(kind: str, size: str, length: float, standard: str) -> CatalogPart:
     """A screw: `kind` is a bd_warehouse screw class (SocketHeadCapScrew, CounterSunkScrew, …), `size` like
     "M3-0.5", `length` in mm, `standard` like "iso4762"."""
@@ -85,8 +102,8 @@ def screw(kind: str, size: str, length: float, standard: str) -> CatalogPart:
     cls = _class(fastener, fastener.Screw, kind, "screw")
     native = cls(size=size, length=length, fastener_type=standard, simple=True)
     connectors = {"seat": _location(up=False), "shank": _location(up=False), "tip": _location(-length, up=False)}
-    metadata = {"thread_diameter": float(native.thread_diameter), "thread_pitch": float(native.thread_pitch),
-                "length": float(length), "head_diameter": float(getattr(native, "head_diameter", 0.0)),
+    metadata = {**_thread(native), **_clearance(native), "length": float(length),
+                "head_diameter": float(getattr(native, "head_diameter", 0.0)),
                 "head_height": float(getattr(native, "head_height", 0.0))}  # fmt: skip
     return _part(native, "screw", f"{kind} {standard} {size} × {length:g}", connectors, metadata)
 
@@ -101,7 +118,7 @@ def nut(kind: str, size: str, standard: str) -> CatalogPart:
     native = cls(size=size, fastener_type=standard, simple=True)
     h = _height(native)
     connectors = {"bottom": _location(up=False), "top": _location(h), "thread": _location(up=False)}
-    metadata = {"thread_diameter": float(native.thread_diameter), "length": h}
+    metadata = {**_thread(native), "length": h}
     return _part(native, "nut", f"{kind} {standard} {size}", connectors, metadata)
 
 
@@ -125,11 +142,7 @@ def heat_set_insert(size: str, standard: str) -> CatalogPart:
     connectors = {"bottom": _location(up=False), "top": _location(h), "outer": _location(h, up=False),
                   "thread": _location(h)}  # fmt: skip
     bb = native.bounding_box()
-    metadata = {
-        "thread_diameter": float(native.thread_diameter),
-        "length": h,
-        "outside_diameter": float(bb.max.X - bb.min.X),
-    }
+    metadata = {**_thread(native), "length": h, "outside_diameter": float(bb.max.X - bb.min.X)}
     return _part(native, "insert", f"heat-set insert {standard} {size}", connectors, metadata)
 
 

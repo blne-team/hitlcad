@@ -178,22 +178,37 @@ bolt pattern's clocking), and `symmetry` says where it does not.
   +Z): its diameter and length. Of cylinders that start equally close, the outermost.
 - `face`: the planar face with Z as its outward normal and the origin on its plane, inside its
   outline (the centre of a rim or an annulus is fine): its area.
-- `gear`: nothing; its nominal values are verified by its relations and by interference.
-- `frame`: nothing; it is a datum.
+- `gear`: in sections across the axis at 10, 50 and 90 % of the face width, its tip diameter (how
+  far the teeth reach from the axis; how near, for an internal gear), which must be m(z + 2)
+  (m(z − 2) internal) within a tenth of the module, and its teeth, counted where the section crosses
+  the circle a module inside the tip (about the pitch circle), which must be the declared number in
+  every section.
+- `frame`: nothing; it is a datum, and has no result of its own (its count is still checked).
 
-A frame with no matching feature fails ("lid.screws[2]: no hole on the frame's axis below its
-origin"), so a frame cannot drift from its geometry.
+A hole or shaft is coaxial with the frame within `verification` (`position_mm`, `angle_deg`), its
+wall goes at least 60 % round (a slot or a teardrop's point may open it; a half-round notch at an
+edge is not a hole), and it starts at the origin, within `position_mm`, or farther only where
+coaxial surfaces of revolution lead to it from the origin (a countersink's cone, a chamfer or a
+fillet at the edge: `Ø3.400 × 8.00 deep, starting 2.00 mm from the origin`). At a counterbore's top
+the hole is the counterbore; a fastener's clearance takes the hole under it. A frame with no matching feature
+fails and names the nearest one found and what keeps it from being the frame's ("lid.screws[2]: no
+hole on the frame's axis below its origin; nearest: Ø5.000 hole, axis 0.020 mm off (allowed 0.01),
+0.00° tilt"), so a frame cannot drift from its geometry.
 
 Every part is measured, whatever it is made of (`analysis/features.py`). Analyses ask a part's
 `Features`, and one of two adapters answers: on a B-rep part, its faces; on a mesh part, its
-triangles. A hole is probed with rays cast out from its axis, which land on its wall facing the
-axis; a shaft with rays cast in from outside, which land on its skin facing away, even when it is a
-tube. A station along the axis is on the feature where most rays land at one distance (the rest may
-leave through a slot or a teardrop's point), and the feature runs while its stations do. Faces are
-trimesh's facets. A mesh measurement carries its facets' uncertainty (`Ø3.800 × 6.00 long (on the
-mesh, ±0.010)`), and a fit allows for it. On the build123d examples the two adapters agree on every
-connector. What a mesh cannot measure at all (CNC inside corners, sheet bends, a part's inventory of
-holes) is `unverified`, with the reason.
+triangles. Round features are probed in sections across the frame's axis, at stations along it: a
+hole with rays from the axis outwards, which land on its wall facing the axis, a shaft with rays
+from outside inwards, which land on its skin facing away, even when it is a tube. A station is on a
+round surface where most rays land at one distance from the axis (the rest may leave through a slot
+or a teardrop's point); a circle fitted through the vertices of the facets they land on gives its
+diameter and centre, the same however the frame is turned, and the station is on a cylinder where
+those vertices lie on the circle (a cone's do not). The feature runs while its stations stay on one
+cylinder. A mesh measurement carries its facets' sagitta as its uncertainty (`Ø3.800 × 6.00 long
+(on the mesh, ±0.018)`), and a fit allows for it; positions and angles are held to the same
+`verification` as on a B-rep. Faces are trimesh's facets. On the build123d examples the two adapters
+agree on every connector. What a mesh cannot measure at all (CNC inside corners, sheet bends, a
+part's inventory of holes) is `unverified`, with the reason.
 
 ### Components
 
@@ -238,10 +253,16 @@ Ends are `part.connector` (every instance of the part), `part[k].connector` (one
 Optional fields:
 
 - `fit`, between a `hole` and a `shaft`: `{"clearance": [min, max]}` in diametral mm (negative is
-  interference), or `{"iso": "H7/g6"}` evaluated from ISO 286 at the measured nominal size
-  (isofits). The clearance is measured hole Ø − shaft Ø, adjusted by each part's process allowance
-  (FDM's and resin's `hole_allowance_mm`, `shaft_allowance_mm`), within the measurements'
-  uncertainty on mesh parts.
+  interference), which the measured clearance must lie in, or `{"iso": "H7/g6"}`, an ISO 286 fit.
+  The measured clearance is hole Ø − shaft Ø, adjusted by each part's process allowance (FDM's and
+  resin's `hole_allowance_mm`, `shaft_allowance_mm`), within the measurements' uncertainty on mesh
+  parts. An ISO fit's hole and shaft are modelled at one basic size, which the build checks, and its
+  result gives the classes' limits there, for the drawing (`fit H7/g6 at Ø8: hole +0.015/0, shaft
+  -0.005/-0.014, clearance 0.005 … 0.029 mm`). The limits come from ISO 286-1's tables, kept in
+  `analysis/iso286.py` and checked against every value ISO 286-2 tabulates: holes A … ZC and shafts
+  a … zc in grades 1 to 18, at sizes above 0 up to 3150 mm, as far as the standard defines each; a
+  class it does not define at the size fails the mate, saying what it does define. A mate that moves
+  (revolute, slider, cylindrical) fails with a fit whose greatest clearance is 0 or less.
 - `limits`: the range of the free motion (`{"angle": [0, 110]}` degrees, `{"travel": [0, 40]}` mm).
   The placed position must lie within it, and motion analysis sweeps it.
 - `offset`: a designed gap along a's Z, for `rigid`, `revolute` and `planar`.
@@ -256,7 +277,7 @@ instance nothing connects is floating, the real-CAD "under-defined component".
 
 | Type | Ends | Verified | Motion |
 | --- | --- | --- | --- |
-| `gear` | two `gear` connectors | same module; axes parallel; centre distance m(z₁ ± z₂)/2 (− for an internal gear); face widths overlap | b turns −z_a/z_b (+ internal), both about a's Z |
+| `gear` | two `gear` connectors | same module; axes parallel; centre distance m(z₁ ± z₂)/2 (− for an internal gear); face widths overlap; not verified until both gears measure as declared | b turns −z_a/z_b (+ internal), both about a's Z |
 | `rack` | a `gear` and a `frame` on the pitch line | pitch circle tangent to the pitch line; pinion axis square to the rack | π·m·z mm per turn, along the rack's X the way the pitch point moves |
 | `screw` | two `frame`s | axes collinear | `lead` mm per turn, right-hand: back along a's Z as a turns positively about it |
 
@@ -270,12 +291,19 @@ frame meets every frame of the other end (a sun and its planets); two patterns p
 ```
 
 `fastener` names the fastener's seat connector (under the head, Z along the shank); its part is a
-catalog part whose provider gives `thread_diameter` and `length`. `through` lists clearance-hole
-patterns, head side first; `into` is the thread or insert it ends in. The fastener's instances are
-placed by `assembly.py`, one per stack. Each build verifies, per stack: the holes share an axis; a
-fastener sits seated on the first through hole; its shank clears every through hole; it engages
-`into` by at least the into part's material minimum (`min_thread_engagement_d` × diameter, or the
-set's `engagement`); and it does not bottom out. A fastener set joins its parts rigidly.
+catalog part whose provider gives its `thread` (`M3-0.5`), `thread_diameter`, `thread_pitch`,
+`length` and ISO 273 clearance holes `clearance_fine` and `clearance_medium`. `through` lists
+clearance-hole patterns, head side first; `into` is the thread or insert it ends in. The fastener's
+instances are placed by `assembly.py`, one per stack. Each build verifies, per stack: the holes
+share an axis; a fastener sits seated on the first through hole; its shank clears every through
+hole: the narrowest of the coaxial holes that run on from its frame (the hole under a counterbore),
+less the process's hole allowance, is at least ISO 273's fine series; its thread is the into
+thread's (a catalog insert's or nut's size and pitch; a made hole lies between 0.7 and 1 × the
+thread diameter, tapped or thread-forming); it engages `into` (the shorter of how far it reaches
+past the into hole's opening and that hole's length) by at least the into part's material minimum
+(`min_thread_engagement_d` × diameter, or the set's `engagement`); and it does not bottom out: along
+its axis, nothing in the assembled design stops it before its tip (an open insert in a deeper pocket
+is fine). A fastener set joins its parts rigidly.
 
 ### Requirements
 
@@ -378,10 +406,10 @@ motion slider moves.
 | --- | --- | --- |
 | Structure | design.json, the plan | unknown names and connectors, relations joining the wrong kinds, fasteners that are not catalog parts, unknown materials, parts declared but not placed, ground |
 | Parts | each part | empty or open meshes, the kernel's validity check |
-| Connectors | each part | frame counts, measured features |
+| Connectors | each part | frame counts, measured features (holes, shafts, faces, gears; not datums) |
 | Mates | each pair of frames | residuals in what the type fixes, limits, fits |
 | Relations | each pair | the type's geometry |
-| Fastener sets | each stack | coaxial, seated, clear, engagement, bottoming out |
+| Fastener sets | each stack | coaxial, seated, ISO 273 clearance, thread size, engagement, free space past the tip |
 | Coverage | the instances | floating instances |
 | Interference | each pair of placed instances | overlap volume, except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it; pairs inside a component are its own build's |
 | Motion | each mate with a range | the first collision, or why it is not analysed |

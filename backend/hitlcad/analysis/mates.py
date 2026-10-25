@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hitlcad.analysis import iso286
 from hitlcad.analysis.base import Context, label, pair, result, structural
 from hitlcad.analysis.model import PlacedFrame, StructureError
 from hitlcad.core.report import Result
@@ -16,7 +17,9 @@ def frames_of(ctx: Context, mate: _Mate) -> tuple[list[PlacedFrame], list[Placed
 
 
 def fit_check(ctx: Context, mate: _Mate, fa: PlacedFrame, fb: PlacedFrame) -> tuple[bool | None, str, dict[str, Any]]:
-    """The fit between the measured hole and shaft of the two ends, after each part's process allowance."""
+    """The fit between the measured hole and shaft of the two ends, after each part's process allowance: within a
+    clearance range, or, for an ISO fit, both at one basic size, with the classes' limits there for the drawing. A
+    mate that moves needs a fit that leaves room to move."""
     assert mate.fit is not None
     kinds = {fa.spec.kind: fa, fb.spec.kind: fb}
     if set(kinds) != ROUND_KINDS:
@@ -26,29 +29,46 @@ def fit_check(ctx: Context, mate: _Mate, fa: PlacedFrame, fb: PlacedFrame) -> tu
         why = hole.measured.detail if hole.measured.status != "pass" else shaft.measured.detail
         return None, f"fit not measurable: {why}", {}
     hole_d, shaft_d = hole.measured.values["diameter"], shaft.measured.values["diameter"]
-    hole_allow = _allowance(hole, "hole")
-    shaft_allow = _allowance(shaft, "shaft")
-    clearance = (hole_d - hole_allow) - (shaft_d + shaft_allow)
-    nominal = (hole_d + shaft_d) / 2
-    try:
-        lo, hi = mate.fit.limits(nominal)
-    except ValueError as e:
-        return False, str(e), {}
+    hole_allow, shaft_allow = allowance(hole, "hole"), allowance(shaft, "shaft")
+    made_hole, made_shaft = hole_d - hole_allow, shaft_d + shaft_allow
+    clearance = made_hole - made_shaft
     # A mesh measures a diameter only to within its facets: the fit fails when it is out by more than that.
-    slack = ctx.tol.position_mm + hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm
-    ok = lo - slack <= clearance <= hi + slack
-    spec = mate.fit.iso or f"{lo:g} … {hi:g}"
-    allowances = (
-        f" after process allowances ({hole_allow:g} hole, {shaft_allow:g} shaft)" if hole_allow or shaft_allow else ""
-    )
     meshes = hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm
-    detail = (f"fit {clearance:.3f} mm (hole Ø{hole_d:.3f}, shaft Ø{shaft_d:.3f}){allowances}"
-              + (f" ±{meshes:.3f} on the meshes" if meshes else "") + f", needs {spec}"
-              + ("" if ok else f" ({lo:.3f} … {hi:.3f})" if mate.fit.iso else ""))  # fmt: skip
-    return ok, detail, {"clearance_mm": clearance, "hole_mm": hole_d, "shaft_mm": shaft_d}
+    slack = ctx.tol.position_mm + meshes
+    measured = (f"hole Ø{hole_d:.3f}, shaft Ø{shaft_d:.3f}"
+                + (f", after process allowances ({hole_allow:g} hole, {shaft_allow:g} shaft)"
+                   if hole_allow or shaft_allow else "")
+                + (f", ±{meshes:.3f} on the meshes" if meshes else ""))  # fmt: skip
+    values = {"clearance_mm": clearance, "hole_mm": hole_d, "shaft_mm": shaft_d}
+    if mate.fit.iso:
+        basic = round((made_hole + made_shaft) / 2, 3)
+        try:
+            (hole_hi, hole_lo), (shaft_hi, shaft_lo) = iso286.limits(mate.fit.iso, basic)
+        except ValueError as e:
+            return False, f"fit {mate.fit.iso}: {e}", values
+        lo, hi = hole_lo - shaft_hi, hole_hi - shaft_lo
+        values |= {"basic_mm": basic, "least_clearance_mm": lo, "greatest_clearance_mm": hi}
+        ok = abs(clearance) <= slack
+        detail = (f"fit {mate.fit.iso} at Ø{basic:g}: hole {_mm(hole_hi)}/{_mm(hole_lo)}, shaft {_mm(shaft_hi)}/"
+                  f"{_mm(shaft_lo)}, clearance {lo:.3f} … {hi:.3f} mm ({measured})" if ok else
+                  f"fit {mate.fit.iso}: the hole and shaft differ by {clearance:.3f} mm ({measured}); an ISO fit's "
+                  "hole and shaft are modelled at one basic size, and its classes go on the drawing")  # fmt: skip
+    else:
+        lo, hi = mate.fit.limits(made_hole)
+        ok = lo - slack <= clearance <= hi + slack
+        detail = f"fit {clearance:.3f} mm ({measured}), needs {lo:g} … {hi:g}"
+    if mate.free_motion and hi <= 0:
+        ok = False
+        detail += f"; a {mate.type} mate moves, but its fit leaves no room: greatest clearance {hi:.3f} mm"
+    return ok, detail, values
 
 
-def _allowance(f: PlacedFrame, feature: str) -> float:
+def _mm(v: float) -> str:
+    return f"{v:+.3f}" if v else "0"
+
+
+def allowance(f: PlacedFrame, feature: str) -> float:
+    """How much the frame's part's process makes a round feature smaller (a hole) or larger (a shaft) than modelled."""
     process = f.owner.spec.process(f.part.name)
     return process.allowance(feature) if process else 0.0  # type: ignore[arg-type]
 

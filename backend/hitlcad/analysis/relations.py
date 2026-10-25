@@ -1,4 +1,5 @@
-"""Relations: each relation type verifies its pair of connectors from their placed frames and nominal values."""
+"""Relations: each relation type verifies its pair of connectors from their placed frames and nominal values, once
+both connectors' features measure as declared (a gear cut to another module or tooth count meshes with nothing)."""
 
 from __future__ import annotations
 
@@ -34,8 +35,14 @@ class Relations:
                 out.append(structural(rel.address, e, [rel.a, rel.b]))
                 continue
             for fa, fb in pairs:
+                about = [fa.instance, fb.instance, fa.address, fb.address, rel.a, rel.b]
+                if wrong := [f for f in (fa, fb) if f.measured.status == "fail"]:
+                    why = " and ".join(label(f) for f in wrong)
+                    out.append(result(self.name, rel.address, None, f"{label(fa)} ↔ {label(fb)}: not verified until "
+                                      f"{why} measures as declared", about))  # fmt: skip
+                    continue
                 na, nb = fa.owner.nominals(fa.spec), fb.owner.nominals(fb.spec)
                 check = rel.verify(fa.frame, fb.frame, na, nb, ctx.tol)
                 out.append(result(self.name, rel.address, check.passed, f"{label(fa)} ↔ {label(fb)}: {check.detail}",
-                                  [fa.instance, fb.instance, fa.address, fb.address, rel.a, rel.b], check.values))  # fmt: skip
+                                  about, check.values))  # fmt: skip
         return out

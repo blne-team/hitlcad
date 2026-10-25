@@ -31,7 +31,8 @@ class Parts:
 
 
 class Connectors:
-    """Each declared connector has the frames its count says, and each frame its feature."""
+    """Each declared connector has the frames its count says, and each frame its feature (a datum has none to
+    check, so no result of its own)."""
 
     name = "connector"
 
@@ -49,6 +50,8 @@ class Connectors:
                 if len(frames) != expected:
                     out.append(result(self.name, address, False, f"{len(frames)} frames, but the connector declares "
                                       f"{expected}", [name, address]))  # fmt: skip
+                if not spec.measures:
+                    continue
                 for k, measured in enumerate(ctx.built.measured.get((name, cname), [])):
                     subject = f"{address}[{k}]" if len(frames) > 1 else address
                     out.append(result(self.name, subject, measured.status, measured.detail, [name, address],
