@@ -19,6 +19,7 @@ from hitlcad.core.types import ComponentRef, Pick
 from hitlcad.designs import agents
 from hitlcad.designs.project import init_project
 from hitlcad.designs.watcher import _relevant
+from hitlcad.render.base import NullRenderer
 
 from .conftest import copy_design
 
@@ -205,3 +206,22 @@ def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_
     for output in ("build/parts/gear.step", "parts/__pycache__/gear.pyc", ".git/index", "parts/gear.py~"):
         assert not _relevant(folders, design / output)
     assert not _relevant(folders, tmp_path / "elsewhere.py")
+
+
+async def test_a_history_another_version_wrote_is_set_aside_and_a_new_one_begins(
+    core: HitlCad, settings: Any, tmp_path: Path
+) -> None:
+    state, _ = core.designs.open(copy_design("enclosure", tmp_path / "enclosure"))
+    log = settings.data_dir / "designs" / state.id / "events.jsonl"
+    with log.open("a", encoding="utf-8") as f:  # what a release whose events had another field wrote
+        f.write(json.dumps({"type": "design_updated", "seq": 9, "ts": "2026-01-01T00:00:00Z", "renamed": True}) + "\n")
+    written = log.read_text(encoding="utf-8")
+
+    later = HitlCad.create(settings, registry=core.registry, renderer=NullRenderer())  # a newer hitlcad, same data
+    reopened = later.designs.get(state.id)
+    [aside] = log.parent.glob("unreadable-*")
+    assert (aside / "events.jsonl").read_text(encoding="utf-8") == written  # kept as it was
+    assert reopened.error and str(aside) in reopened.error and reopened.path == state.path
+    revision = await later.builds.build(state.id)
+    assert revision.report.status == "succeeded" and later.designs.get(state.id).error is None
+    await later.shutdown()

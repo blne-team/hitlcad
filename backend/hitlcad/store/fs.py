@@ -2,14 +2,19 @@
 
 <root>/<design_id>/events.jsonl
 <root>/<design_id>/revisions/<n>/...
+<root>/<design_id>/unreadable-<time>/   a history another version of hitlcad wrote, set aside
 """
 
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from hitlcad.core.events import EVENT_ADAPTER, Event
+from hitlcad.store.base import UnreadableHistory
 
 _DESIGN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -47,7 +52,22 @@ class FileDesignStore:
         return stored
 
     def events(self, design_id: str, after: int = 0) -> list[Event]:
-        return [e for e in self._read_events(self._dir(design_id) / "events.jsonl") if e.seq > after]
+        try:
+            events = self._read_events(self._dir(design_id) / "events.jsonl")
+        except ValidationError as e:
+            raise UnreadableHistory(f"design {design_id}'s history does not read: {e.error_count()} errors") from e
+        return [e for e in events if e.seq > after]
+
+    def set_aside(self, design_id: str) -> Path:
+        d = self._dir(design_id)
+        aside = d / f"unreadable-{datetime.now(UTC):%Y%m%d-%H%M%S}"
+        aside.mkdir()
+        for name in ("events.jsonl", "revisions"):
+            if (d / name).exists():
+                (d / name).rename(aside / name)
+        (d / "events.jsonl").touch()
+        self._seq.pop(design_id, None)
+        return aside
 
     @staticmethod
     def _read_events(path: Path) -> list[Event]:

@@ -8,6 +8,10 @@ from typing import Protocol
 from hitlcad.core.events import Event
 
 
+class UnreadableHistory(Exception):
+    """A design's stored history does not read as this version of hitlcad's: another version wrote it."""
+
+
 class DesignStore(Protocol):
     def create(self, design_id: str) -> None: ...
 
@@ -17,7 +21,14 @@ class DesignStore(Protocol):
         """Persist ``event``, assigning the next sequence number, and return it."""
         ...
 
-    def events(self, design_id: str, after: int = 0) -> list[Event]: ...
+    def events(self, design_id: str, after: int = 0) -> list[Event]:
+        """The design's events after ``after``; raises UnreadableHistory when they do not read."""
+        ...
+
+    def set_aside(self, design_id: str) -> Path:
+        """Move the design's history (its events and revisions) out of the way, intact, and start it a new,
+        empty one. Returns where it went."""
+        ...
 
     def revision_dir(self, design_id: str, revision_id: int) -> Path:
         """Directory that holds the artifacts of one revision (created on demand)."""

@@ -13,12 +13,13 @@ import json
 from pathlib import Path
 
 from hitlcad.backends.registry import BackendRegistry
+from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.design import DesignSpec
-from hitlcad.core.events import DesignOpened, DesignState, DesignUpdated, Event
+from hitlcad.core.events import DesignOpened, DesignState, DesignUpdated, ErrorRaised, Event
 from hitlcad.core.types import new_id
 from hitlcad.designs.folder import DESIGN_FILE, DesignFolder
 from hitlcad.service.bus import EventBus
-from hitlcad.store.base import DesignStore
+from hitlcad.store.base import DesignStore, UnreadableHistory
 
 
 class NotFoundError(LookupError):
@@ -64,9 +65,25 @@ class DesignService:
         if state is None:
             if not self.store.exists(design_id):
                 raise NotFoundError(f"design {design_id} not found")
-            state = DesignState.replay(design_id, self.store.events(design_id))
+            try:
+                events = self.store.events(design_id)
+            except UnreadableHistory:
+                events = self._new_history(design_id)
+            state = DesignState.replay(design_id, events)
             self._cache[design_id] = state
         return state
+
+    def _new_history(self, design_id: str) -> list[Event]:
+        """Another version of hitlcad wrote this design's history: set it aside, intact, and start a new one
+        that says so. Its folder and design.json are untouched; the next build starts its revisions again."""
+        path = next((p for p, i in self._folders.items() if i == design_id), None)
+        if path is None:
+            raise NotFoundError(f"design {design_id} has no folder")
+        aside = self.store.set_aside(design_id)
+        notice = (f"This design's history was written by another version of hitlcad and could not be read: it was "
+                  f"set aside in {aside}. The next build starts a new history.")  # fmt: skip
+        opened = DesignOpened(path=path, name=Path(path).name, backend=DEFAULT_BACKEND)  # sync() reads design.json
+        return [self.store.append(design_id, e) for e in (opened, ErrorRaised(message=notice))]
 
     def list(self) -> list[DesignState]:
         states = [self.get(i) for i in self.folders().values()]
