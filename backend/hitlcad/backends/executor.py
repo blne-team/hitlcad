@@ -1,10 +1,16 @@
 """Process execution for untrusted model code.
 
-``LocalExecutor`` applies a memory cap, a scrubbed environment, a wall-clock deadline, and kills the process
-together with everything it started. On POSIX that is resource limits and a process group (plus a file-size
-cap; macOS enforces no address-space limit, so there memory is not capped); on Windows, a job object. Time is bounded by the deadline alone: a CPU-time limit counts every thread, so
-it would kill parallel work (OCP's and Blender's meshers) long before the deadline. It does not isolate the
-filesystem or network; swap in a container or bubblewrap executor for anything beyond local single-user use.
+``LocalExecutor`` runs a process under two limits, the same on every platform: a wall-clock deadline, and the
+resident memory of the process and everything it started, sampled with psutil. Time is bounded by the deadline
+alone: a CPU-time limit counts every thread, so it would kill parallel work (OCP's and Blender's meshers) long
+before the deadline. Whatever stops a build, and once it ends, nothing it started outlives it: the one part that
+differs per platform is how a process tree is held, a process group on POSIX and a job object on Windows.
+
+The child writes its output to a file in its work directory, not a pipe: a pipe stays open as long as anything the
+child started holds it, so a build that left a process behind would only end at its deadline. The child inherits
+the environment, so it runs wherever the server does; hitlcad sets only its temporary folder (the work directory)
+and its UTF-8, and drops its own settings. It does not isolate the filesystem or
+network; swap in a container or bubblewrap executor for anything beyond local single-user use.
 """
 
 from __future__ import annotations
@@ -19,14 +25,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+import psutil
+
 LOG_LIMIT = 64_000
+OUTPUT_FILE = "output.log"
+MEMORY_SAMPLE_S = 0.5
 
 
 @dataclass
 class ExecResult:
     returncode: int | None
     output: str
-    timed_out: bool
+    stopped: str | None  # why hitlcad stopped the process, if it did: "exceeded the 180s time limit"
     duration_s: float
 
 
@@ -41,20 +51,15 @@ if sys.platform == "win32":
     import win32con
     import win32job
 
-    def _spawn_options(memory_mb: int | None) -> dict[str, Any]:
-        return {}
+    _SPAWN: dict[str, Any] = {}
 
     class _ProcessTree:
-        """A job object holding the process and what it starts: the memory cap, and killed as one."""
+        """A job object holding the process and what it starts."""
 
-        def __init__(self, pid: int, memory_mb: int | None) -> None:
+        def __init__(self, pid: int) -> None:
             self.job = win32job.CreateJobObject(None, "")
             info = win32job.QueryInformationJobObject(self.job, win32job.JobObjectExtendedLimitInformation)
-            flags = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            if memory_mb:
-                flags |= win32job.JOB_OBJECT_LIMIT_JOB_MEMORY
-                info["JobMemoryLimit"] = memory_mb << 20
-            info["BasicLimitInformation"]["LimitFlags"] = flags
+            info["BasicLimitInformation"]["LimitFlags"] = win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             win32job.SetInformationJobObject(self.job, win32job.JobObjectExtendedLimitInformation, info)
             process = win32api.OpenProcess(win32con.PROCESS_SET_QUOTA | win32con.PROCESS_TERMINATE, False, pid)
             try:
@@ -66,25 +71,15 @@ if sys.platform == "win32":
             win32job.TerminateJobObject(self.job, 1)
 
         def close(self) -> None:
-            self.job.Close()  # KILL_ON_JOB_CLOSE: nothing it started outlives it
+            self.job.Close()
 
 else:
-    import resource
-
-    def _spawn_options(memory_mb: int | None) -> dict[str, Any]:
-        def limits() -> None:
-            if memory_mb and sys.platform == "linux":
-                cap = memory_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
-            resource.setrlimit(resource.RLIMIT_FSIZE, (512 << 20, 512 << 20))
-            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-
-        return {"preexec_fn": limits, "start_new_session": True}
+    _SPAWN = {"start_new_session": True}
 
     class _ProcessTree:
-        """The process's own session: killed as one process group."""
+        """The process's own session, killed as one process group."""
 
-        def __init__(self, pid: int, memory_mb: int | None) -> None:
+        def __init__(self, pid: int) -> None:
             self.pid = pid
 
         def kill(self) -> None:
@@ -95,56 +90,81 @@ else:
             pass
 
 
-class LocalExecutor:
-    def __init__(self, extra_env: dict[str, str] | None = None) -> None:
-        self.extra_env = extra_env or {}
+def _resident(root: psutil.Process) -> int:
+    """Bytes of memory the process and everything it started hold."""
+    try:
+        processes = [root, *root.children(recursive=True)]
+    except psutil.NoSuchProcess:
+        return 0
+    total = 0
+    for p in processes:
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+            total += p.memory_info().rss
+    return total
 
-    def _env(self, cwd: Path) -> dict[str, str]:
-        # The work directory is the child's home and temporary folder, under every platform's names for them.
-        env = {key: str(cwd) for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP")}
-        env |= {
-            "PATH": os.environ.get("PATH", os.defpath),
-            "LANG": "C.UTF-8",
+
+async def _memory_exceeds(pid: int, limit: int) -> None:
+    """Returns once the process tree of ``pid`` holds more than ``limit`` bytes."""
+    root = psutil.Process(pid)
+    while _resident(root) <= limit:
+        await asyncio.sleep(MEMORY_SAMPLE_S)
+
+
+def _tail(log: Path) -> str:
+    """The end of the output, at most LOG_LIMIT bytes of it."""
+    with log.open("rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        f.seek(max(0, size - LOG_LIMIT))
+        text = f.read().decode("utf-8", errors="replace")
+    return text if size <= LOG_LIMIT else "…[truncated]…\n" + text
+
+
+class LocalExecutor:
+    @staticmethod
+    def _env(cwd: Path) -> dict[str, str]:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("HITLCAD_")}
+        return env | {
+            "TMPDIR": str(cwd),
+            "TEMP": str(cwd),
+            "TMP": str(cwd),
+            # It speaks UTF-8, whatever the platform's code page: files (UTF-8 mode) and the output read back.
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
-            # glibc reserves a 64 MB arena per thread; with many cores that exhausts RLIMIT_AS and
-            # OCP's parallel mesher deadlocks instead of failing.
-            "MALLOC_ARENA_MAX": "2",
         }
-        # The display on Linux; on Windows, what any process needs to start (SYSTEMROOT) and find programs.
-        for key in ("DISPLAY", "XDG_RUNTIME_DIR", "LD_LIBRARY_PATH",
-                    "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS"):  # fmt: skip
-            if key in os.environ:
-                env[key] = os.environ[key]
-        env.update(self.extra_env)
-        return env
 
     async def run(self, argv: list[str], cwd: Path, *, timeout_s: float, memory_mb: int | None = None) -> ExecResult:
         started = time.monotonic()
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=cwd,
-            env=self._env(cwd),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            **_spawn_options(memory_mb),
-        )
-        tree = _ProcessTree(proc.pid, memory_mb)
-        timed_out = False
+        log = cwd / OUTPUT_FILE
+        with log.open("wb") as sink:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd,
+                env=self._env(cwd),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=sink,
+                stderr=asyncio.subprocess.STDOUT,
+                **_SPAWN,
+            )
+        tree = _ProcessTree(proc.pid)
+        exited = asyncio.ensure_future(proc.wait())
+        limits = {asyncio.ensure_future(asyncio.sleep(timeout_s)): f"exceeded the {timeout_s:.0f}s time limit"}
+        if memory_mb:
+            limits[asyncio.ensure_future(_memory_exceeds(proc.pid, memory_mb << 20))] = (
+                f"used more than {memory_mb} MB of memory"
+            )
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-        except TimeoutError:
-            timed_out = True
-            tree.kill()
-            out, _ = await proc.communicate()
+            done, _ = await asyncio.wait([exited, *limits], return_when=asyncio.FIRST_COMPLETED)
+            stopped = None if exited in done else next(why for limit, why in limits.items() if limit in done)
+            tree.kill()  # stopped, or done: either way nothing it started outlives it
+            await exited
         except asyncio.CancelledError:  # the build was cancelled (a shutdown): leave no process behind
             tree.kill()
             await asyncio.shield(proc.wait())
             raise
         finally:
+            for limit in limits:
+                limit.cancel()
             tree.close()
-        text = out.decode("utf-8", errors="replace")
-        if len(text) > LOG_LIMIT:
-            text = "…[truncated]…\n" + text[-LOG_LIMIT:]
-        return ExecResult(proc.returncode, text, timed_out, time.monotonic() - started)
+        return ExecResult(proc.returncode, _tail(log), stopped, time.monotonic() - started)

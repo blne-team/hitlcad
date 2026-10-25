@@ -59,8 +59,8 @@ class SubprocessBackend(CADBackend):
         result_file = work / "result.json"
         result_file.unlink(missing_ok=True)
         run = await self.executor.run(self.command(job_file), work, timeout_s=self.timeout_s, memory_mb=self.memory_mb)
-        if run.timed_out:
-            return {"ok": False, "error": f"the build exceeded the {self.timeout_s:.0f}s time limit"}, run.output
+        if run.stopped:
+            return {"ok": False, "error": f"the build {run.stopped}"}, run.output
         if not result_file.is_file():
             tail = "\n".join(run.output.strip().splitlines()[-25:])
             return {"ok": False, "error": f"{_ended(run.returncode)}:\n{tail}"}, run.output
@@ -92,7 +92,6 @@ class SubprocessBackend(CADBackend):
 # Signals that end a build process on POSIX, and why they usually do.
 _SIGNALS = {
     "SIGKILL": "was killed by the system, most often for running out of memory",
-    "SIGXFSZ": "was stopped for writing a file over 512 MB",
     "SIGSEGV": "crashed (segmentation fault)",
     "SIGABRT": "aborted, often for running out of memory",
 }

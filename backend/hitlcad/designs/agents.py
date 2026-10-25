@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,31 +33,46 @@ class AgentSetup(Model):
     codex: bool
 
 
-def hook_command(python: str, agent: str, server_url: str) -> str:
-    """The agents' UserPromptSubmit hook: adds what the human points at in the panel to each prompt.
-    Runs hitlcad's own interpreter, so it does not depend on PATH."""
-    return f"{shlex.quote(python)} -m hitlcad.cli context --hook {agent} --server {shlex.quote(server_url)}"
+def hook_argv(python: str, agent: str, server_url: str) -> list[str]:
+    """The agents' UserPromptSubmit hook: adds what the human points at in the panel to each prompt. Runs
+    hitlcad's own interpreter, so it does not depend on PATH, in UTF-8 mode: prompts and pins are in any language."""
+    return [python, "-X", "utf8", "-m", "hitlcad.cli", "context", "--hook", agent, "--server", server_url]
+
+
+def command_line(argv: list[str]) -> str:
+    """``argv`` quoted for the shell that runs an agent's hook command line: cmd.exe on Windows, sh elsewhere."""
+    return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+
+
+def hook_handler(python: str, agent: str, server_url: str) -> dict[str, Any]:
+    """The hook's entry in the agent's config. Claude Code starts it from its argv with no shell in between;
+    Codex takes only a command line."""
+    argv = hook_argv(python, agent, server_url)
+    if agent == "claude":
+        return {"type": "command", "command": argv[0], "args": argv[1:], "timeout": 5}
+    return {"type": "command", "command": command_line(argv), "timeout": 5}
 
 
 def _is_ours(handler: dict[str, Any]) -> bool:
-    command = handler.get("command", "")
-    return "hitlcad" in command and "context --hook" in command
+    words = " ".join([handler.get("command", ""), *handler.get("args", [])])
+    return "hitlcad.cli" in words and "context" in words
 
 
 def _handlers(config: dict[str, Any]) -> list[dict[str, Any]]:
     return [h for g in config.get("hooks", {}).get("UserPromptSubmit", []) for h in g.get("hooks", [])]
 
 
-def prompt_hook(config: dict[str, Any], command: str) -> bool:
+def prompt_hook(config: dict[str, Any], wanted: dict[str, Any]) -> bool:
     """Add hitlcad's UserPromptSubmit hook to a Claude Code or Codex hooks config, or bring it up to
     date. Returns True when ``config`` was changed."""
     for handler in filter(_is_ours, _handlers(config)):
-        if handler["command"] == command:
+        if handler == wanted:
             return False
-        handler["command"] = command
+        handler.clear()
+        handler.update(wanted)
         return True
     groups = config.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
-    groups.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
+    groups.append({"hooks": [wanted]})
     return True
 
 

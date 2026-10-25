@@ -35,13 +35,14 @@ It installs the tool with `uv tool install` (pinned to the dependency versions t
 tested with, `constraints.txt`), installs the extension with `code --install-extension`, and runs
 `hitlcad doctor`.
 
-**Windows** (PowerShell, in the unpacked folder):
+**Windows**, in the unpacked folder:
 
 ```powershell
-uv tool install --force --python (Get-Content python-version) --constraints constraints.txt (Get-Item hitlcad-*.whl)
-code --install-extension (Get-Item hitlcad-*.vsix) --force
-hitlcad doctor
+powershell -ExecutionPolicy Bypass -File install.ps1
 ```
+
+It does the same as `install.sh`. (`-ExecutionPolicy Bypass` lets PowerShell run a script you downloaded, this
+once.)
 
 ### Check it
 
@@ -112,6 +113,7 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
 | `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
 | `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
+| `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build process may use, with everything it starts |
 | `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
 | `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
@@ -142,8 +144,8 @@ Designs stay in your project folders and their history in `~/.hitlcad`.
 
 ## Safety
 
-Model code runs locally in a child process with resource limits and a timeout, but **without
-filesystem or network isolation**. Your own coding agent writes it, and that agent can already run
+Model code runs locally in a child process with a memory limit and a timeout, ended together with
+everything it starts, but **without filesystem or network isolation**. Your own coding agent writes it, and that agent can already run
 code on your machine. The server listens on `127.0.0.1`, answers only requests addressed to this
 machine or to `HITLCAD_PUBLIC_URL` (so a web page cannot reach it by rebinding its own domain), and
 has no authentication. Keep it single-user and local.

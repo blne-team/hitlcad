@@ -36,7 +36,7 @@ class BlenderBackend(SubprocessBackend):
         if not exe:
             return None
         try:
-            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30).stdout
+            out = subprocess.run([exe, "--version"], capture_output=True, encoding="utf-8", timeout=30).stdout
         except (OSError, subprocess.TimeoutExpired):
             return None
         m = re.search(r"Blender (\d+\.\d+(?:\.\d+)?)", out)

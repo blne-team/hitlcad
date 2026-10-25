@@ -84,7 +84,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     settings = get_settings()
     target = Path(args.path).expanduser().resolve()
     backends = BackendRegistry.from_settings(settings).all()
-    hook = agents.hook_command(sys.executable, "<agent>", settings.base_url)
+    hook = agents.command_line(agents.hook_argv(sys.executable, "<agent>", settings.base_url))
     hooks = _permission(args.hooks, (
         "Let Claude Code and Codex see what you select and pin in the hitlcad panel?\n"
         f"  This adds a prompt hook to {agents.CLAUDE_SETTINGS} and {agents.CODEX_HOOKS}. Before each message\n"

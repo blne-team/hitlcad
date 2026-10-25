@@ -136,28 +136,31 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     env:
-      HITLCAD_BACKENDS: '["build123d"]' # no Blender here: the installed tool on its own, as INSTALL.md sets it up
+      HITLCAD_BACKENDS: '["build123d"]' # no Blender here: the installed tool on its own
     steps:
-      - uses: actions/checkout@v4 # for the examples
+      - uses: actions/checkout@v4 # the examples, and the VS Code version to install
       - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/vscode
       - uses: actions/download-artifact@v4
         with:
           name: release
           path: dist
-      - name: Install the tool as install.sh does
+      - name: Unpack the release
+        shell: bash
+        run: mkdir unpacked && tar -xzf dist/hitlcad-*.tar.gz -C unpacked
+      - name: Run install.sh
         if: runner.os != 'Windows'
-        working-directory: dist
-        run: |
-          cd hitlcad-*/
-          uv tool install --force --python "$(cat python-version)" --constraints constraints.txt hitlcad-*.whl
-      - name: Install the tool as INSTALL.md says for Windows
+        run: cd unpacked/hitlcad-*/ && ./install.sh
+      - name: Run install.ps1
         if: runner.os == 'Windows'
-        working-directory: dist
         shell: pwsh
         run: |
-          Set-Location (Get-ChildItem -Directory hitlcad-*)
-          uv tool install --force --python (Get-Content python-version) --constraints constraints.txt (Get-Item hitlcad-*.whl)
+          Set-Location (Get-ChildItem -Directory unpacked\hitlcad-*)
+          powershell -ExecutionPolicy Bypass -File install.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - run: uv tool dir --bin >> "$GITHUB_PATH"
         shell: bash
-      - run: hitlcad doctor
+      - name: The extension is installed
+        shell: pwsh # each platform's own code launcher (code.cmd on Windows)
+        run: if ((code --list-extensions) -notcontains "hitlcad-local.hitlcad") { exit 1 }
       - run: hitlcad build examples/handhold-fan --out build-out --no-render

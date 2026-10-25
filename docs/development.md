@@ -79,5 +79,17 @@ and the `.vsix` attached.
 
 CI runs the backend tests (with Blender) and the extension's on Linux, macOS and Windows, and installs
 the release package on each the way [INSTALL.md](../INSTALL.md) says, then builds an example with the
-installed tool. Build processes are contained per platform in `backends/executor.py`: resource limits
-and a process group on POSIX, a job object on Windows.
+installed tool, after running the release's own installer (`install.sh`, `install.ps1`) against the
+oldest VS Code the extension supports.
+
+What differs per platform is kept to the process boundaries, each with one rule:
+
+- **Text is UTF-8** across every boundary. Files name their encoding (ruff's PLW1514); hitlcad's own
+  processes run in Python's UTF-8 mode (the extension starts the server with `PYTHONUTF8`, the hook
+  runs `-X utf8`, builds get `PYTHONUTF8`/`PYTHONIOENCODING`), and the `hitlcad` command, which
+  hitlcad does not start, sets its streams itself.
+- **Builds** (`backends/executor.py`) are limited the same way everywhere: a deadline, and memory
+  measured with psutil. Only how a process tree is held differs: a process group on POSIX, a job
+  object on Windows.
+- **Agent hooks** are started without a shell where the agent allows it (Claude Code's `args`), and
+  otherwise quoted for the shell that runs them (`agents.command_line`: cmd.exe on Windows).
