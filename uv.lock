@@ -548,7 +548,6 @@ dependencies = [
     { name = "bd-warehouse" },
     { name = "build123d" },
     { name = "fastapi" },
-    { name = "isofits" },
     { name = "lib3mf", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "lxml" },
     { name = "manifold3d" },
@@ -583,7 +582,6 @@ requires-dist = [
     { name = "build123d", specifier = ">=0.11" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
-    { name = "isofits", specifier = ">=1.0" },
     { name = "lib3mf", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=2.5.0" },
     { name = "lxml", specifier = ">=6.1.3" },
     { name = "manifold3d", specifier = ">=3" },
@@ -761,15 +759,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ef/4c/5dd1d8af08107f88c7f741ead7a40854b8ac24ddf9ae850afbcf698aa552/ipython_pygments_lexers-1.1.1.tar.gz", hash = "sha256:09c0138009e56b6854f9535736f4171d855c8c08a563a0dcd8022f78355c7e81", size = 8393, upload-time = "2025-01-17T11:24:34.505Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/33/1f075bf72b0b747cb3288d011319aaf64083cf2efef8354174e3ed4540e2/ipython_pygments_lexers-1.1.1-py3-none-any.whl", hash = "sha256:a9462224a505ade19a605f71f8fa63c2048833ce50abc86768a0d81d876dc81c", size = 8074, upload-time = "2025-01-17T11:24:33.271Z" },
-]
-
-[[package]]
-name = "isofits"
-version = "1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0e/69/06ebb0ad427a27f9e51eba2dc7f331ea5b583a419fd8639835262d8c698f/isofits-1.0.tar.gz", hash = "sha256:86fb46ba7ebc22a640a10fdcf4ac65438a59b047beaa9174afa4ca4f62e5a58d", size = 7797, upload-time = "2024-01-07T01:03:05.458Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/53/ff2d11a4ccf64761bde06302e34e1c8ce334749e38618261cffabae07b48/isofits-1.0-py3-none-any.whl", hash = "sha256:bb7342de48c2421a4f75d92aa3f9821af66867be34786238a36d42c888e54762", size = 7873, upload-time = "2024-01-07T01:03:03.951Z" },
 ]
 
 [[package]]
