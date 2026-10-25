@@ -80,8 +80,8 @@ def init_project(
         (designs / ".gitkeep").touch()
         written.append("designs/")
 
-    def hook(agent: str) -> str:
-        return agents.hook_command(python, agent, server_url)
+    def hook(agent: str) -> dict[str, Any]:
+        return agents.hook_handler(python, agent, server_url)
 
     def mcp_server(config: dict[str, Any]) -> bool:
         servers = config.setdefault("mcpServers", {})

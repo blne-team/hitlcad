@@ -4,7 +4,10 @@ design graph, revision comparisons, the MCP tools and project setup."""
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp.client import Client
@@ -13,6 +16,7 @@ from hitlcad.analysis.selection import topology
 from hitlcad.api.mcp_server import build_mcp
 from hitlcad.app import HitlCad
 from hitlcad.core.types import ComponentRef, Pick
+from hitlcad.designs import agents
 from hitlcad.designs.project import init_project
 
 from .conftest import copy_design
@@ -150,3 +154,31 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
     assert "$" not in skill.replace("$(", "")
     guide = (tmp_path / "project" / ".claude/skills/hitlcad-build123d/SKILL.md").read_text(encoding="utf-8")
     assert "def build(p, i)" in guide and "frames(" in guide
+
+
+def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(core: HitlCad, tmp_path: Path) -> None:
+    python = str(tmp_path / "Program Files" / "python")  # a path with a space, as on Windows
+    project = tmp_path / "project"
+    old = {"type": "command", "command": "python -m hitlcad.cli context --hook codex --server http://x", "timeout": 5}
+    (project / ".codex").mkdir(parents=True)
+    (project / agents.CODEX_HOOKS).write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [old]}]}}),
+                                              encoding="utf-8")  # fmt: skip
+    init_project(project, "http://x", python, core.registry.all(), hooks=True, codex=False)
+
+    def handlers(name: str) -> list[dict[str, Any]]:
+        config = json.loads((project / name).read_text(encoding="utf-8"))
+        return [h for g in config["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+
+    # Claude Code starts the hook from its argv, with no shell in between.
+    claude = agents.hook_argv(python, "claude", "http://x")
+    assert handlers(agents.CLAUDE_SETTINGS) == [
+        {"type": "command", "command": python, "args": claude[1:], "timeout": 5}
+    ]
+    # Codex hands a command line to its shell (cmd.exe /C on Windows, sh elsewhere): once that shell has read it,
+    # it is the hook's argv again. The old hook is brought up to date, not doubled.
+    codex = agents.hook_argv(python, "codex", "http://x")
+    [handler] = handlers(agents.CODEX_HOOKS)
+    assert handler["command"] == agents.command_line(codex)
+    echo = agents.command_line([sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))", *codex])
+    shell = f'cmd.exe /C "{echo}"' if sys.platform == "win32" else ["/bin/sh", "-c", echo]
+    assert json.loads(subprocess.run(shell, capture_output=True, encoding="utf-8", check=True).stdout) == codex

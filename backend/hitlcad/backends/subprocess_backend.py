@@ -59,8 +59,8 @@ class SubprocessBackend(CADBackend):
         result_file = work / "result.json"
         result_file.unlink(missing_ok=True)
         run = await self.executor.run(self.command(job_file), work, timeout_s=self.timeout_s, memory_mb=self.memory_mb)
-        if run.timed_out:
-            return {"ok": False, "error": f"the build exceeded the {self.timeout_s:.0f}s time limit"}, run.output
+        if run.stopped:
+            return {"ok": False, "error": f"the build {run.stopped}"}, run.output
         if not result_file.is_file():
             tail = "\n".join(run.output.strip().splitlines()[-25:])
             return {"ok": False, "error": f"{_ended(run.returncode)}:\n{tail}"}, run.output
@@ -89,12 +89,16 @@ class SubprocessBackend(CADBackend):
         return PartsOutcome(files=result["files"], log=log)
 
 
-# Signals that end a build process, and why they usually do.
+# Signals that end a build process on POSIX, and why they usually do.
 _SIGNALS = {
-    signal.SIGKILL: "was killed by the system, most often for running out of memory",
-    signal.SIGXFSZ: "was stopped for writing a file over 512 MB",
-    signal.SIGSEGV: "crashed (segmentation fault)",
-    signal.SIGABRT: "aborted, often for running out of memory",
+    "SIGKILL": "was killed by the system, most often for running out of memory",
+    "SIGSEGV": "crashed (segmentation fault)",
+    "SIGABRT": "aborted, often for running out of memory",
+}
+# Windows ends a crashed process with an NTSTATUS as its exit code.
+_NTSTATUS = {
+    0xC0000005: "crashed (access violation)",
+    0xC0000409: "aborted (a fail-fast exception)",
 }
 
 
@@ -102,5 +106,7 @@ def _ended(code: int | None) -> str:
     """How the build process ended, when it left no result."""
     if code is not None and code < 0:
         sig = signal.Signals(-code)
-        return f"the build process {_SIGNALS.get(sig, f'was ended by {sig.name}')}"
+        return f"the build process {_SIGNALS.get(sig.name, f'was ended by {sig.name}')}"
+    if code in _NTSTATUS:
+        return f"the build process {_NTSTATUS[code]}"
     return f"the build process exited with code {code}"

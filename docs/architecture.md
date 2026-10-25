@@ -42,7 +42,7 @@ flowchart LR
 | Domain | `core/` | `types.py`: parameters, briefs, picks, pins. `structure.py`: connector kinds, mates, relations, fastener sets, verification tolerances. `design.py`: design.json format 2. `checks.py`: requirement checks and manufacturing processes. `report.py`: build spec, results, report, revisions. `address.py`: the address grammar. `frames.py`: 4 × 4 frames and the measurements mates make. `events.py`: the event log and its projection `DesignState` | `ConnectorSpec`, `MateSpec`, `RelationSpec`, `RequirementCheck`, `Manufacturing` unions |
 | Model runtime | `backends/runtime.py` | Runs a design's code (`interfaces.py`, part files, `assembly.py`) with `p` and `i`, evaluates interface values lazily, records what each piece of code read. Standard library only, so every backend's Python runs it | — |
 | CAD backends | `backends/` | Child processes that plan (interface values, placements) and build part files, exporting each part in its own frame (STL, a STEP on B-rep backends) with its connector frames; Blender also writes the assembly as `model.blend` | `CADBackend` / `SubprocessBackend`, entry points `hitlcad.backends` |
-| Execution | `backends/executor.py` | Run untrusted code with limits; kill the process group on timeout or cancellation | `Executor` protocol |
+| Execution | `backends/executor.py` | Run untrusted code under a deadline and a memory limit; nothing it starts outlives it | `Executor` protocol |
 | Build | `build/` | `pipeline.py`: the build (below). `cache.py`: part files by their recorded reads. `assemble.py`: the assembly as STEP product structure, as one mesh, as the instanced 3D view, and as the tree a backend writes its own assembly file from | — |
 | Analysis | `analysis/` | `model.py`: the built design (parts, placements, components, connector frames, bodies). `features.py`: measuring a part's features, on its B-rep or its mesh (one interface, two adapters). One module per analysis: structure, parts, connectors, mates, relations, fasteners, coverage, interference, motion, manufacturing (`processes.py`), requirements. `geometry.py`, `selection.py`, `anchors.py`: describing picks and carrying them across rebuilds. `cadview.py`: the 3D view, written the same way for builds and loose model files, which open as parts with their features. `iso286.py`: fits | `Analysis` protocol, listed in `analysis/base.py` |
 | Catalogs | `catalogs/`, `sdk/` | Catalog providers (standard parts with their connectors and data, vendor STEP files) and the model SDK model code imports | `CatalogProvider`, entry points `hitlcad.catalogs` |
@@ -252,8 +252,10 @@ graph, the address grammar and the tools present any member's results.
 
 Model code comes only from design folders, written by the user's own coding agent, which can
 already run code on the machine. So hitlcad does not police imports. `LocalExecutor` runs each
-build process with rlimits, a scrubbed environment and a timeout, and kills its process group on
-timeout or cancellation, but provides no filesystem or network isolation. Use a container executor
+build process under a deadline and a memory limit (the resident memory of the process and all it
+started, sampled with psutil), and ends everything it started when it finishes, is stopped or is
+cancelled: a process group on POSIX, a job object on Windows. It inherits the server's environment
+and provides no filesystem or network isolation. Use a container executor
 before exposing the service beyond a single trusted user.
 
 The server has no authentication, so it checks where each request is addressed:

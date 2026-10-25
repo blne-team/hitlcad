@@ -25,9 +25,10 @@ function fakeFs(files: string[]): (p: string) => boolean {
 
 test("finds the nearest design.json above a file", () => {
   const exists = fakeFs(["/ws/designs/hook/design.json", "/ws/designs/hook/parts/hook.py", "/ws/designs/hook/lib/util.py"]);
-  assert.equal(findDesignDir("/ws/designs/hook/parts/hook.py", "/ws", exists), "/ws/designs/hook");
-  assert.equal(findDesignDir("/ws/designs/hook/lib/util.py", "/ws", exists), "/ws/designs/hook");
-  assert.equal(findDesignDir("/ws/designs/hook", "/ws", exists), "/ws/designs/hook");
+  const hook = path.resolve("/ws/designs/hook"); // a drive letter and backslashes on Windows
+  assert.equal(findDesignDir("/ws/designs/hook/parts/hook.py", "/ws", exists), hook);
+  assert.equal(findDesignDir("/ws/designs/hook/lib/util.py", "/ws", exists), hook);
+  assert.equal(findDesignDir("/ws/designs/hook", "/ws", exists), hook);
 });
 
 test("stops at the workspace root", () => {
@@ -37,8 +38,8 @@ test("stops at the workspace root", () => {
 
 test("walks to the filesystem root for files outside the workspace", () => {
   const exists = fakeFs(["/other/part/design.json", "/other/part/parts/arm.py"]);
-  assert.equal(findDesignDir("/other/part/parts/arm.py", "/ws", exists), "/other/part");
-  assert.equal(findDesignDir("/other/part/parts/arm.py", null, exists), "/other/part");
+  assert.equal(findDesignDir("/other/part/parts/arm.py", "/ws", exists), path.resolve("/other/part"));
+  assert.equal(findDesignDir("/other/part/parts/arm.py", null, exists), path.resolve("/other/part"));
 });
 
 test("isWithin handles siblings with a shared prefix", () => {
