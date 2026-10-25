@@ -167,7 +167,9 @@ this machine's interpreter, so it goes where only this machine reads it: Claude 
 `.gitignore`), and Codex's user `~/.codex/hooks.json`, as Codex has no per-user file for one project
 (the hook adds nothing in a folder without designs). The committed `.mcp.json` and
 `.claude/settings.json` (which pre-approves the project's `hitlcad` MCP server) name only the
-server's URL. With the separate permission for Codex's user config it also adds hitlcad's MCP
+server's URL. Nor does the project commit an interpreter for VS Code's Python: the extension sets
+hitlcad's (`Capabilities.python`) for the workspace through the Python extension's API, which keeps it
+in that user's state of the workspace. With the separate permission for Codex's user config it also adds hitlcad's MCP
 server to `~/.codex/config.toml` (tomlkit, every other line kept). Both hooks run `<hitlcad's
 python> -m hitlcad.cli context --hook <agent> --server <url>`, so they depend on neither PATH nor
 environment. On each

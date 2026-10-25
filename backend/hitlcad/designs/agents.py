@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import tomlkit
+from pydantic import Field
 
 from hitlcad.core.types import Model
 
@@ -31,10 +32,13 @@ HOOK_TIMEOUT_S = SERVER_WAIT_S + 2  # what the agents allow the hook: that wait,
 
 
 class AgentSetup(Model):
-    """Which of the permission-gated pieces a project has."""
+    """Which of the permission-gated pieces a project has, and the files they go in."""
 
     hooks: bool
     codex: bool
+    claude_hooks: str = Field(description="Claude Code's file for the hook, in the project")
+    codex_hooks: str = Field(description="Codex's user file for the hook")
+    codex_config: str = Field(description="Codex's user config.toml, for the MCP server")
 
 
 def hook_argv(python: str, agent: str, server_url: str) -> list[str]:
@@ -130,4 +134,5 @@ def status(root: Path) -> AgentSetup:
     file = codex_config_file()
     doc = tomlkit.parse(file.read_text(encoding="utf-8")) if file.is_file() else tomlkit.document()
     return AgentSetup(hooks=hooked(root / CLAUDE_HOOKS) and hooked(codex_hooks_file()),
-                      codex="hitlcad" in doc.get("mcp_servers", {}))  # fmt: skip
+                      codex="hitlcad" in doc.get("mcp_servers", {}), claude_hooks=CLAUDE_HOOKS,
+                      codex_hooks=str(codex_hooks_file()), codex_config=str(file))  # fmt: skip

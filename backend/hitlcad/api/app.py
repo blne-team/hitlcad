@@ -149,6 +149,7 @@ class Capabilities(BaseModel):
     version: str
     backends: list[BackendInfo]
     analyses: list[AnalysisInfo] = Field(description="In the order they run: cause before effect")
+    python: str = Field(description="The interpreter that builds models: part files resolve their imports in it")
 
 
 class DesignSummary(BaseModel):
@@ -243,7 +244,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.get("/api/capabilities")
     async def capabilities() -> Capabilities:
         analyses = [AnalysisInfo(name=a.name, title=a.title, summary=a.summary) for a in core.pipeline.analyses]
-        return Capabilities(version=version("hitlcad"), backends=core.registry.describe(), analyses=analyses)
+        return Capabilities(version=version("hitlcad"), backends=core.registry.describe(), analyses=analyses,
+                            python=sys.executable)  # fmt: skip
 
     # ------------------------------------------------------------------ designs
 

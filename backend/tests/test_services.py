@@ -170,7 +170,8 @@ def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(
     old = {"type": "command", "command": "python -m hitlcad.cli context --hook codex --server http://x", "timeout": 5}
     agents.json_file(agents.codex_hooks_file(), lambda c: agents.prompt_hook(c, old))
     written = init_project(project, core.settings, python, core.registry.all(), hooks=True, codex=True)
-    assert agents.status(project) == agents.AgentSetup(hooks=True, codex=True)
+    setup = agents.status(project)
+    assert setup.hooks and setup.codex and setup.codex_config == str(tmp_path / "codex" / "config.toml")
 
     def handlers(file: Path) -> list[dict[str, Any]]:
         config = json.loads(file.read_text(encoding="utf-8"))

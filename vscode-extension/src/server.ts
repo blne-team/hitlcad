@@ -55,7 +55,9 @@ export class ServerManager implements vscode.Disposable {
     const [cmd, ...args] = resolution.command;
     const url = new URL(serverUrl());
     // PYTHONUTF8: the server speaks UTF-8 (its log, which we read, and every file), whatever the code page.
-    const env = { ...process.env, PATH: searchPath, PYTHONUTF8: "1", HITLCAD_HOST: url.hostname, HITLCAD_PORT: url.port || "80" };
+    // A URL writes an IPv6 host in brackets ([::1]); the server binds the address itself.
+    const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+    const env = { ...process.env, PATH: searchPath, PYTHONUTF8: "1", HITLCAD_HOST: host, HITLCAD_PORT: url.port || "80" };
     this.output.appendLine(`$ ${resolution.command.join(" ")}${resolution.cwd ? `   (in ${resolution.cwd})` : ""}`);
 
     const child = spawn(cmd!, args, { cwd: resolution.cwd, env, stdio: ["ignore", "pipe", "pipe"] });

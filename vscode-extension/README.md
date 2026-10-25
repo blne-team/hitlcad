@@ -14,14 +14,13 @@ Unpack the hitlcad release (`hitlcad-<version>.tar.gz`) and run `./install.sh`, 
 2. Choose an empty folder, or let hitlcad create a subfolder. hitlcad adds:
    - `designs/` for your designs
    - `.mcp.json`, which connects Claude Code
-   - `.vscode/settings.json`, which points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d`
    - `CLAUDE.md` and `AGENTS.md`, which point the agents at hitlcad's skills
    - `.claude/skills/` and `.agents/skills/`, hitlcad's skills for Claude Code and Codex: how to work with designs, and the code contract of each backend
    - `.gitignore`
-   - if you allow it (hitlcad asks first): a prompt hook in `.claude/settings.json` and `.codex/hooks.json` that adds your selection and open pins to each message you send, and for Codex, hitlcad's MCP server and trust for the folder in `~/.codex/config.toml`. Codex then asks you once to approve the hook (`/hooks`).
+   - if you allow it (hitlcad asks first): a prompt hook that adds your selection and open pins to each message you send, in `.claude/settings.local.json` (your own Claude Code settings, not committed) and in Codex's user `~/.codex/hooks.json` (it adds nothing in folders without designs), and for Codex, hitlcad's MCP server in `~/.codex/config.toml`. Codex then asks you once to approve the hook (`/hooks`).
 
    Existing files are kept, except hitlcad's own `hitlcad*` skills, which are brought up to date.
-3. Choose **Open Project**.
+3. Choose **Open Project**. The extension points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d`: through the Python extension, which keeps that choice for you in this workspace rather than in a committed file.
 
 The extension starts the server (`hitlcad serve`) when it is needed. It stops it again when the window closes, if it started it.
 
@@ -37,7 +36,7 @@ The extension starts the server (`hitlcad serve`) when it is needed. It stops it
    - **Compare** with an earlier revision (ghost overlay; the **Changes** tab lists parameters, size, results that changed and every file's diff).
    - **BOM**: the bill of materials, made and bought, with quantities.
    - Place pins with notes, then tell the agent *"address my pins"*. It resolves them when done.
-5. **Point at things.** Click a face, edge or vertex in the panel (a point on Blender parts), or a whole part with the filter at the bottom right on **Solid**; shift-click adds more, then say *"make the selected hole 0.5 mm larger"*. Selections are named by instance and connector, e.g. `lid.screws[2]`. In projects made with **New Design Project** (or `hitlcad init`), your selection and open pins go to Claude Code or Codex with your next message, through the project's prompt hook; the panel shows *Sent to Claude Code at 14:02* or *Goes to your agent with your next message*. In Codex, trust the project and then its hook (`/hooks`) once. **Copy for chat** (**hitlcad: Copy Selections and Pins for Chat**) copies the selections and pins of every design in the workspace, plus model-file selections, to paste anywhere.
+5. **Point at things.** Click a face, edge or vertex in the panel (a point on Blender parts), or a whole part with the filter at the bottom right on **Solid**; shift-click adds more, then say *"make the selected hole 0.5 mm larger"*. Selections are named by instance and connector, e.g. `lid.screws[2]`. In projects made with **New Design Project** (or `hitlcad init`), your selection and open pins go to Claude Code or Codex with your next message, through the project's prompt hook; the panel shows *Sent to Claude Code at 14:02* or *Goes to your agent with your next message*. In Codex, approve hitlcad's hook (`/hooks`) once. **Copy for chat** (**hitlcad: Copy Selections and Pins for Chat**) copies the selections and pins of every design in the workspace, plus model-file selections, to paste anywhere.
 
 ### Viewing any 3D file
 

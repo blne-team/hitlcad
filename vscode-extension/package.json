@@ -284,6 +284,7 @@
     "@types/three": "0.184.1",
     "@types/vscode": "1.90.0",
     "@vitejs/plugin-react": "4.7.0",
+    "@vscode/python-extension": "1.0.6",
     "@vscode/vsce": "4.0.0",
     "diff": "9.0.0",
     "eslint": "10.12.0",

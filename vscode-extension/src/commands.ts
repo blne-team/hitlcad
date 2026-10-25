@@ -9,6 +9,7 @@ import { DESIGN_FILE, PROJECT_DESIGNS } from "./lib/designLookup";
 import type { RevisionFile } from "./lib/uiState";
 import { slugify } from "./lib/slug";
 import { MODEL_VIEW_TYPE } from "./modelViewer";
+import { usePython } from "./python";
 import type { DesignPanels, DesignRef } from "./panels";
 import { type ServerManager, serverUrl, showError } from "./server";
 import type { SelectionStore } from "./webview";
@@ -132,10 +133,11 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
         fs.mkdirSync(dir, { recursive: true });
       }
     }
-    const result = await api.createProject(dir, await askAgentSetup(dir));
+    const result = await api.createProject(dir, await askAgentSetup(dir, await api.agentSetup(dir)));
     const created = result.created.length ? `Created ${result.created.join(", ")}.` : "Everything was already in place.";
-    const isOpen = (vscode.workspace.workspaceFolders ?? []).some((f) => path.resolve(f.uri.fsPath) === path.resolve(result.path));
-    if (isOpen) {
+    const folder = (vscode.workspace.workspaceFolders ?? []).find((f) => path.resolve(f.uri.fsPath) === path.resolve(result.path));
+    if (folder) {
+      await usePython(ctx, folder, (await api.capabilities()).python);
       const next = await vscode.window.showInformationMessage(`Design project ready. ${created}`, "New Design");
       if (next) await vscode.commands.executeCommand("hitlcad.newDesign");
       return;
@@ -232,12 +234,12 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
   command("hitlcad.configureAgents", async () => {
     const root = firstFolder();
     if (!root) throw new Error("Open the design project's folder first.");
-    const allowed = await askAgentSetup(root.fsPath);
+    const allowed = await askAgentSetup(root.fsPath, await api.agentSetup(root.fsPath));
     if (!allowed.hooks && !allowed.codex) return;
     const result = await api.createProject(root.fsPath, allowed);
     const changed = result.created.length ? `Updated ${result.created.join(", ")}.` : "Everything was already in place.";
-    const codex = allowed.codex ? " In Codex, approve the project's hook once (/hooks)." : "";
-    void vscode.window.showInformationMessage(`hitlcad: ${changed}${codex}`);
+    const approve = allowed.hooks ? " In Codex, approve hitlcad's hook once (/hooks)." : "";
+    void vscode.window.showInformationMessage(`hitlcad: ${changed}${approve}`);
   });
 
   // ------------------------------------------------------------------ viewer & selection

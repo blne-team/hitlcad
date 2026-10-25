@@ -11,6 +11,7 @@ import { DESIGN_FILE, PROJECT_DESIGNS } from "./lib/designLookup";
 import { isHitlcadPyproject } from "./lib/serverCommand";
 import { MODEL_VIEW_TYPE, ModelViewerProvider } from "./modelViewer";
 import { DesignPanels } from "./panels";
+import { usePython } from "./python";
 import { config, ServerManager, serverUrl } from "./server";
 import { registerStatusBar } from "./statusBar";
 import { SelectionStore } from "./webview";
@@ -41,17 +42,28 @@ export function activate(ctx: vscode.ExtensionContext): void {
     }),
   );
 
-  // In workspaces that use hitlcad: follow builds, start the server if needed, then offer the agent setup a
-  // design project lacks (it changes agent config, so only with the human's permission).
-  void (async () => {
-    if (!(await usesHitlcad())) return;
+  // In workspaces that use hitlcad: follow builds, start the server if needed, point VS Code's Python at the
+  // interpreter hitlcad builds with, then offer the agent setup a design project lacks (it changes agent config,
+  // so only with the human's permission).
+  let following = false;
+  const follow = () => {
+    if (following) return;
+    following = true;
     const activity = new ActivityWatcher(serverUrl, (build) => void onBuild(build, panels));
     ctx.subscriptions.push(activity);
     activity.start();
+  };
+  // A window whose first design appears later (New Design, an agent's create_design) follows builds from then on.
+  const appearing = vscode.workspace.createFileSystemWatcher(`**/${DESIGN_FILE}`, false, true, true);
+  ctx.subscriptions.push(appearing, appearing.onDidCreate(follow));
+  void (async () => {
+    if (!(await usesHitlcad())) return;
+    follow();
     await server.ensure();
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!root || !fs.existsSync(path.join(root, PROJECT_DESIGNS))) return;
-    await offerAgentSetup(ctx, await api.agentSetup(root), () => vscode.commands.executeCommand("hitlcad.configureAgents"));
+    const root = vscode.workspace.workspaceFolders?.[0];
+    if (!root || !fs.existsSync(path.join(root.uri.fsPath, PROJECT_DESIGNS))) return;
+    await usePython(ctx, root, (await api.capabilities()).python);
+    await offerAgentSetup(ctx, await api.agentSetup(root.uri.fsPath), () => vscode.commands.executeCommand("hitlcad.configureAgents"));
   })().catch((e: Error) => output.appendLine(`Startup: ${e.message}`));
 }
 

@@ -34,6 +34,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"[{'ok ' if renderer else 'MISSING'}] preview renderer (Blender Workbench)")
     print(f"[info] coding agents reach hitlcad's tools at {settings.mcp_url}")
     print(f"[info] data dir {settings.data_dir.resolve()}")
+    print(f"[info] models build with {sys.executable}, the interpreter part files resolve their imports in")
     return 0 if ok else 1
 
 

@@ -74,7 +74,6 @@ remote side, next to the tool. The panel reaches the server through VS Code's po
    | `designs/` | your designs, one folder each |
    | `.mcp.json` | gives Claude Code hitlcad's MCP tools |
    | `.claude/settings.json` | pre-approves those tools |
-   | `.vscode/settings.json` | points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d` |
    | `CLAUDE.md`, `AGENTS.md` | point Claude Code and Codex at hitlcad's skills and rules |
    | `.claude/skills/`, `.agents/skills/` | the skills: `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract of each backend) |
    | `.gitignore` | keeps `__pycache__/` and `.claude/settings.local.json` out of the repository |
@@ -139,8 +138,10 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
   not a parent, and restart the agent's session. For Codex, check `~/.codex/config.toml` or run
   `hitlcad connect`.
 - **Codex ignores your selection and pins.** Approve the hook with `/hooks` in Codex.
-- **Part files show import errors in the editor.** Run `hitlcad init .` in the project folder; it
-  points `.vscode/settings.json` at the installed tool's Python again.
+- **Part files show import errors in the editor.** The extension points VS Code's Python at the
+  interpreter hitlcad builds with when it opens a project (your own choice for this workspace, kept by
+  the Python extension, not a file in the project). If you picked another, run **Python: Select
+  Interpreter** and choose the one `hitlcad doctor` names.
 
 ## Update or remove
 

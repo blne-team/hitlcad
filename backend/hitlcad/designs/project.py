@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
@@ -41,23 +40,6 @@ def _claude_settings(config: dict[str, Any]) -> bool:
     if "hitlcad" in enabled:
         return False
     enabled.append("hitlcad")
-    return True
-
-
-def _vscode_settings(file: Path, python: str) -> bool:
-    """Point VS Code's Python extension at the interpreter hitlcad builds models with, so part files
-    resolve their imports (build123d) and no unrelated interpreter is tried. Returns True when changed."""
-    try:
-        settings = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f'{file} is not plain JSON ({e}); add "python.defaultInterpreterPath": "{python}" to it yourself'
-        ) from None
-    if settings.get("python.defaultInterpreterPath") == python:
-        return False
-    settings["python.defaultInterpreterPath"] = python
-    file.parent.mkdir(exist_ok=True)
-    file.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return True
 
 
@@ -118,9 +100,6 @@ def init_project(
             written.append(shown(file))
     if codex and agents.codex_config(settings.mcp_url):
         written.append(shown(agents.codex_config_file()))
-
-    if _vscode_settings(root / ".vscode" / "settings.json", python):
-        written.append(".vscode/settings.json")
 
     for name in ("CLAUDE.md", "AGENTS.md"):
         target = root / name
