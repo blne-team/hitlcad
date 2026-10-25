@@ -14,7 +14,7 @@ extension shows builds in 3D, takes picks and pins, and hands them to Claude Cod
 the prompt hook. It runs on Linux, macOS and Windows, which CI checks, release installer included.
 Four reference designs build and verify in every configuration.
 
-## v0.2: hitlcad's own agent, and skills that teach design
+## v0.2: hitlcad's own agent, skills that teach design, and designing from a picture
 
 Anyone can design with hitlcad, not only those with Claude Code or Codex (they need an account
 with Anthropic or OpenAI, and are out of reach in some regions), and every agent gets a design
@@ -34,6 +34,14 @@ right in fewer builds.
   losing track of the task). It is run deliberately, not on every push, because each run costs real
   tokens; it tells users which models work well for which tasks, shows whether a change moved the
   numbers it was meant to, and says where the next effort pays: skills, building blocks or messages.
+- **Designing from a picture.** The human attaches a photo or a sketch to a design, saying which
+  view it shows and one dimension in it (the figurine is 175 mm tall). hitlcad extracts its
+  silhouette and, where it shows a body, its pose (named keypoints: nose, ears, paws, joints), in
+  millimetres in the design's frame, and hands them to the agent as outlines and points it can model
+  against: a profile to extrude or loft, where a sculpted mass goes. A requirement check projects
+  the built model from the same view and compares it with the reference outline (how much they
+  overlap, and the largest deviation in mm), and a failure says where they part ("the left ear is
+  4 mm lower than the reference"). The panel shows the reference over the model from that view.
 - **Skills that teach design.** The skills (read by Claude Code, Codex and the built-in agent alike)
   explain how hitlcad works but little about designing well, so agents learn it from failed builds.
   `SKILL.md` keeps the workflow and rules; reference files the agent reads when a task needs them
@@ -44,7 +52,8 @@ right in fewer builds.
 
 Done when someone without Claude Code or Codex builds a reference design with the built-in agent,
 one command runs the benchmark and prints its comparison by agent and model, with the first results
-recorded here, and the skills have measurably raised them.
+recorded here, the skills have measurably raised them, and a figurine modelled from a photo passes
+its silhouette check from that photo's view.
 
 ## v0.3: plugins and building blocks
 
