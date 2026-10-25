@@ -398,7 +398,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         """A model file tessellated for the 3D file viewer (three-cad-viewer's instanced format)."""
         source = model_file(path)
         try:
-            view = await asyncio.to_thread(cadview.cached_view, source, settings.data_dir / "cache" / "cad",
+            view = await asyncio.to_thread(cadview.cached_view, source, settings.cache_dir / "cad",
                                            settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
         except Exception as e:  # any file: its reader's error, whatever its kind, is what the panel shows
             log.exception("could not convert %s", source)
