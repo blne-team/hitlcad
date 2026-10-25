@@ -8,7 +8,7 @@ import { type CadMarker, type CadMotion, exactShapes } from "../lib/cadView";
 import { baseRevision, currentRevision, useDesignUi } from "../lib/designUi";
 import { deliveryStatus } from "../lib/delivery";
 import { toExtension } from "../lib/host";
-import { selectionMarker, selectionText } from "../lib/selection";
+import { selectionMarker } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { MotionControl } from "./MotionControl";
 import { ReviewPanel } from "./ReviewPanel";
@@ -48,15 +48,7 @@ export function DesignView({ id }: { id: string }) {
   const modelError = fetchError ?? (viewError?.url === current.url ? viewError.message : null);
 
   const describe = useCallback(async (picks: Pick[]) => (await api.setSelection(id, revisionId, picks)).items, [id, revisionId]);
-  const designName = state?.name || "this design";
-  const toText = useCallback(
-    (items: Parameters<typeof selectionText>[1]) => {
-      const revs = [...new Set(items.map((i) => i.revision).filter((r) => r !== null))];
-      return selectionText(`In design ${designName}${revs.length === 1 ? ` (revision ${revs[0]})` : ""}`, items);
-    },
-    [designName],
-  );
-  const sel = useSelection(describe, toText, state?.selection);
+  const sel = useSelection(describe, state?.selection);
   const openPins = useMemo(() => (state?.pins ?? []).filter((p) => !p.resolved), [state?.pins]);
   const markers = useMemo<CadMarker[]>(
     () => [
@@ -95,7 +87,7 @@ export function DesignView({ id }: { id: string }) {
     );
   }
 
-  const own = revisions.filter((r) => (r.spec.configuration ?? null) === ui.configuration);
+  const own = revisions.filter((r) => r.spec.configuration === ui.configuration);
   const idx = revision ? own.findIndex((r) => r.id === revision.id) : -1;
   const size = revision?.report.metrics?.size;
 
@@ -199,7 +191,7 @@ export function DesignView({ id }: { id: string }) {
 
         <div className="side">
           <ReviewPanel ctx={{ id, state, revision, ui, setUi, refresh: live.refresh }} />
-          <SelectionBox items={sel.items} text={sel.text} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null} />
+          <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null} />
         </div>
       </div>
     </div>

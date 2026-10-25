@@ -16,7 +16,8 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
   const specs = revision?.spec.design.parameters ?? [];
   const configurations = revision?.spec.design.configurations ?? {};
   const original = Object.fromEntries(specs.map((p) => [p.name, p.value]));
-  const [values, setValues] = useState<Record<string, ParamValue>>(original);
+  // null: a number field left empty, which holds back rebuilding until it has a value again
+  const [values, setValues] = useState<Record<string, ParamValue | null>>(original);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,8 +25,9 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
   if (!revision) return <p className="muted pad">Parameters appear after the first build.</p>;
   if (specs.length === 0) return <p className="muted pad">This revision has no tunable parameters.</p>;
 
-  const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => original[k] !== v));
-  const dirty = Object.keys(changed).length > 0;
+  const changed = Object.fromEntries(Object.entries(values).filter((e): e is [string, ParamValue] => e[1] !== null && original[e[0]] !== e[1]));
+  const empty = Object.values(values).includes(null);
+  const dirty = Object.keys(changed).length > 0 || empty;
   const working = design.building;
 
   const rebuild = async () => {
@@ -42,7 +44,7 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
 
   const show = async (name: string | null) => {
     setConfiguration(name);
-    if (design.revisions.some((r) => (r.spec.configuration ?? null) === name)) return;
+    if (design.revisions.some((r) => r.spec.configuration === name)) return;
     try {
       await api.build(design.id, name); // a configuration never built: build it
     } catch (e) {
@@ -68,12 +70,12 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
         Rebuilding writes them to design.json, so your agent sees them in the file.
       </p>
       {specs.map((p) => (
-        <ParamRow key={p.name} spec={p} value={values[p.name] ?? p.value} changed={p.name in changed}
+        <ParamRow key={p.name} spec={p} value={values[p.name] as ParamValue | null} changed={p.name in changed}
           onChange={(v) => setValues((all) => ({ ...all, [p.name]: v }))} />
       ))}
       {error && <p className="notice fail">{error}</p>}
       <div className="actions sticky-actions">
-        <button type="button" className="button primary" disabled={!dirty || busy || working} onClick={() => void rebuild()}>
+        <button type="button" className="button primary" disabled={!dirty || empty || busy || working} onClick={() => void rebuild()}>
           {busy ? "Rebuilding…" : "Rebuild with these values"}
         </button>
         <button type="button" className="button" disabled={!dirty || busy} onClick={() => setValues(original)}>
@@ -91,7 +93,7 @@ function sliderStep(spec: ParamSpec, min: number, max: number): number {
   return spec.step ?? (spec.type === "int" ? 1 : 10 ** Math.floor(Math.log10((max - min) / 100)));
 }
 
-function ParamRow({ spec, value, changed, onChange }: { spec: ParamSpec; value: ParamValue; changed: boolean; onChange: (v: ParamValue) => void }) {
+function ParamRow({ spec, value, changed, onChange }: { spec: ParamSpec; value: ParamValue | null; changed: boolean; onChange: (v: ParamValue | null) => void }) {
   const label = spec.label || humanize(spec.name);
   const id = `param-${spec.name}`;
   return (
@@ -117,8 +119,8 @@ function ParamRow({ spec, value, changed, onChange }: { spec: ParamSpec; value: 
               onChange={(e) => onChange(Number(e.target.valueAsNumber.toFixed(10)))} />
           )}
           <input id={id} className="num-input" type="number" min={spec.min ?? undefined} max={spec.max ?? undefined}
-            step={spec.step ?? (spec.type === "int" ? 1 : "any")} value={typeof value === "number" && Number.isFinite(value) ? value : ""}
-            onChange={(e) => onChange(e.target.valueAsNumber)} />
+            step={spec.step ?? (spec.type === "int" ? 1 : "any")} value={typeof value === "number" ? value : ""}
+            onChange={(e) => onChange(Number.isNaN(e.target.valueAsNumber) ? null : e.target.valueAsNumber)} />
         </div>
       )}
       {spec.description && <span className="hint">{spec.description}</span>}

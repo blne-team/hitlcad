@@ -11,12 +11,12 @@ export function deliveryStatus(state: DesignState): { sent: boolean; text: strin
   const selection = state.selection.map((i) => i.id);
   const pins = Object.fromEntries(state.pins.filter((p) => !p.resolved).map((p) => [p.id, p.note]));
   if (!selection.length && !Object.keys(pins).length) return null;
-  const last = Object.values(state.deliveries).sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0))[0];
+  const last = Object.values(state.deliveries).sort((a, b) => b.seq - a.seq)[0];
   const same =
     last !== undefined &&
     JSON.stringify(last.selection) === JSON.stringify(selection) &&
     JSON.stringify(Object.entries(last.pins).sort()) === JSON.stringify(Object.entries(pins).sort());
   if (!same) return { sent: false, text: "Goes to your agent with your next message" };
-  const at = new Date(last.ts ?? "").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const at = new Date(last.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return { sent: true, text: `Sent to ${AGENTS[last.agent] ?? last.agent} at ${at}` };
 }

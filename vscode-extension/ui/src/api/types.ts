@@ -14,15 +14,11 @@ export type Revision = Schemas["Revision"];
 export type BuildReport = Schemas["BuildReport"];
 /** One finding of one analysis, naming the addresses it is about. */
 export type Result = Schemas["Result"];
-export type PartResult = Schemas["PartResult"];
-export type BomLine = Schemas["BomLine"];
-export type InstanceInfo = Schemas["InstanceInfo"];
 /** A click in a 3D view: the surface point, and on B-rep builds the instance's face, edge or vertex it hit. */
 export type Pick = Schemas["Pick"];
 export type SelectionItem = Schemas["SelectionItem"];
 export type Pin = Schemas["Pin"];
 export type DesignState = Schemas["DesignState"];
-export type Capabilities = Schemas["Capabilities"];
 
 export type DesignEvent =
   paths["/api/designs/{design_id}/events"]["get"]["responses"][200]["content"]["application/json"][number];

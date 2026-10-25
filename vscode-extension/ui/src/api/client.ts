@@ -1,5 +1,6 @@
+import { errorDetail } from "../../../src/lib/errorDetail";
 import { server } from "../lib/host";
-import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
+import type { DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -10,29 +11,19 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(server + path, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-      else if (body.detail) detail = JSON.stringify(body.detail);
-    } catch {
-      // keep statusText
-    }
-    throw new ApiError(res.status, detail);
-  }
+/** A response's JSON, or an ApiError with the server's reason. */
+export async function json<T>(res: Response): Promise<T> {
+  if (!res.ok) throw new ApiError(res.status, errorDetail(await res.text(), res.statusText));
   return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return json<T>(await fetch(server + path, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } }));
 }
 
 const send = <T>(method: string, path: string, body: unknown) => request<T>(path, { method, body: JSON.stringify(body) });
 
 export const api = {
-  capabilities: () => request<Capabilities>("/api/capabilities"),
   design: (id: string) => request<DesignState>(`/api/designs/${id}`),
   setSelection: (id: string, revision: number | null, items: Pick[]) =>
     send<{ items: SelectionItem[] }>("PUT", `/api/designs/${id}/selection`, { revision, items }),
@@ -78,13 +69,9 @@ export function subscribe(designId: string, onEvent: (event: DesignEvent) => voi
       onConnection(true);
     };
     socket.onmessage = (msg: MessageEvent<string>) => {
-      try {
-        const event = JSON.parse(msg.data) as DesignEvent;
-        after = event.seq;
-        onEvent(event);
-      } catch {
-        // ignore malformed frames
-      }
+      const event = JSON.parse(msg.data) as DesignEvent;
+      after = event.seq;
+      onEvent(event);
     };
     socket.onclose = () => {
       if (stopped) return;

@@ -1,6 +1,7 @@
 import { fileUrl } from "../api/client";
 import type { Result, Revision } from "../api/types";
 import { bytes } from "../lib/format";
+import { toExtension } from "../lib/host";
 
 export const MARK = { pass: "✓", fail: "✗", unverified: "?" } as const;
 const ROW = { pass: "pass", fail: "miss sev-error", unverified: "miss sev-info" } as const;
@@ -160,7 +161,10 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
       <ul className="files">
         {report.artifacts.filter((a) => a.role in DOWNLOADS).map((a) => (
           <li key={a.path}>
-            <a href={fileUrl(designId, revision.id, a.path)} download={a.name}>{a.path}</a>
+            <button type="button" className="link-button" title={`Save a copy of ${a.name}`}
+              onClick={() => toExtension({ type: "hitlcad.saveFile", design: designId, revision: revision.id, path: a.path, name: a.name })}>
+              {a.path}
+            </button>
             <span className="muted"> {DOWNLOADS[a.role]}, {bytes(a.bytes)}</span>
           </li>
         ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ApiError } from "../api/client";
+import { json } from "../api/client";
 
 /** Fetch a 3D view (JSON) from the server; errors carry the server's reason (e.g. 415/422 detail). */
 export function useViewJson(url: string | null): { data: unknown; error: string | null } {
@@ -9,18 +9,7 @@ export function useViewJson(url: string | null): { data: unknown; error: string 
     if (!url) return;
     let cancelled = false;
     fetch(url)
-      .then(async (res) => {
-        if (!res.ok) {
-          let detail = res.statusText;
-          try {
-            detail = ((await res.json()) as { detail?: string }).detail ?? detail;
-          } catch {
-            // keep statusText
-          }
-          throw new ApiError(res.status, detail);
-        }
-        return res.json() as Promise<unknown>;
-      })
+      .then((res) => json<unknown>(res))
       .then((data) => !cancelled && setState({ url, data, error: null }))
       .catch((e: unknown) => !cancelled && setState({ url, data: null, error: e instanceof Error ? e.message : String(e) }));
     return () => {
