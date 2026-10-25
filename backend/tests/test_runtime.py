@@ -158,7 +158,8 @@ async def test_a_build_process_ended_by_a_signal_says_which_and_why(tmp_path: Pa
     kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
     run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)
     assert _ended(run.returncode) == "the build process was killed by the system, most often for running out of memory"
-    assert _ended(-40) == f"the build process was ended by signal 40 ({signal.strsignal(40)})"  # a real-time one
+    other = getattr(signal, "SIGRTMIN", signal.SIGUSR1)  # a real-time one where the platform has them (Linux)
+    assert _ended(-other) == f"the build process was ended by signal {int(other)} ({signal.strsignal(other)})"
 
 
 async def test_the_memory_limit_is_reached_only_by_using_memory() -> None:
