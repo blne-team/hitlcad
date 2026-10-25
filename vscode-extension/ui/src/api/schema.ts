@@ -1224,7 +1224,11 @@ export interface components {
          * FastenerSet
          * @description A catalog fastener through clearance-hole patterns (head side first) into a threaded or insert hole.
          *     `fastener` names the fastener's seat connector (under the head, Z along the shank); the fastener part's
-         *     catalog provider must give its `thread_diameter` and `length`.
+         *     catalog provider must give its `thread`, `thread_diameter`, `thread_pitch`, `length` and its ISO 273
+         *     clearance holes `clearance_fine` and `clearance_medium`. Verified per stack: the holes share an axis, the
+         *     fastener is seated, its shank clears every through hole (ISO 273 fine, after the process allowance), its
+         *     thread is the into thread's (a catalog insert's or nut's size; a made hole between 0.7 and 1 × its
+         *     diameter), it engages the material minimum and the space along its axis past the into hole is free.
          */
         FastenerSet: {
             /**
@@ -1350,8 +1354,9 @@ export interface components {
         };
         /**
          * Fit
-         * @description How a round shaft sits in a round hole: a diametral clearance range in mm (negative is
-         *     interference), or an ISO 286 fit evaluated at the measured nominal size.
+         * @description How a round shaft sits in a round hole: a diametral clearance range in mm (negative is interference), or
+         *     an ISO 286 fit: its hole and shaft are modelled at one basic size, and its classes' limits there, reported
+         *     with the fit, go on the drawing. A mate that moves needs a fit that leaves room to move.
          */
         Fit: {
             /** Clearance */
@@ -1416,8 +1421,9 @@ export interface components {
         };
         /**
          * GearConnector
-         * @description A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Tooth geometry is
-         *     verified by its relations and by interference; the nominal values name parameters or interface values.
+         * @description A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Measured: across its face
+         *     width, its tip diameter, m(z + 2) (m(z − 2) for an internal gear), and its teeth; its mesh is verified by its
+         *     relations and by interference. The nominal values name parameters or interface values.
          */
         GearConnector: {
             /**
