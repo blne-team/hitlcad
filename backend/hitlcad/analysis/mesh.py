@@ -42,7 +42,10 @@ def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     shells = mesh.split(only_watertight=False)
     if len(shells) < 2 or not all(s.is_watertight for s in shells) or not _overlapping([s.bounds for s in shells]):
         return mesh
-    volumes = [s.volume for s in shells]  # negative for a shell facing inwards
+    # Negative for a shell facing inwards. trimesh reads a volume with the rest of a shell's mass properties: a
+    # shell enclosing nothing divides its centre by its zero volume, a centre nothing here reads.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        volumes = [s.volume for s in shells]
 
     def body(shell: trimesh.Trimesh, volume: float) -> manifold3d.Manifold:
         faces = shell.faces if volume > 0 else shell.faces[:, ::-1]
