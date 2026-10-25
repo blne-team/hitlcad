@@ -3,11 +3,17 @@ import * as path from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, openPanel, viewerReady, WORK } from "../helpers";
 
-test("a mate's range of motion moves its side in the 3D view", async ({ page }) => {
-  const folder = path.join(WORK, "project", "designs", "hinge");
+// One hinge for both tests, in order: the first on revision 1, the second builds revision 2 with its lid fixed.
+const folder = path.join(WORK, "project", "designs", "hinge");
+let id = "";
+
+test.beforeAll(async () => {
   fs.cpSync(path.resolve(__dirname, "../../backend/tests/designs/hinge"), folder, { recursive: true });
-  const { id } = await api<{ id: string }>("POST", "/api/designs", { path: folder });
+  ({ id } = await api<{ id: string }>("POST", "/api/designs", { path: folder }));
   await api("POST", `/api/designs/${id}/build`);
+});
+
+test("a mate's range of motion moves its side in the 3D view", async ({ page }) => {
   await openPanel(page, { name: "design", id });
   await viewerReady(page);
 
@@ -25,10 +31,6 @@ test("a mate's range of motion moves its side in the 3D view", async ({ page }) 
 });
 
 test("another revision shows its parts as built, not the motion left on the one before", async ({ page }) => {
-  const folder = path.join(WORK, "project", "designs", "hinge-fixed");
-  fs.cpSync(path.resolve(__dirname, "../../backend/tests/designs/hinge"), folder, { recursive: true });
-  const { id } = await api<{ id: string }>("POST", "/api/designs", { path: folder });
-  await api("POST", `/api/designs/${id}/build`);
   // Revision 2 fixes the lid: a rigid mate has no range of motion.
   const file = path.join(folder, "design.json");
   const design = JSON.parse(fs.readFileSync(file, "utf8")) as { mates: { type: string; limits?: unknown }[] };

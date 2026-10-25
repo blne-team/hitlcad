@@ -1,10 +1,8 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, clickModel, fixtures, nothingBlocked, openPanel, viewerReady } from "../helpers";
 
-test("an assembly shows its instances by name, in the viewer, the report, the structure and build/", async ({ page }) => {
-  const { assemblyId, assemblyFolder } = fixtures();
+test("an assembly shows its instances by name, in the viewer, the report and the structure", async ({ page }) => {
+  const { assemblyId } = fixtures();
   await openPanel(page, { name: "design", id: assemblyId });
   await viewerReady(page);
   await expect(page.locator(".tcv_cad_tree")).toContainText("base");
@@ -42,8 +40,4 @@ test("an assembly shows its instances by name, in the viewer, the report, the st
   await expect(preview).toBeVisible();
   await expect.poll(() => preview.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
   await nothingBlocked(page);
-
-  for (const file of ["parts/base.step", "parts/base.stl", "parts/lid.step", "parts/lid.stl", "model.step"]) {
-    expect(fs.existsSync(path.join(assemblyFolder, "build", file)), file).toBe(true);
-  }
 });

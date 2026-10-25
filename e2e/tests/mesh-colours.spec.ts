@@ -44,7 +44,8 @@ test("a Blender part in several colours shows a shape per colour, and a click on
   await openPanel(page, { name: "design", id });
   await viewerReady(page);
   const tree = page.locator(".tcv_cad_tree");
-  for (const name of ["base", "knob[0]", "knob[1]"]) await expect(tree).toContainText(name);
+  await page.locator(".tcv_expand").click(); // the whole tree: the base, in two colours, is a group of a shape per colour
+  for (const name of ["base", "red", "white", "knob[0]", "knob[1]"]) await expect(tree).toContainText(name);
 
   await clickModel(page, 0.5, 0.6); // the block, below the balls
   await expect(page.locator(".selection-box li").first()).toContainText("Point on base at");

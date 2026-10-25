@@ -19,14 +19,12 @@ test.beforeEach(async ({ page }) => {
   await viewerReady(page);
 });
 
-test("a selection reaches the server with its exact component", async ({ page }) => {
+test("a selection and a pin reach the server with their exact component", async ({ page }) => {
   await clickModel(page, 0.5, 0.42);
   await expect(page.locator(".selection-box li")).toHaveCount(1);
   const [item] = (await state()).selection;
   expect(item?.component).toMatchObject({ instance: "block", topo: expect.stringMatching(/face|edge|vertex/) });
-});
 
-test("a pin placed on the model records its component", async ({ page }) => {
   const before = (await state()).pins.length;
   await page.locator(".pin-toggle").click();
   await expect(page.locator(".pin-toggle")).toHaveText("Placing pins");
