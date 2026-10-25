@@ -48,6 +48,8 @@ BALL_PRECISION = 0.01
 #: Lines across a chord, evenly turned about it, that measure a wall where the ball cannot: a wall met at this
 #: many lines is read at most 1 / cos(90° / ACROSS) too thick (2%).
 ACROSS = 8
+#: Knife edges are traced at points this share of the part's size apart.
+KNIFE_STEP = 1e-4
 #: A failure names this many places, the worst first.
 PLACES = 3
 
@@ -145,6 +147,7 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
     even = len(points)
     points = np.concatenate([points, dense])
     readings = np.concatenate([readings, _thickness(probe, dense, -mesh.face_normals[on])])
+    readings[_at_knife_edge(mesh, points, readings)] = np.inf
     _, near = cKDTree(points).query(points, k=NEIGHBOURS)
     nearby = readings[near]
     thin = np.sort(nearby, axis=1)[:, AGREE - 1]
@@ -153,6 +156,21 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
         return Walls(points, thin, thick, even, spacing, None, None)
     thinnest = int(np.argmin(thin))
     return Walls(points, thin, thick, even, spacing, float(thin[thinnest]), points[thinnest])
+
+
+def _at_knife_edge(mesh: trimesh.Trimesh, points: np.ndarray, readings: np.ndarray) -> np.ndarray:
+    """Whether each reading is the taper of a knife edge: two faces meeting at under WALL_EXIT_DEG (a hole
+    leaving a chamfer, a sliver), the part as thin as that wedge is that far from its edge. A slicer rounds
+    such an edge off; it is no wall, at any size. A thin wall ending in one is still thin away from it."""
+    knife = mesh.face_adjacency_convex & (mesh.face_adjacency_angles > math.radians(180 - WALL_EXIT_DEG))
+    if not knife.any():
+        return np.zeros(len(points), dtype=bool)
+    ends = mesh.vertices[mesh.face_adjacency_edges[knife]]
+    step = KNIFE_STEP * float(np.linalg.norm(mesh.extents))
+    along = [np.linspace(a, b, int(np.ceil(np.linalg.norm(b - a) / step)) + 1) for a, b in ends]
+    distance, nearest = cKDTree(np.concatenate(along)).query(points)
+    wedge = 2 * np.tan((math.pi - np.repeat(mesh.face_adjacency_angles[knife], [len(x) for x in along])) / 2)
+    return readings <= 1.25 * wedge[nearest] * (distance + step)
 
 
 def _thickness(probe: Probe, points: np.ndarray, inward: np.ndarray) -> np.ndarray:
