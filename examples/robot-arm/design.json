@@ -361,8 +361,5 @@
     "bom",
     "3mf",
     "urdf"
-  ],
-  "verification": {
-    "motion_samples": 7
-  }
+  ]
 }

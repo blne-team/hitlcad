@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Verification defaults; a design's `verification` overrides them
     verify_position_mm: float = Field(default=0.01, gt=0)
     verify_angle_deg: float = Field(default=0.05, gt=0)
-    verify_motion_samples: int = Field(default=24, ge=2)
+    verify_motion_steps: int = Field(default=2000, ge=10)
     overlap_mm3: float = Field(
         default=1e-3, gt=0, description="Bodies sharing less than this touch; they do not overlap"
     )
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     @property
     def tolerances(self) -> Tolerances:
         return Tolerances(position_mm=self.verify_position_mm, angle_deg=self.verify_angle_deg,
-                          motion_samples=self.verify_motion_samples)  # fmt: skip
+                          motion_steps=self.verify_motion_steps)  # fmt: skip
 
     @property
     def cache_dir(self) -> Path:

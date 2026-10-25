@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -27,7 +28,7 @@ from hitlcad.core.structure import (
     symmetry_of,
 )
 
-TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_samples=8)
+TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 
 
 def frame(origin=(0, 0, 0), z_down=False, turn_deg=0.0) -> fr.Frame:
@@ -257,6 +258,43 @@ def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
     # Shells apart stay apart
     trimesh.util.concatenate([body, detail.apply_translation((50, 0, 0))]).export(tmp_path / "apart.stl")
     assert len(load_mesh(tmp_path / "apart.stl").split()) == 2
+
+
+def _part(tmp_path: Path, name: str, mesh: Any) -> Any:
+    from hitlcad.analysis.model import PartGeometry
+    from hitlcad.core.report import Reads
+    from hitlcad.core.structure import PartSpec
+
+    mesh.export(tmp_path / f"{name}.stl")
+    return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
+                        mesh_file=tmp_path / f"{name}.stl", step_file=None, objects_file=tmp_path / f"{name}.glb",
+                        frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+
+
+def test_one_closedness_test_measures_solids_that_touch_along_an_edge(tmp_path: Path) -> None:
+    import trimesh
+
+    # Two blocks meeting along one edge, as a bearing's balls meet its races: trimesh reads the edge four
+    # triangles share as open; manifold3d, which measures every overlap and gap, reads a closed solid
+    blocks = trimesh.util.concatenate([trimesh.creation.box((10, 10, 10)),
+                                       trimesh.creation.box((10, 10, 10)).apply_translation((10, 10, 0))])  # fmt: skip
+    part = _part(tmp_path, "blocks", blocks)
+    assert not part.mesh.is_watertight
+    assert part.metrics.watertight and part.metrics.volume == pytest.approx(2000) and part.manifold.volume() > 0
+
+
+def test_a_body_of_many_leaves_is_measured_from_its_parts_not_one_mesh_of_them(tmp_path: Path) -> None:
+    import trimesh
+
+    from hitlcad.analysis.model import AnalysisSettings, Body, Leaf
+
+    settings = AnalysisSettings(tolerances=TOL, overlap_mm3=1e-3, mesh_tolerance_mm=0.01, wall_samples=100)
+    part = _part(tmp_path, "cube", trimesh.creation.box((10, 10, 10)))
+    leaves = [Leaf(f"cube[{k}]", part, None, fr.translation((20.0 * k, 0, 0))) for k in range(3)]  # type: ignore[arg-type]
+    body = Body("row", leaves, settings)
+    assert body.metrics.size == pytest.approx((50, 10, 10)) and body.metrics.volume == pytest.approx(3000)
+    assert body.metrics.watertight and body.metrics.bodies == 3
+    assert "mesh" not in body.__dict__  # a box and a volume need no mesh of every leaf at once
 
 
 def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:

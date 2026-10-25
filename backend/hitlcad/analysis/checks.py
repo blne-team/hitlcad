@@ -10,7 +10,8 @@ from hitlcad.core.report import Result
 
 
 class Parts:
-    """Each part's mesh is closed, and its B-rep (where it has one) passes the kernel's check."""
+    """Each part's mesh closes a solid (`mesh.closed`, the test every measurement shares), and its B-rep
+    (where it has one) passes the kernel's check."""
 
     name = "part"
 
@@ -22,8 +23,8 @@ class Parts:
                 out.append(result(self.name, name, False, "the part is empty", [name]))
                 continue
             out.append(result(self.name, name, m.watertight,
-                              "closed mesh" if m.watertight else "the mesh has open edges: volume, mass, walls and "
-                              "overlaps cannot be measured", [name], severity="warning"))  # fmt: skip
+                              "closed mesh" if m.watertight else "the mesh does not close a solid: volume, mass, walls "
+                              "and overlaps cannot be measured", [name], severity="warning"))  # fmt: skip
             if part.valid is not None:
                 out.append(result(self.name, name, part.valid, "B-rep valid" if part.valid else
                                   "the kernel's shape check fails: booleans and exports may be wrong", [name]))  # fmt: skip

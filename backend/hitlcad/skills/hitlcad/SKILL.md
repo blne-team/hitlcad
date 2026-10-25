@@ -89,8 +89,9 @@ frames must agree in what the type fixes (within `verification`). Optional: `fit
 and shaft modelled at one basic size: the result gives the limits for the drawing) between a hole and a
 shaft; `limits` (`{"angle": [lo, hi]}` degrees, `{"travel": [lo, hi]}` mm), swept for
 collisions; `offset` (mm along a's Z); `flip: true` when b's Z runs with a's (a shaft entering a bore
-from the end opposite its declared opening); `overlap: true` when the parts are meant to overlap
-there (a heat-set insert's knurls, a modelled thread). Types:
+from the end opposite its declared opening); `overlap: true` when b's part is set into a hole of a's
+part and overlaps its wall (a heat-set insert's knurls, a modelled thread): a has no material on the
+hole's axis where b sits. An interference fit allows the ring its diameters make, no more. Types:
 $mates
 
 **Relations** (`"relations": [...]`), verified from the frames and the connectors' nominal values:
@@ -113,7 +114,7 @@ $processes
 through its own `exports` (`{"output": "carrier.output"}`); mate to those, never inside it.
 
 **Configurations** (`"configurations": {"ratio_5": {"sun_teeth": 12}}`), **verification**
-(`{"position_mm", "angle_deg", "motion_samples"}`, defaults from hitlcad's settings) and **outputs**
+(`{"position_mm", "angle_deg", "motion_steps"}`, defaults from hitlcad's settings) and **outputs**
 (exporters run on every build: see `list_backends`) complete the file.
 
 ## Rules

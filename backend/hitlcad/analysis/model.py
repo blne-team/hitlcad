@@ -18,7 +18,7 @@ import numpy as np
 
 from hitlcad.analysis import cadview
 from hitlcad.analysis.features import BrepFeatures, Features, Hole, MeshFeatures, Unmeasurable
-from hitlcad.analysis.mesh import load_mesh, measure, measure_union
+from hitlcad.analysis.mesh import closed, load_mesh, measure, measure_union
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
 from hitlcad.core.design import DesignSpec
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     import manifold3d
     import trimesh
 
+    from hitlcad.analysis.base import ResultCache
     from hitlcad.analysis.processes import Walls
 
 
@@ -68,9 +69,14 @@ class PartGeometry:
         return load_mesh(self.mesh_file)
 
     @cached_property
+    def solid(self) -> manifold3d.Manifold | None:
+        """The solid its mesh bounds, or None when the mesh is not closed (`mesh.closed`)."""
+        return closed(self.mesh)
+
+    @cached_property
     def metrics(self) -> MeshMetrics:
         """Measured on the mesh; its bodies as its representation counts them (a B-rep's solids)."""
-        return measure(self.mesh).model_copy(update={"bodies": self.features.bodies()})
+        return measure(self.mesh, self.solid).model_copy(update={"bodies": self.features.bodies()})
 
     @cached_property
     def features(self) -> Features:
@@ -88,15 +94,11 @@ class PartGeometry:
         """The part's mesh by content: what cached results about it depend on."""
         return hashlib.sha256(self.mesh_file.read_bytes()).hexdigest()
 
-    @cached_property
+    @property
     def manifold(self) -> manifold3d.Manifold:
-        import manifold3d
-
-        solid = manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(self.mesh.vertices, dtype=np.float32),
-                                                    tri_verts=np.asarray(self.mesh.faces, dtype=np.uint32)))  # fmt: skip
-        if solid.status() != manifold3d.Error.NoError or solid.is_empty():
+        if self.solid is None:
             raise Unmeasurable(f"part {self.name} is not a closed mesh")
-        return solid
+        return self.solid
 
     @property
     def material(self) -> str | None:
@@ -122,8 +124,12 @@ class Leaf:
         return self.part.manifold.transform(self.transform[:3, :])
 
     @cached_property
+    def vertices(self) -> np.ndarray:
+        return self.part.mesh.vertices @ self.transform[:3, :3].T + self.transform[:3, 3]
+
+    @cached_property
     def bounds(self) -> np.ndarray:
-        return self.mesh.bounds
+        return np.array([self.vertices.min(axis=0), self.vertices.max(axis=0)])
 
 
 @dataclass
@@ -256,7 +262,7 @@ class BuiltDesign:
         """One of its parts' mass, centre and inertia about the centre, placed by `transform`: known when the
         part's material is and its mesh is closed."""
         material = self.materials.get(part.material or "")
-        if material is None or not part.mesh.is_watertight:
+        if material is None or not part.metrics.watertight:
             return None
         props = part.mesh.mass_properties  # at unit density
         density = material.density_g_cm3 / 1000  # g/mm³
@@ -328,6 +334,15 @@ class BuiltDesign:
 # --------------------------------------------------------------------------- bodies for checks
 
 
+def gap(a: manifold3d.Manifold, b: manifold3d.Manifold, upto: float) -> float:
+    """Smallest distance (mm) between two solids, or `upto` when they are further apart; 0 when they touch
+    or overlap."""
+    search = 1.0  # mm; widened ×8 until the gap is found: fitted parts are close, so near first is cheap
+    while (found := float(a.min_gap(b, search))) >= search and search < upto:
+        search = min(search * 8, upto)
+    return found
+
+
 class Body:
     """What a requirement or process check measures: placed part instances, as one body."""
 
@@ -343,10 +358,13 @@ class Body:
         return trimesh.util.concatenate([leaf.mesh for leaf in self.leaves])
 
     @cached_property
+    def bounds(self) -> np.ndarray:
+        boxes = np.array([leaf.bounds for leaf in self.leaves])
+        return np.array([boxes[:, 0].min(axis=0), boxes[:, 1].max(axis=0)])
+
+    @cached_property
     def metrics(self) -> MeshMetrics:
-        if len(self.leaves) == 1:
-            return measure(self.mesh)
-        return measure_union(measure(self.mesh), [leaf.part.metrics for leaf in self.leaves])
+        return measure_union(self.bounds, [leaf.part.metrics for leaf in self.leaves])
 
     def holes(self) -> list[Hole]:
         return [hole for leaf in self.leaves for hole in leaf.part.features.holes()]
@@ -384,21 +402,17 @@ class Body:
 
     def gap(self, other: Body) -> float:
         """Smallest distance (mm) between the two; 0 when they touch or overlap."""
-        lo = np.minimum(self.mesh.bounds[0], other.mesh.bounds[0])
-        hi = np.maximum(self.mesh.bounds[1], other.mesh.bounds[1])
-        span = float(np.linalg.norm(hi - lo))
-        search = 1.0  # mm; widened ×8 until the gap is found: fitted parts are close, so near first is cheap
-        while (gap := float(self.manifold.min_gap(other.manifold, search))) >= search and search < span:
-            search = min(search * 8, span)
-        return gap
+        span = np.maximum(self.bounds[1], other.bounds[1]) - np.minimum(self.bounds[0], other.bounds[0])
+        return gap(self.manifold, other.manifold, float(np.linalg.norm(span)))
 
 
 class BuildBodies:
     """The bodies of a built design, by address, for requirement checks."""
 
-    def __init__(self, built: BuiltDesign, settings: AnalysisSettings) -> None:
+    def __init__(self, built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache) -> None:
         self.built = built
         self.settings = settings
+        self.cache = cache
         self._bodies: dict[tuple[str, str], Body] = {}
 
     @property
@@ -431,3 +445,21 @@ class BuildBodies:
 
     def placed(self, address: str) -> Body:
         return self._body("placed", address, lambda: self.built.leaves_of(address))
+
+    def moved_gap(self, a: Body, b: Body) -> tuple[float, str, bool] | None:
+        """The least gap between two bodies while a mate moves one against the other, as motion analysis
+        sweeps it; where; and whether the sweep reached the ends of every range. None when no mate does."""
+        from hitlcad.analysis.motion import Plan, sweep
+
+        pairs = {frozenset((p.path, q.path)) for p in a.leaves for q in b.leaves}
+        found: tuple[float, str, bool] | None = None
+        for plan in self.built.motion_plans:
+            if not isinstance(plan, Plan):
+                continue
+            for least in sweep(plan, self.settings, self.cache).least:
+                if frozenset((least.a, least.b)) not in pairs or found and found[0] <= least.gap_mm:
+                    continue
+                unit = "°" if least.kind == "angle" else " mm"
+                at = "in a full turn" if least.at is None else f"at {least.at:.1f}{unit}"
+                found = (least.gap_mm, f"{at} of {plan.link.source.address}", least.complete)
+        return found

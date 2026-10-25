@@ -17,7 +17,7 @@ from hitlcad.core.structure import Tolerances
 
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
-TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_samples=8)
+TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 
 
 def at(x: float, y: float, z: float, down: bool = False) -> fr.Frame:

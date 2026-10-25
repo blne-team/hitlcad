@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import trimesh
 
 from hitlcad.core.report import MeshMetrics
+
+if TYPE_CHECKING:
+    import manifold3d
 
 
 def load_mesh(path: Path) -> trimesh.Trimesh:
@@ -58,34 +62,56 @@ def _overlapping(bounds: list[np.ndarray]) -> bool:
     return any(np.all(a[0] < b[1]) and np.all(b[0] < a[1]) for i, a in enumerate(bounds) for b in bounds[i + 1 :])
 
 
-def measure(mesh: trimesh.Trimesh) -> MeshMetrics:
+def closed(mesh: trimesh.Trimesh) -> manifold3d.Manifold | None:
+    """The solid a mesh bounds, or None when it bounds none: manifold3d's test, the one every measurement of
+    volume, mass, overlap and gap shares. It reads a mesh by its edges' pairing, so solids that touch along
+    an edge (a bearing's balls on their races) are still closed."""
+    import manifold3d
+
+    if mesh.is_empty:
+        return None
+    solid = manifold3d.Manifold(manifold3d.Mesh(vert_properties=np.asarray(mesh.vertices, dtype=np.float32),
+                                                tri_verts=np.asarray(mesh.faces, dtype=np.uint32)))  # fmt: skip
+    return None if solid.status() != manifold3d.Error.NoError or solid.is_empty() else solid
+
+
+def measure(mesh: trimesh.Trimesh, solid: manifold3d.Manifold | None) -> MeshMetrics:
+    """A part's mesh, and the solid it bounds (`closed`)."""
     if mesh.is_empty:
         zero = (0.0, 0.0, 0.0)
         return MeshMetrics(bbox_min=zero, bbox_max=zero, size=zero, volume=None, surface_area=0.0,
                            triangles=0, bodies=0, watertight=False, winding_consistent=False)  # fmt: skip
     lo, hi = (tuple(round(float(v), 4) for v in row) for row in mesh.bounds)
-    size = tuple(round(float(v), 4) for v in np.asarray(hi) - np.asarray(lo))
-    watertight = bool(mesh.is_watertight)
     return MeshMetrics(
         bbox_min=lo,  # type: ignore[arg-type]
         bbox_max=hi,  # type: ignore[arg-type]
-        size=size,  # type: ignore[arg-type]
-        volume=round(float(abs(mesh.volume)), 4) if watertight else None,
+        size=_size(mesh.bounds),
+        volume=round(float(solid.volume()), 4) if solid else None,
         surface_area=round(float(mesh.area), 4),
         triangles=len(mesh.faces),
         bodies=len(mesh.split(only_watertight=False)),
-        watertight=watertight,
+        watertight=solid is not None,
         winding_consistent=bool(mesh.is_winding_consistent),
     )
 
 
-def measure_union(whole: MeshMetrics, parts: list[MeshMetrics]) -> MeshMetrics:
-    """Several parts as one: closed when each is, the material the parts' added up. Parts that touch share
-    faces in the combined mesh, which on its own would read as open."""
+def measure_union(bounds: np.ndarray, parts: list[MeshMetrics]) -> MeshMetrics:
+    """Placed parts as one, within `bounds`: closed when each is, the material and surface the parts' added
+    up. Measured from the parts, not from one mesh of them all: parts that touch would share faces in it,
+    which on its own would read as open, and the whole would be measured again for nothing."""
     closed = all(p.watertight for p in parts)
-    return whole.model_copy(update={
-        "watertight": closed,
-        "winding_consistent": all(p.winding_consistent for p in parts),
-        "volume": round(sum(p.volume or 0.0 for p in parts), 4) if closed else None,
-        "bodies": sum(p.bodies for p in parts),
-    })  # fmt: skip
+    return MeshMetrics(
+        bbox_min=tuple(round(float(v), 4) for v in bounds[0]),  # type: ignore[arg-type]
+        bbox_max=tuple(round(float(v), 4) for v in bounds[1]),  # type: ignore[arg-type]
+        size=_size(bounds),
+        volume=round(sum(p.volume or 0.0 for p in parts), 4) if closed else None,
+        surface_area=round(sum(p.surface_area for p in parts), 4),
+        triangles=sum(p.triangles for p in parts),
+        bodies=sum(p.bodies for p in parts),
+        watertight=closed,
+        winding_consistent=all(p.winding_consistent for p in parts),
+    )
+
+
+def _size(bounds: np.ndarray) -> tuple[float, float, float]:
+    return tuple(round(float(v), 4) for v in bounds[1] - bounds[0])  # type: ignore[return-value]

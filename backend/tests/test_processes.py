@@ -46,7 +46,7 @@ from hitlcad.core.structure import PartSpec, Tolerances
 
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
-SETTINGS = AnalysisSettings(tolerances=Tolerances(position_mm=0.01, angle_deg=0.05, motion_samples=8), overlap_mm3=1e-3,
+SETTINGS = AnalysisSettings(tolerances=Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000), overlap_mm3=1e-3,
                             mesh_tolerance_mm=0.01, wall_samples=3000)  # fmt: skip
 
 

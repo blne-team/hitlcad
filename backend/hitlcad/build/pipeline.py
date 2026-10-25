@@ -26,7 +26,6 @@ import numpy as np
 
 from hitlcad import materials
 from hitlcad.analysis.base import Analysis, Context, ResultCache, result
-from hitlcad.analysis.mesh import measure
 from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry, StructureError
 from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
 from hitlcad.backends.registry import BackendRegistry
@@ -335,7 +334,7 @@ class BuildPipeline:
 
     def _analyse(self, built: BuiltDesign) -> list[Result]:
         ctx = Context(built=built, settings=self.analysis_settings,
-                      bodies=BuildBodies(built, self.analysis_settings), cache=self.results_cache)  # fmt: skip
+                      bodies=BuildBodies(built, self.analysis_settings, self.results_cache), cache=self.results_cache)  # fmt: skip
         out: list[Result] = []
         for analysis in self.analyses:
             try:
@@ -352,9 +351,9 @@ class BuildPipeline:
         parts = [_part_result(built, p) for p in built.parts.values()]
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
-        mesh = built.mesh
-        return {"motions": _motions(built), "parts": parts, "instances": instances, "metrics": measure(mesh) if len(mesh.faces) else None,
-                "mass": _mass(built), "bom": bom(built)}  # fmt: skip
+        whole = BuildBodies(built, self.analysis_settings, self.results_cache).whole()
+        return {"motions": _motions(built), "parts": parts, "instances": instances,
+                "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
     async def _outputs(self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any]) -> list[Artifact]:
         # Backends write their own assembly files in their own processes, alongside the rest.
