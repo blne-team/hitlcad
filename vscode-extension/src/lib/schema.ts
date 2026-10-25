@@ -73,23 +73,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/designs/{design_id}/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Events */
-        get: operations["list_events_api_designs__design_id__events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/designs/{design_id}/build": {
         parameters: {
             query?: never;
@@ -361,13 +344,40 @@ export interface components {
         };
         /**
          * AgentSetup
-         * @description Which of the permission-gated pieces a project has.
+         * @description Which of the permission-gated pieces a project has, and the files they go in.
          */
         AgentSetup: {
             /** Hooks */
             hooks: boolean;
             /** Codex */
             codex: boolean;
+            /**
+             * Claude Hooks
+             * @description Claude Code's file for the hook, in the project
+             */
+            claude_hooks: string;
+            /**
+             * Codex Hooks
+             * @description Codex's user file for the hook
+             */
+            codex_hooks: string;
+            /**
+             * Codex Config
+             * @description Codex's user config.toml, for the MCP server
+             */
+            codex_config: string;
+        };
+        /** AnalysisInfo */
+        AnalysisInfo: {
+            /**
+             * Name
+             * @description What its results are filed under (`Result.analysis`)
+             */
+            name: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
         };
         /**
          * Artifact
@@ -385,6 +395,12 @@ export interface components {
              * @description source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name
              */
             role: string;
+            /**
+             * Label
+             * @description What the file is, for the panel's file list; empty for the files it shows its own way (sources, the 3D view, the preview)
+             * @default
+             */
+            label: string;
             /** Sha256 */
             sha256: string;
             /** Bytes */
@@ -537,6 +553,12 @@ export interface components {
             };
             /** Results */
             results: components["schemas"]["Result"][];
+            /**
+             * Problems
+             * @description The results that do not pass, by cause
+             */
+            problems: components["schemas"]["Problem"][];
+            tally: components["schemas"]["Tally"];
             /** Motions */
             motions: components["schemas"]["MotionRange"][];
             /** Bom */
@@ -588,28 +610,6 @@ export interface components {
                 [key: string]: components["schemas"]["BuildSpec"];
             };
         };
-        /** BuildStarted */
-        BuildStarted: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "build_started";
-            /** Origin */
-            origin: string;
-            /** Configuration */
-            configuration: string | null;
-        };
         /**
          * BuildStatus
          * @enum {string}
@@ -621,6 +621,16 @@ export interface components {
             version: string;
             /** Backends */
             backends: components["schemas"]["BackendInfo"][];
+            /**
+             * Analyses
+             * @description In the order they run: cause before effect
+             */
+            analyses: components["schemas"]["AnalysisInfo"][];
+            /**
+             * Python
+             * @description The interpreter that builds models: part files resolve their imports in it
+             */
+            python: string;
         };
         /**
          * Catalog
@@ -934,30 +944,6 @@ export interface components {
             /** Open Questions */
             open_questions: string[];
         };
-        /** DesignOpened */
-        DesignOpened: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "design_opened";
-            /** Path */
-            path: string;
-            /** Name */
-            name: string;
-            /** Backend */
-            backend: string;
-        };
         /** DesignSpec */
         DesignSpec: {
             /**
@@ -1082,31 +1068,24 @@ export interface components {
                 [key: string]: components["schemas"]["FeedbackDelivered"];
             };
         };
-        /**
-         * DesignUpdated
-         * @description design.json changed in a way the panel shows (name, backend, brief).
-         */
-        DesignUpdated: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "design_updated";
+        /** DesignSummary */
+        DesignSummary: {
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
             /** Name */
             name: string;
             /** Backend */
             backend: string;
-            brief: components["schemas"]["DesignBrief"] | null;
+            /** Revisions */
+            revisions: number;
+            /** Open Pins */
+            open_pins: number;
+            /** Building */
+            building: boolean;
+            /** Error */
+            error: string | null;
         };
         /** Dimension */
         Dimension: {
@@ -1131,26 +1110,6 @@ export interface components {
             values: {
                 [key: string]: unknown;
             };
-        };
-        /** ErrorRaised */
-        ErrorRaised: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "error";
-            /** Message */
-            message: string;
         };
         /**
          * FaceConnector
@@ -1224,6 +1183,16 @@ export interface components {
          */
         FdmProcess: {
             /**
+             * Hole Allowance Mm
+             * @default 0
+             */
+            hole_allowance_mm: number;
+            /**
+             * Shaft Allowance Mm
+             * @default 0
+             */
+            shaft_allowance_mm: number;
+            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
@@ -1281,16 +1250,6 @@ export interface components {
              * @default false
              */
             brim: boolean;
-            /**
-             * Hole Allowance Mm
-             * @default 0
-             */
-            hole_allowance_mm: number;
-            /**
-             * Shaft Allowance Mm
-             * @default 0
-             */
-            shaft_allowance_mm: number;
         };
         /**
          * FeedbackDelivered
@@ -1331,6 +1290,22 @@ export interface components {
             pins: {
                 [key: string]: string;
             };
+        };
+        /**
+         * Finding
+         * @description Results alike but for their pattern indices and numbers (screw[0] … screw[3] each too long), as one.
+         */
+        Finding: {
+            /**
+             * Results
+             * @description Indices into the report's results; the first stands for the rest
+             */
+            results: number[];
+            /**
+             * Indices
+             * @description The pattern indices they are at
+             */
+            indices: number[];
         };
         /**
          * Fit
@@ -1807,6 +1782,32 @@ export interface components {
             /** @description Scaffold the folder when it is not a design yet */
             create?: components["schemas"]["CreateDesign"] | null;
         };
+        /** OpenedDesign */
+        OpenedDesign: {
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /** Backend */
+            backend: string;
+            /** Revisions */
+            revisions: number;
+            /** Open Pins */
+            open_pins: number;
+            /** Building */
+            building: boolean;
+            /** Error */
+            error: string | null;
+            /** Created */
+            created: boolean;
+            /**
+             * Files
+             * @description What creating it wrote
+             */
+            files: string[];
+        };
         /**
          * ParamSpec
          * @description A named, user-tunable input of a parametric model.
@@ -2007,26 +2008,6 @@ export interface components {
              */
             reply: string;
         };
-        /** PinsChanged */
-        PinsChanged: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "pins_changed";
-            /** Pins */
-            pins: components["schemas"]["Pin"][];
-        };
         /**
          * PlanarMate
          * @description Slides in the plane and turns about Z: b's origin on a's plane (apart by `offset`), Z axes face each other.
@@ -2062,6 +2043,38 @@ export interface components {
              * @default 0
              */
             offset: number;
+        };
+        /**
+         * Problem
+         * @description The results that share a cause, and problems alike but for their pattern indices, as one.
+         */
+        Problem: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "fail" | "unverified";
+            /**
+             * Severity
+             * @description error, or warning when every failing check in it is a warning
+             * @enum {string}
+             */
+            severity: "error" | "warning" | "info";
+            /**
+             * Findings
+             * @description The first analysis to run that saw it leads; the rest saw it too
+             */
+            findings: components["schemas"]["Finding"][];
+        };
+        /** ProjectCreated */
+        ProjectCreated: {
+            /** Path */
+            path: string;
+            /**
+             * Created
+             * @description The files written or brought up to date
+             */
+            created: string[];
         };
         /**
          * RackRelation
@@ -2117,6 +2130,16 @@ export interface components {
          */
         ResinProcess: {
             /**
+             * Hole Allowance Mm
+             * @default 0
+             */
+            hole_allowance_mm: number;
+            /**
+             * Shaft Allowance Mm
+             * @default 0
+             */
+            shaft_allowance_mm: number;
+            /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
@@ -2133,16 +2156,6 @@ export interface components {
              * @default 3.5
              */
             min_drain_mm: number;
-            /**
-             * Hole Allowance Mm
-             * @default 0
-             */
-            hole_allowance_mm: number;
-            /**
-             * Shaft Allowance Mm
-             * @default 0
-             */
-            shaft_allowance_mm: number;
         };
         /**
          * Result
@@ -2166,6 +2179,7 @@ export interface components {
             status: "pass" | "fail" | "unverified";
             /**
              * Severity
+             * @description info: not a check (an overlap expected, a mate held)
              * @default error
              * @enum {string}
              */
@@ -2181,6 +2195,12 @@ export interface components {
             values: {
                 [key: string]: number | string | boolean;
             };
+            /**
+             * Cause
+             * @description The problem it follows from, where other analyses may see it too (`Cause`: 'overlap:duct|impeller'); empty, it is its own
+             * @default
+             */
+            cause: string;
         };
         /** Revision */
         Revision: {
@@ -2205,25 +2225,6 @@ export interface components {
              */
             summary: string;
             report: components["schemas"]["BuildReport"];
-        };
-        /** RevisionCreated */
-        RevisionCreated: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "revision_created";
-            revision: components["schemas"]["Revision"];
         };
         /**
          * RevoluteMate
@@ -2325,26 +2326,6 @@ export interface components {
              * @description mm per turn
              */
             lead: number;
-        };
-        /** SelectionChanged */
-        SelectionChanged: {
-            /**
-             * Seq
-             * @default 0
-             */
-            seq: number;
-            /**
-             * Ts
-             * Format: date-time
-             */
-            ts: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "selection_changed";
-            /** Items */
-            items: components["schemas"]["SelectionItem"][];
         };
         /**
          * SelectionItem
@@ -2555,6 +2536,48 @@ export interface components {
             };
         };
         /**
+         * Tally
+         * @description A report's results counted by problem; info results are not checks.
+         */
+        Tally: {
+            /**
+             * Problems
+             * @description Failing problems
+             * @default 0
+             */
+            problems: number;
+            /**
+             * Failing
+             * @description Failing checks in them
+             * @default 0
+             */
+            failing: number;
+            /**
+             * Warnings
+             * @description Failing problems of warnings only
+             * @default 0
+             */
+            warnings: number;
+            /**
+             * Unverified
+             * @description Problems no check could settle
+             * @default 0
+             */
+            unverified: number;
+            /**
+             * Passing
+             * @description Passing checks
+             * @default 0
+             */
+            passing: number;
+            /**
+             * Text
+             * @description As the agent reads it: '2 problems (5 failing checks), 1 unverified; 147 checks pass'
+             * @default
+             */
+            text: string;
+        };
+        /**
          * Tolerances
          * @description Resolved verification settings: the design's own, over hitlcad's settings.
          */
@@ -2645,6 +2668,218 @@ export interface components {
             /** Min */
             min: number | string;
         };
+        /** BuildStarted */
+        BuildStarted: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "build_started";
+            /** Origin */
+            origin: string;
+            /**
+             * Configuration
+             * @default null
+             */
+            configuration: string | null;
+        };
+        /**
+         * ComponentRef
+         * @description What a 3D view pick hit on a B-rep build: a face, edge or vertex of one instance, numbered as
+         *     `faces()` / `edges()` / `vertices()` of that instance's part (`build/parts/<part>.step`), or
+         *     the whole instance (`solid`, index 0).
+         */
+        ComponentRef: {
+            /**
+             * Instance
+             * @description Instance address, e.g. 'lid' or 'tilt/planet[2]'
+             */
+            instance: string;
+            /**
+             * Topo
+             * @enum {string}
+             */
+            topo: "face" | "edge" | "vertex" | "solid";
+            /**
+             * Index
+             * @default 0
+             */
+            index: number;
+        };
+        /** DesignOpened */
+        DesignOpened: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "design_opened";
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /** Backend */
+            backend: string;
+        };
+        /**
+         * DesignUpdated
+         * @description design.json changed in a way the panel shows (name, backend, brief).
+         */
+        DesignUpdated: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "design_updated";
+            /** Name */
+            name: string;
+            /** Backend */
+            backend: string;
+            /** @default null */
+            brief: components["schemas"]["DesignBrief"] | null;
+        };
+        /** ErrorRaised */
+        ErrorRaised: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+            /** Message */
+            message: string;
+        };
+        /** PinsChanged */
+        PinsChanged: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pins_changed";
+            /** Pins */
+            pins: components["schemas"]["Pin"][];
+        };
+        /** RevisionCreated */
+        RevisionCreated: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "revision_created";
+            revision: components["schemas"]["Revision"];
+        };
+        /** SelectionChanged */
+        SelectionChanged: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "selection_changed";
+            /** Items */
+            items: components["schemas"]["SelectionItem"][];
+        };
+        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildStarted"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["FeedbackDelivered"];
+        /**
+         * BuildActivity
+         * @description A build that finished, one message of the /api/activity WebSocket.
+         */
+        BuildActivity: {
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /** Backend */
+            backend: string;
+            /** Revisions */
+            revisions: number;
+            /** Open Pins */
+            open_pins: number;
+            /** Building */
+            building: boolean;
+            /**
+             * Error
+             * @description Why the build failed
+             */
+            error: string | null;
+            /** Revision */
+            revision: number;
+            status: components["schemas"]["BuildStatus"];
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "file" | "parameter_edit";
+        };
     };
     responses: never;
     parameters: never;
@@ -2711,9 +2946,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["DesignSummary"][];
                 };
             };
         };
@@ -2737,9 +2970,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OpenedDesign"];
                 };
             };
             /** @description Validation Error */
@@ -2771,39 +3002,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesignState"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_events_api_designs__design_id__events_get: {
-        parameters: {
-            query?: {
-                after?: number;
-            };
-            header?: never;
-            path: {
-                design_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": (components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildStarted"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["FeedbackDelivered"])[];
                 };
             };
             /** @description Validation Error */
@@ -3174,9 +3372,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProjectCreated"];
                 };
             };
             /** @description Validation Error */
