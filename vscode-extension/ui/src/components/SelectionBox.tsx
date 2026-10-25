@@ -1,9 +1,8 @@
 import type { SelectionItem } from "../api/types";
-import { copyForChat, hasPoint } from "../lib/selection";
+import { copyForChat } from "../lib/selection";
 
 interface Props {
   items: SelectionItem[];
-  text: string;
   busy: boolean;
   error: string | null;
   onClear: () => void;
@@ -12,7 +11,7 @@ interface Props {
 }
 
 /** Compact overlay listing what the human selected, with actions that hand it to the agent's chat. */
-export function SelectionBox({ items, text, busy, error, onClear, status }: Props) {
+export function SelectionBox({ items, busy, error, onClear, status }: Props) {
   if (!items.length && !busy && !error) return null;
   return (
     <section className="selection-box" aria-label="Selection" aria-live="polite">
@@ -28,10 +27,7 @@ export function SelectionBox({ items, text, busy, error, onClear, status }: Prop
               <span className="sel-badge" aria-hidden>
                 {i + 1}
               </span>
-              <span>
-                {it.label}
-                {!hasPoint(it.label) && <span className="muted tiny"> at ({it.point.map((v) => v.toFixed(1)).join(", ")})</span>}
-              </span>
+              <span>{it.label}</span>
             </li>
           ))}
         </ol>
@@ -42,7 +38,7 @@ export function SelectionBox({ items, text, busy, error, onClear, status }: Prop
         <button
           type="button"
           className="button small primary"
-          disabled={!text}
+          disabled={!items.length}
           title="Copy the selections and open pins of every design in the workspace"
           onClick={copyForChat}
         >

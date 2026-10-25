@@ -1,7 +1,8 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
-import { designDirFor, designName } from "./designs";
+import { designDirFor } from "./designs";
 
-/** "hitlcad: <name>" while the active file belongs to a design folder. */
+/** "hitlcad: <folder>" while the active file belongs to a design folder. */
 export function registerStatusBar(ctx: vscode.ExtensionContext): void {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   item.command = "hitlcad.showPanel";
@@ -13,15 +14,9 @@ export function registerStatusBar(ctx: vscode.ExtensionContext): void {
       item.hide();
       return;
     }
-    item.text = `$(symbol-misc) hitlcad: ${designName(dir)}`;
+    item.text = `$(symbol-misc) hitlcad: ${path.basename(dir)}`;
     item.show();
   };
-  ctx.subscriptions.push(
-    item,
-    vscode.window.onDidChangeActiveTextEditor(update),
-    vscode.workspace.onDidSaveTextDocument((d) => {
-      if (d.fileName.endsWith("design.json")) update();
-    }),
-  );
+  ctx.subscriptions.push(item, vscode.window.onDidChangeActiveTextEditor(update));
   update();
 }

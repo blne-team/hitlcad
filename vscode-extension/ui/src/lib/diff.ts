@@ -1,32 +1,16 @@
+import { diffLines as lineChanges } from "diff";
+
 interface DiffLine {
   kind: " " | "+" | "-";
   text: string;
 }
 
-/** Line diff via longest common subsequence; fine for model files of a few hundred lines. */
+/** Line by line: what `after` keeps, adds and removes of `before`. */
 export function diffLines(before: string, after: string): DiffLine[] {
-  const a = before.split("\n");
-  const b = after.split("\n");
-  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
-    }
-  }
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      out.push({ kind: " ", text: a[i]! });
-      i++;
-      j++;
-    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) out.push({ kind: "-", text: a[i++]! });
-    else out.push({ kind: "+", text: b[j++]! });
-  }
-  while (i < a.length) out.push({ kind: "-", text: a[i++]! });
-  while (j < b.length) out.push({ kind: "+", text: b[j++]! });
-  return out;
+  return lineChanges(before, after).flatMap((c) => {
+    const kind = c.added ? "+" : c.removed ? "-" : " ";
+    return c.value.replace(/\n$/, "").split("\n").map((text) => ({ kind, text }));
+  });
 }
 
 /** Changed lines with `context` unchanged lines around them; `null` marks skipped stretches. */

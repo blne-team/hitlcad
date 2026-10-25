@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { api } from "../api/client";
 import type { DesignState, Revision } from "../api/types";
 import { useDesign } from "../hooks/useDesign";
 import { baseRevision, currentRevision, type DesignUi, type InspectorTab, useDesignUi } from "../lib/designUi";
@@ -59,9 +58,7 @@ export const TABS: Tab[] = [
         revision={revision}
         configuration={ui.configuration}
         latest={state.revisions[state.revisions.length - 1]?.id ?? null}
-        onSelect={(instance, point) =>
-          void api.setSelection(id, revision?.id ?? null, [{ point, normal: null, component: { instance, topo: "solid", index: 0 } }]).then(refresh)
-        }
+        onSelected={refresh}
       />
     ),
   },

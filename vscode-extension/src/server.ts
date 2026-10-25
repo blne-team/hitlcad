@@ -22,18 +22,13 @@ export class ServerManager implements vscode.Disposable {
   ) {}
 
   /** Resolve when the server answers /api/health, starting it if allowed. */
-  async ensure(opts: { quiet?: boolean } = {}): Promise<void> {
+  async ensure(): Promise<void> {
     if (await this.api.health()) return this.checkVersion();
-    if (!config().get<boolean>("autoStart", true)) {
+    if (!config().get<boolean>("autoStart")) {
       throw new Error(`The hitlcad server is not running at ${serverUrl()}. Start it or enable hitlcad.autoStart.`);
     }
     this.starting ??= this.start().finally(() => (this.starting = null));
-    try {
-      await this.starting;
-    } catch (e) {
-      if (!opts.quiet) void showError(e, this.output);
-      throw e;
-    }
+    await this.starting;
     await this.checkVersion();
   }
 
@@ -54,7 +49,7 @@ export class ServerManager implements vscode.Disposable {
       configured: config().get<string[]>("serverCommand"),
       configuredCwd: config().get<string>("serverCwd"),
       folders: workspaceFolderInfo(),
-      onPath: (exe) => whichSync(exe, searchPath, isExecutable, process.env.PATHEXT ?? "") !== null,
+      which: (exe) => whichSync(exe, searchPath, isExecutable, process.platform === "win32"),
     });
     if (!resolution.ok) throw new Error(resolution.error);
     const [cmd, ...args] = resolution.command;
@@ -69,9 +64,14 @@ export class ServerManager implements vscode.Disposable {
       stream?.setEncoding("utf8"); // decodes across chunks: a character may arrive split in two
       stream?.on("data", (d: string) => this.output.append(d));
     }
+    let running = true;
     const exited = new Promise<never>((_, reject) => {
-      child.once("error", (e) => reject(new Error(`Could not start ${cmd}: ${e.message}`)));
+      child.once("error", (e) => {
+        running = false;
+        reject(new Error(`Could not start ${cmd}: ${e.message}`));
+      });
       child.once("exit", (code, signal) => {
+        running = false;
         if (this.child === child) this.child = null;
         reject(new Error(`The hitlcad server exited (${signal ?? `code ${code}`}) before it was ready.`));
       });
@@ -80,18 +80,19 @@ export class ServerManager implements vscode.Disposable {
 
     const deadline = Date.now() + STARTUP_TIMEOUT_MS;
     const healthy = (async () => {
-      while (Date.now() < deadline) {
+      while (running) {
         if (await this.api.health(1000)) return;
+        if (Date.now() >= deadline) throw new Error(`The hitlcad server did not become ready within ${STARTUP_TIMEOUT_MS / 1000} s.`);
         await new Promise((r) => setTimeout(r, 500));
       }
-      throw new Error(`The hitlcad server did not become ready within ${STARTUP_TIMEOUT_MS / 1000} s.`);
     })();
-    await Promise.race([healthy, exited]);
+    try {
+      await Promise.race([healthy, exited]);
+    } catch (e) {
+      child.kill(); // a server that never became ready must not linger beside the next attempt's
+      throw e;
+    }
     this.output.appendLine(`hitlcad server ready at ${serverUrl()}`);
-  }
-
-  get startedByUs(): boolean {
-    return this.child !== null;
   }
 
   dispose(): void {
@@ -108,7 +109,7 @@ export function config(): vscode.WorkspaceConfiguration {
 }
 
 export function serverUrl(): string {
-  return (config().get<string>("serverUrl") || "http://127.0.0.1:8000").replace(/\/+$/, "");
+  return config().get<string>("serverUrl")!.replace(/\/+$/, "");
 }
 
 export async function showError(e: unknown, output: vscode.OutputChannel): Promise<void> {

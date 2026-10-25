@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { ServerManager } from "./server";
 import { messageHtml, panelOptions, panelPage, type SelectionStore } from "./webview";
@@ -18,15 +19,19 @@ export class ModelViewerProvider implements vscode.CustomReadonlyEditorProvider 
 
   async resolveCustomEditor(document: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
     panel.webview.options = panelOptions(this.extensionUri);
-    const name = document.uri.path.split("/").pop() ?? "model";
+    const name = path.basename(document.uri.fsPath);
+    let disposed = false;
+    panel.onDidDispose(() => (disposed = true));
     panel.webview.html = messageHtml(`Starting the hitlcad server to show ${name}…`);
     try {
       await this.server.ensure();
     } catch (e) {
-      panel.webview.html = messageHtml(`Could not show ${name}: ${(e as Error).message}`);
+      if (!disposed) panel.webview.html = messageHtml(`Could not show ${name}: ${(e as Error).message}`);
       return;
     }
-    panel.webview.html = await panelPage(panel.webview, this.extensionUri, { name: "file", path: document.uri.fsPath }, `hitlcad: ${name}`);
+    const html = await panelPage(panel.webview, this.extensionUri, { name: "file", path: document.uri.fsPath }, `hitlcad: ${name}`);
+    if (disposed) return; // the tab was closed while the server started
+    panel.webview.html = html;
     const tracking = this.selections.track(panel);
     panel.onDidDispose(() => tracking.dispose());
   }

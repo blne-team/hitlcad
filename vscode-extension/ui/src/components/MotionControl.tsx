@@ -22,7 +22,10 @@ export function MotionControl({ motions, onMotion }: Props) {
         : null,
     [range, value],
   );
-  useEffect(() => onMotion(motion), [motion, onMotion]);
+  useEffect(() => {
+    onMotion(motion);
+    return () => onMotion(null); // gone with its revision: the next one shows its parts as built
+  }, [motion, onMotion]);
   if (!range) return null;
   const unit = range.kind === "angle" ? "°" : " mm";
   const [lo, hi] = range.continuous ? [range.current, range.current + 360] : [range.start, range.end];

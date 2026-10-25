@@ -5,6 +5,8 @@ import * as vscode from "vscode";
 import { askAgentSetup } from "./agents";
 import { type Api, ApiError, type DesignInfo } from "./api";
 import { activeDesignDir, hasDesign } from "./designs";
+import { DESIGN_FILE, PROJECT_DESIGNS } from "./lib/designLookup";
+import type { RevisionFile } from "./lib/uiState";
 import { slugify } from "./lib/slug";
 import { MODEL_VIEW_TYPE } from "./modelViewer";
 import type { DesignPanels, DesignRef } from "./panels";
@@ -30,7 +32,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
     ctx.subscriptions.push(
       vscode.commands.registerCommand(id, async (...args: never[]) => {
         try {
-          if (needsServer) await server.ensure({ quiet: true });
+          if (needsServer) await server.ensure();
           await fn(...args);
         } catch (e) {
           await showError(e, server.output);
@@ -94,7 +96,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
   };
 
   const openEditorAndPanel = async (design: DesignRef) => {
-    const structure = path.join(design.path, "design.json"); // the structure: parts, connectors, mates
+    const structure = path.join(design.path, DESIGN_FILE); // the structure: parts, connectors, mates
     if (fs.existsSync(structure)) {
       await vscode.window.showTextDocument(vscode.Uri.file(structure), { viewColumn: vscode.ViewColumn.One, preview: false });
     }
@@ -148,7 +150,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
     // A project keeps its designs in designs/, so the name is all there is to ask; elsewhere, where first.
     // (Open Design on any folder without a design.json offers to create one there.)
     const root = firstFolder();
-    const designsDir = root ? path.join(root.fsPath, "designs") : null;
+    const designsDir = root ? path.join(root.fsPath, PROJECT_DESIGNS) : null;
     let parent = designsDir && fs.existsSync(designsDir) ? designsDir : null;
     if (!parent) {
       const picked = await vscode.window.showOpenDialog({
@@ -247,6 +249,17 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
   });
 
   command("hitlcad.copyForChat", () => copyForChat(api, selections));
+
+  // From a design's Results: a copy of one of a revision's files (they live in the server's data folder).
+  command("hitlcad.saveFile", async (file: RevisionFile) => {
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.joinPath(firstFolder() ?? vscode.Uri.file(os.homedir()), file.name),
+      title: `Save ${file.path} of revision ${file.revision}`,
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(target, await api.revisionFile(file));
+    vscode.window.setStatusBarMessage(`hitlcad: saved ${path.basename(target.fsPath)}`, 4000);
+  });
 
   // ------------------------------------------------------------------ server
 

@@ -9,7 +9,8 @@ interface Props {
   configuration: string | null;
   /** The latest revision's id: the graph is refetched when a build lands. */
   latest: number | null;
-  onSelect: (instance: string, point: [number, number, number]) => void;
+  /** A part was selected (the design's selection, as a click in the 3D view makes it). */
+  onSelected: () => void;
 }
 
 const NODE_W = 150;
@@ -41,9 +42,10 @@ function layout(graph: StructureGraph): Layout {
 }
 
 /** The design's structure: parts and components, and the mates, relations and fastener sets between them. */
-export function StructurePanel({ designId, revision, configuration, latest, onSelect }: Props) {
+export function StructurePanel({ designId, revision, configuration, latest, onSelected }: Props) {
   const [data, setData] = useState<Structure | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectError, setSelectError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,10 +63,17 @@ export function StructurePanel({ designId, revision, configuration, latest, onSe
   if (!data || !drawn) return <p className="muted pad">Reading the structure…</p>;
   if (!data.graph.nodes.length) return <p className="muted pad">No parts declared yet: your agent declares them in design.json.</p>;
 
-  const select = (id: string) => {
+  const select = async (id: string) => {
     const inst = revision?.report.instances.find((i) => i.part === id);
-    if (!inst) return;
-    onSelect(inst.path, [inst.transform[0]![3]!, inst.transform[1]![3]!, inst.transform[2]![3]!]);
+    if (!revision || !inst) return;
+    const point: [number, number, number] = [inst.transform[0]![3]!, inst.transform[1]![3]!, inst.transform[2]![3]!];
+    setSelectError(null);
+    try {
+      await api.setSelection(designId, revision.id, [{ point, normal: null, component: { instance: inst.path, topo: "solid", index: 0 } }]);
+      onSelected();
+    } catch (e) {
+      setSelectError(e instanceof Error ? e.message : String(e));
+    }
   };
   const failing = data.graph.edges.filter((e) => e.status === "fail");
 
@@ -96,7 +105,7 @@ export function StructurePanel({ designId, revision, configuration, latest, onSe
           })}
           {drawn.nodes.map((n) => (
             <g key={n.id} className={`node node-${n.kind} st-${n.status}${n.id === data.graph.ground ? " ground" : ""}`}
-              transform={`translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})`} onClick={() => select(n.id)}>
+              transform={`translate(${n.x - NODE_W / 2},${n.y - NODE_H / 2})`} onClick={() => void select(n.id)}>
               <title>{`${n.label}: ${n.role} (${KIND[n.kind]})`}</title>
               <rect width={NODE_W} height={NODE_H} rx={6} />
               <text x={10} y={19} className="node-label">
@@ -111,6 +120,7 @@ export function StructurePanel({ designId, revision, configuration, latest, onSe
           ))}
         </svg>
       </div>
+      {selectError && <p className="notice fail">{selectError}</p>}
       <details>
         <summary>What your agent reads</summary>
         <pre className="code">{data.overview}</pre>

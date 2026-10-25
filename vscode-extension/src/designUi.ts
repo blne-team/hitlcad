@@ -34,6 +34,8 @@ export class DesignUiHub {
       void vscode.commands.executeCommand("hitlcad.copyForChat");
     } else if (msg?.kind === "fullscreen") {
       void vscode.commands.executeCommand("workbench.action.toggleZenMode");
+    } else if (msg?.kind === "save") {
+      void vscode.commands.executeCommand("hitlcad.saveFile", msg.file);
     }
   }
 }

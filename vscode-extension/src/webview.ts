@@ -11,6 +11,7 @@ export function panelOptions(extensionUri: vscode.Uri): vscode.WebviewOptions {
 
 /** The page that runs the panel UI in `webview`, talking to the server at the URL the webview can reach (also in remote setups). */
 export async function panelPage(webview: vscode.Webview, extensionUri: vscode.Uri, view: PanelView, title: string): Promise<string> {
+  // vscode.Uri gives a bare origin the path "/", which the panel's `server + path` must not double
   const server = (await vscode.env.asExternalUri(vscode.Uri.parse(serverUrl()))).toString(true).replace(/\/+$/, "");
   return panelHtml({
     assets: webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out", "ui")).toString(),

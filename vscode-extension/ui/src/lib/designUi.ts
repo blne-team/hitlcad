@@ -51,7 +51,7 @@ export function useDesignUi(): [DesignUi, Update] {
 /** The revision `ui.revision` names, else the latest successful one of the configuration, else its latest. */
 export function currentRevision(revisions: Revision[], chosen: number | null, configuration: string | null = null): Revision | null {
   if (chosen !== null) return revisions.find((r) => r.id === chosen) ?? null;
-  const own = revisions.filter((r) => (r.spec.configuration ?? null) === configuration);
+  const own = revisions.filter((r) => r.spec.configuration === configuration);
   return [...own].reverse().find((r) => r.report.status === "succeeded") ?? own[own.length - 1] ?? null;
 }
 
