@@ -21,6 +21,9 @@ dependencies = [
   "pillow>=11",
   "ocp-tessellate>=3.5,<3.6",  # output format of three-cad-viewer 5.0.x (vscode-extension/ui); upgrade the two together
   "manifold3d>=3",
+  # rays and nearest points on a mesh through its AABB tree, in C++: wall thickness, overhang and undercut checks
+  "libigl>=2.6.3",
+  "scipy>=1.13",  # nearest samples, convex hulls and connected regions for the manufacturing checks
   "networkx>=3",  # trimesh needs it to measure meshes that are not closed
   "tomlkit>=0.15.1",
   "bd-warehouse>=0.4.0",  # the standard-parts catalog provider: ISO/ASME fasteners, inserts, bearings

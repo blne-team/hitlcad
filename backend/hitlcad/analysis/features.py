@@ -133,8 +133,14 @@ class Features(ABC):
         """Separate solids."""
 
     @abstractmethod
-    def inside_corners(self) -> list[InsideCorner]:
+    def inside_corners(self, tol: Tolerances) -> list[InsideCorner]:
         """Concave corners: sharp edges, and concave cylinders short of a full round hole."""
+
+    @abstractmethod
+    def bends(self, thickness: float, slack: float, tol: Tolerances) -> list[InsideCorner]:
+        """A sheet's bends, by their inside radius: coaxial cylinders, inside r and outside r + `thickness`
+        (± `slack`), and sharp (radius 0) concave edges between two faces that each have the sheet's other side
+        `thickness` behind them, unlike the corners of a cut-out."""
 
     @abstractmethod
     def topology(self, kind: str) -> list[Any]:
@@ -196,33 +202,65 @@ class BrepFeatures(Features):
     def exact(self) -> Any:
         return self.shape
 
-    def inside_corners(self) -> list[InsideCorner]:
-        out = []
+    def inside_corners(self, tol: Tolerances) -> list[InsideCorner]:
+        return [_sharp(edge) for edge, _ in self._concave_edges(tol)] + [
+            corner for corner, convex, _ in self._cylinders() if not convex
+        ]
+
+    def bends(self, thickness: float, slack: float, tol: Tolerances) -> list[InsideCorner]:
+        cylinders = self._cylinders()
+        outside = [(c.radius, axis) for c, convex, axis in cylinders if convex]
+        rounded = [
+            corner
+            for corner, convex, axis in cylinders
+            if not convex
+            and any(abs(r - corner.radius - thickness) <= slack and _coaxial(axis, a, tol) for r, a in outside)
+        ]
+        faces = self.shape.faces()
+        sharp = [
+            _sharp(edge)
+            for edge, pair in self._concave_edges(tol)
+            if all(_sheet_behind(face, faces, thickness, slack, tol) for face in pair)
+        ]
+        return rounded + sharp
+
+    def _concave_edges(self, tol: Tolerances) -> list[tuple[Any, list[Any]]]:
+        """Straight edges where two faces meet in a concave corner, with the two faces. Concave is decided at the
+        edge: the faces' normals there turn about the edge, as it runs in the first face, the concave way.
+        Faces meeting tangentially (a fillet's edge) make no corner."""
         faces_of: dict[Any, list[Any]] = defaultdict(list)  # build123d shapes hash by OCC sameness
         for face in self.shape.faces():
-            for edge in face.edges():
+            for edge in face.edges():  # the key is the edge as it runs in the first face that has it
                 faces_of[edge].append(face)
+        out = []
         for edge, faces in faces_of.items():
             if edge.geom_type.name != "LINE" or len(faces) != 2:
                 continue
             mid = edge.position_at(0.5)
-            if (
-                float(faces[0].normal_at(mid).dot(faces[1].center() - mid)) > 0
-            ):  # the second face rises on the outer side
-                out.append(InsideCorner(0.0, tuple(_vec(edge.tangent_at(0))), edge.length, tuple(_vec(mid))))
+            first, second = (face.normal_at(mid) for face in faces)
+            if first.get_angle(second) <= tol.angle_deg:
+                continue
+            if first.cross(second).dot(edge.tangent_at(0.5)) < 0:
+                out.append((edge, faces))
+        return out
+
+    def _cylinders(self) -> list[tuple[InsideCorner, bool, tuple[Any, Any]]]:
+        """Each cylindrical face short of a full round hole: as a corner, whether it is convex (faces away from
+        its axis), and its axis (a point and a direction)."""
+        out = []
         for face in self.shape.faces():
             if face.geom_type.name != "CYLINDER":
                 continue
             axis = face.axis_of_rotation
             p = face.position_at(0.5, 0.5)
             radial = (p - axis.position) - axis.direction * (p - axis.position).dot(axis.direction)
-            if face.normal_at(p).dot(radial) >= 0:
-                continue  # faces away from its axis: convex
+            convex = face.normal_at(p).dot(radial) >= 0
             along = [(v.center() - axis.position).dot(axis.direction) for v in face.vertices()] or [0.0]
             extent = max(along) - min(along)
-            if extent > 0 and face.area / (face.radius * extent) >= FULL_CIRCLE * 2 * math.pi:
+            if not convex and extent > 0 and face.area / (face.radius * extent) >= FULL_CIRCLE * 2 * math.pi:
                 continue  # a full round hole
-            out.append(InsideCorner(face.radius, tuple(_vec(axis.direction)), extent, tuple(_vec(p))))
+            corner = InsideCorner(face.radius, tuple(_vec(axis.direction)), extent, tuple(_vec(p)))
+            out.append((corner, convex, (axis.position, axis.direction)))
         return out
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
@@ -305,6 +343,32 @@ class BrepFeatures(Features):
         return holes
 
 
+def _sharp(edge: Any) -> InsideCorner:
+    return InsideCorner(0.0, tuple(_vec(edge.tangent_at(0))), edge.length, tuple(_vec(edge.position_at(0.5))))
+
+
+def _coaxial(a: tuple[Any, Any], b: tuple[Any, Any], tol: Tolerances) -> bool:
+    """Whether two axes (point, direction) are one line."""
+    (pa, da), (pb, db) = a, b
+    if min(fr.angle_deg(_vec(da), _vec(db)), fr.angle_deg(_vec(da), _vec(-db))) > tol.angle_deg:
+        return False
+    return fr.distance_to_line(_vec(pb), _vec(pa), _vec(da)) <= tol.position_mm
+
+
+def _sheet_behind(face: Any, faces: list[Any], thickness: float, slack: float, tol: Tolerances) -> bool:
+    """Whether a planar face has the sheet's other side behind it: a planar face turned the other way,
+    `thickness` (± `slack`) deeper into the part."""
+    if not face.is_planar:
+        return False
+    normal, at = face.normal_at(), face.center()
+    return any(
+        other.is_planar
+        and fr.angle_deg(_vec(other.normal_at()), _vec(-normal)) <= tol.angle_deg
+        and abs((at - other.center()).dot(normal) - thickness) <= slack
+        for other in faces
+    )
+
+
 def _touching(extents: list[tuple[float, float]], tol: float) -> list[tuple[float, float]]:
     """Extents along an axis, those that touch merged: one coaxial feature each, not every hole on the axis."""
     merged: list[list[float]] = []
@@ -355,8 +419,11 @@ class MeshFeatures(Features):
     def bodies(self) -> int:
         return self.mesh.body_count
 
-    def inside_corners(self) -> list[InsideCorner]:
+    def inside_corners(self, tol: Tolerances) -> list[InsideCorner]:
         raise Unmeasurable(f"inside corner radii are measured on B-rep faces; {self.name} is a mesh")
+
+    def bends(self, thickness: float, slack: float, tol: Tolerances) -> list[InsideCorner]:
+        raise Unmeasurable(f"bends are measured on B-rep faces; {self.name} is a mesh")
 
     def topology(self, kind: str) -> list[Any]:
         raise Unmeasurable(f"{self.name} is a mesh: it has no faces, edges or vertices; pick a point on it")
