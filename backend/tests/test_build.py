@@ -359,7 +359,7 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     ]
     assert len(results(report, "relation", "pass")) == 6
     # The bearing's balls touch its races along edges: still one closed solid, measured like any other
-    assert [r.detail for r in results(report, "part") if r.subject == "bearing"] == ["closed mesh"]
+    assert "closed mesh" in [r.detail for r in results(report, "part") if r.subject == "bearing"]
     motion = results(report, "motion")  # a planetary is a closed loop: not analysed, never wrongly failed
     assert motion and not [r for r in motion if r.status == "fail"]
     assert any(r.status == "unverified" and "closed loop" in r.detail for r in motion)

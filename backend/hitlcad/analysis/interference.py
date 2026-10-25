@@ -96,7 +96,7 @@ def _depth(piece: manifold3d.Manifold) -> float:
     mesh = piece.to_mesh()
     solid = trimesh.Trimesh(mesh.vert_properties[:, :3], mesh.tri_verts)
     across = float(trimesh.bounds.oriented_bounds(solid)[1].min())
-    _, thickness = wall_thickness(solid, DEPTH_SAMPLES)
+    thickness = wall_thickness(solid, DEPTH_SAMPLES).thickness
     measured = thickness[np.isfinite(thickness)]
     return min(across, float(np.median(measured))) if len(measured) else across
 
