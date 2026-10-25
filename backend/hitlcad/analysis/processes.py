@@ -85,9 +85,9 @@ logging.getLogger("trimesh.sample").setLevel(logging.ERROR)
 class Walls:
     """Wall thickness over a part's surface, at points spread evenly over it (the first `even`, `spacing` mm
     apart) and then at points sampled densely round the thinnest of them (inf: not measured, where no line
-    through the part leaves by a wall). Each point reads, of the NEIGHBOURS samples nearest it, the AGREE-th thinnest (`thin`) and
-    the AGREE-th thickest (`thick`): the thickness at least AGREE of them go under, or over. The thinnest
-    wall, `thinnest`, is at `at`."""
+    through the part leaves by a wall). Each point reads, of the NEIGHBOURS samples nearest it, the AGREE-th
+    thinnest (`thin`) and the AGREE-th thickest (`thick`): the thickness at least AGREE of them go under, or
+    over. The thinnest wall, `thinnest`, is at `at`."""
 
     points: np.ndarray
     thin: np.ndarray
