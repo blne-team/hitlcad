@@ -219,7 +219,7 @@ def test_every_code_the_build_process_writes_has_a_kind() -> None:
 
 #: A build process as the entry scripts are: it waits for its job's path on stdin, then works in the job's folder.
 WAITING = ("import os, pathlib, sys, time; job = pathlib.Path(sys.stdin.readline().strip()); os.chdir(job.parent); "
-           "time.sleep(0.2); pathlib.Path('done').write_text(f'{os.getpid()} {os.environ[\"TMPDIR\"]}')")  # fmt: skip
+           "time.sleep(0.2); pathlib.Path('done').write_text(f'{os.getpid()} {os.getppid()} {os.environ[\"TMPDIR\"]}')")  # fmt: skip
 
 
 async def test_a_build_process_kept_started_takes_the_next_job_and_its_limits_count_from_it(tmp_path: Path) -> None:
@@ -235,8 +235,9 @@ async def test_a_build_process_kept_started_takes_the_next_job_and_its_limits_co
     job.parent.mkdir()
     run = await executor.run_job(argv, job, timeout_s=1)
     assert (run.returncode, run.stopped) == (0, None)
-    pid, tmp = (job.parent / "done").read_text(encoding="utf-8").split(" ")
-    assert int(pid) == spare.proc.pid and tmp == str(spare.folder)  # it ran in the job's folder, started elsewhere
+    pid, parent, tmp = (job.parent / "done").read_text(encoding="utf-8").split(" ", 2)
+    # it ran in the job's folder, started elsewhere; on Windows a venv's python.exe starts the interpreter as its child
+    assert spare.proc.pid in (int(pid), int(parent)) and tmp == str(spare.folder)
     assert not spare.folder.exists()  # the folder it started in is gone with it
     for _ in range(100):  # the next one is already starting
         if executor._ready.get(tuple(argv)):

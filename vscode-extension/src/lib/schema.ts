@@ -1093,7 +1093,7 @@ export interface components {
              * Manufacturing
              * @description Default process for made parts
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"] | components["schemas"]["LaserCutProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
             verification: components["schemas"]["Verification"];
             /**
              * Outputs
@@ -1719,28 +1719,6 @@ export interface components {
             value: unknown;
             reads: components["schemas"]["Reads"];
         };
-        /**
-         * LaserCutProcess
-         * @description Laser cutting from a sheet `thickness_mm` thick, lying flat in the part's own frame (Z through the sheet):
-         *     the part is a plate of that thickness, and no hole is narrower than the sheet is thick (a narrower one burns
-         *     out or closes up). Holes come out `kerf_mm` larger than drawn and outlines `kerf_mm` smaller, for fit
-         *     checks.
-         */
-        LaserCutProcess: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            process: "laser_cut";
-            /** Thickness Mm */
-            thickness_mm: number;
-            /**
-             * Kerf Mm
-             * @description Width of material the beam takes
-             * @default 0.15
-             */
-            kerf_mm: number;
-        };
         /** Limits */
         Limits: {
             /**
@@ -2099,7 +2077,7 @@ export interface components {
              * Manufacturing
              * @description Overrides the design's process for this made part
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"] | components["schemas"]["LaserCutProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
             /**
              * Backend
              * @description Overrides the design's backend
