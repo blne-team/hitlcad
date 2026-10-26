@@ -241,6 +241,9 @@ input[type="radio"] {
 .hint.fail {
   color: var(--fail);
 }
+.problem .detail {
+  white-space: pre-wrap; /* a build's error keeps its lines: the code's, then the error */
+}
 
 .check {
   display: flex;
@@ -564,17 +567,6 @@ code {
   }
 }
 
-.error-block {
-  font-family: var(--code);
-  font-size: 0.75rem;
-  white-space: pre-wrap;
-  background: var(--raised);
-  border-left: 3px solid var(--fail);
-  padding: 6px 8px;
-  margin: 6px 0 0;
-  color: var(--ink);
-  overflow-x: auto;
-}
 .code {
   font-family: var(--code);
   font-size: 0.75rem;
@@ -840,6 +832,21 @@ details summary {
 .viewport-hint.select-hint {
   background: #2f6df6;
   color: #ffffff;
+}
+.hint-close {
+  pointer-events: auto; /* the hint lets clicks through to the model; its close button takes them */
+  margin-left: 8px;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.hint-close:hover {
+  opacity: 1;
 }
 .selection-box {
   flex: 0 1 auto;

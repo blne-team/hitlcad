@@ -1,7 +1,8 @@
 """Append-only design events and the projection that folds them into design state.
 
 Each design folder has one event log: what was built, what the human selected and pinned, and
-errors. The folder's files stay the source of truth; the log is the review history around them.
+errors. The folder's files stay the source of truth; the log is the review history around them. A revision's
+event lists it (`RevisionInfo`); what it built from and its report are the store's, read when asked for.
 """
 
 from __future__ import annotations
@@ -11,8 +12,10 @@ from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter
 
-from hitlcad.core.report import Revision
-from hitlcad.core.types import DesignBrief, Model, Pin, SelectionItem, utcnow
+from hitlcad.core.report import RevisionInfo
+from hitlcad.core.types import DesignBrief, Pin, SelectionItem, WatchedMotion, utcnow
+from hitlcad.kernel.errors import Diagnostic
+from hitlcad.kernel.model import Model
 
 
 class _Event(Model):
@@ -44,12 +47,15 @@ class BuildStarted(_Event):
 
 class RevisionCreated(_Event):
     type: Literal["revision_created"] = "revision_created"
-    revision: Revision
+    revision: RevisionInfo
 
 
 class ErrorRaised(_Event):
+    """Something stopped the design's work that is not the design's to fix: a build the machine or a bug stopped,
+    a build/ folder that could not be written, a history that could not be read."""
+
     type: Literal["error"] = "error"
-    message: str
+    diagnostic: Diagnostic
 
 
 class SelectionChanged(_Event):
@@ -60,6 +66,13 @@ class SelectionChanged(_Event):
 class PinsChanged(_Event):
     type: Literal["pins_changed"] = "pins_changed"
     pins: list[Pin]
+
+
+class MotionsWatched(_Event):
+    """The loop motions the human has watched move, all of them."""
+
+    type: Literal["motions_watched"] = "motions_watched"
+    watched: list[WatchedMotion]
 
 
 class FeedbackDelivered(_Event):
@@ -80,6 +93,7 @@ Event = Annotated[
     | ErrorRaised
     | SelectionChanged
     | PinsChanged
+    | MotionsWatched
     | FeedbackDelivered,
     Field(discriminator="type"),
 ]
@@ -98,16 +112,17 @@ class DesignState(Model):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     building: bool = False
-    error: str | None = Field(default=None, description="Latest problem with the folder; cleared by the next build")
-    revisions: list[Revision] = Field(default_factory=list)
+    error: Diagnostic | None = Field(default=None, description="The latest error; cleared by the next revision")
+    revisions: list[RevisionInfo] = Field(default_factory=list)
     selection: list[SelectionItem] = Field(default_factory=list)
     pins: list[Pin] = Field(default_factory=list)
+    watched: list[WatchedMotion] = Field(default_factory=list)
     deliveries: dict[str, FeedbackDelivered] = Field(
         default_factory=dict, description="What each agent session was last given, by session id"
     )
 
     @property
-    def current_revision(self) -> Revision | None:
+    def current_revision(self) -> RevisionInfo | None:
         return self.revisions[-1] if self.revisions else None
 
     @property
@@ -118,13 +133,18 @@ class DesignState(Model):
         """What the human points at, as a delivery records it: selected ids and open pin notes."""
         return [i.id for i in self.selection], {p.id: p.note for p in self.open_pins}
 
-    def revision(self, rev_id: int) -> Revision | None:
+    def revision(self, rev_id: int) -> RevisionInfo | None:
         return next((r for r in self.revisions if r.id == rev_id), None)
 
-    def latest(self, configuration: str | None) -> Revision | None:
+    def before(self, rev_id: int, configuration: str | None) -> RevisionInfo | None:
+        """The revision of a configuration built just before `rev_id`, whatever its status."""
+        return next((r for r in reversed(self.revisions) if r.id < rev_id and r.configuration == configuration),
+                    None)  # fmt: skip
+
+    def latest(self, configuration: str | None) -> RevisionInfo | None:
         """The latest successful revision of one configuration (None: the default one)."""
         return next((r for r in reversed(self.revisions)
-                     if r.report.status == "succeeded" and r.spec.configuration == configuration), None)  # fmt: skip
+                     if r.status == "succeeded" and r.configuration == configuration), None)  # fmt: skip
 
     def apply(self, event: Event) -> None:
         self.updated_at = event.ts
@@ -140,11 +160,13 @@ class DesignState(Model):
                 self.revisions.append(event.revision)
                 self.building, self.error = False, None
             case ErrorRaised():
-                self.building, self.error = False, event.message
+                self.building, self.error = False, event.diagnostic
             case SelectionChanged():
                 self.selection = event.items
             case PinsChanged():
                 self.pins = event.pins
+            case MotionsWatched():
+                self.watched = event.watched
             case FeedbackDelivered():
                 self.deliveries[event.session] = event
 

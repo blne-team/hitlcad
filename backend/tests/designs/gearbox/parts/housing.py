@@ -5,7 +5,7 @@ import math
 from build123d import Align, BuildPart, Cylinder, Face, Location, Locations, Mode, Pos, Rot, extrude
 from lib.gear import gear_outline
 
-from hitlcad.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 DOWN = (180, 0, 0)

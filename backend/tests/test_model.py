@@ -11,22 +11,14 @@ import pytest
 from pydantic import ValidationError
 
 from hitlcad import materials
+from hitlcad.builtin.gears.relations import GearRelation, RackRelation, ScrewRelation
+from hitlcad.builtin.joints.mates import CylindricalMate, RigidMate
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.iso286 import deviations, fit_clearance
-from hitlcad.core.structure import (
-    Axis,
-    CylindricalMate,
-    Fit,
-    GearRelation,
-    RackRelation,
-    RigidMate,
-    ScrewRelation,
-    Tolerances,
-    Verification,
-    symmetry_of,
-)
+from hitlcad.core.structure import Axis, Fit, Tolerances, Verification, symmetry_of
+from hitlcad.kernel.errors import DesignInvalid, Location
 
 TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 
@@ -218,7 +210,7 @@ def test_projects_add_and_override_materials(tmp_path: Path) -> None:
 
 
 def test_view_quaternions_hold_for_every_rotation() -> None:
-    from hitlcad.analysis.cadview import quaternion
+    from hitlcad.geometry.cadview import quaternion
 
     def rotate(q: tuple[float, ...], v: np.ndarray) -> np.ndarray:
         x, y, z, w = q
@@ -240,7 +232,7 @@ def test_view_quaternions_hold_for_every_rotation() -> None:
 def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
     import trimesh
 
-    from hitlcad.analysis.mesh import load_mesh
+    from hitlcad.geometry.mesh import load_mesh
 
     # A body with a detail half sunk into it, modelled as two objects: one solid of their union's volume
     body, detail = trimesh.creation.box((20, 20, 20)), trimesh.creation.box((10, 10, 10)).apply_translation((0, 0, 10))
@@ -259,8 +251,8 @@ def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
 
 def _part(tmp_path: Path, name: str, mesh: Any) -> Any:
     from hitlcad.analysis.model import PartGeometry
+    from hitlcad.core.design import PartSpec
     from hitlcad.core.report import Reads
-    from hitlcad.core.structure import PartSpec
 
     mesh.export(tmp_path / f"{name}.stl")
     return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
@@ -295,18 +287,20 @@ def test_a_body_of_many_leaves_is_measured_from_its_parts_not_one_mesh_of_them(t
 
 
 def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:
-    from hitlcad.designs.folder import DesignFolder
+    from hitlcad.workspace.folder import DesignFolder
 
     (tmp_path / "design.json").write_text(json.dumps({"hitlcad": 1, "name": "old", "source": "model.py"}),
                                           encoding="utf-8")  # fmt: skip
-    with pytest.raises(ValueError) as old:
+    with pytest.raises(DesignInvalid) as old:
         DesignFolder(tmp_path).load()
-    (problem,) = str(old.value).splitlines()[1:]  # one problem, not one per field the old format no longer matches
-    assert "hitlcad format 1" in problem
+    (problem,) = old.value.problems  # one problem, not one per field the old format no longer matches
+    assert "hitlcad format 1" in problem.message and problem.code == "design.invalid"
     design = {"name": "x", "backend": "build123d", "parts": {"a": {"role": "a", "file": "parts/a.py", "colour": "red"}}}
     (tmp_path / "design.json").write_text(json.dumps(design), encoding="utf-8")
-    with pytest.raises(ValueError, match=r"\nparts\.a\.colour: "):
+    with pytest.raises(DesignInvalid, match=r"\nparts\.a\.colour: ") as unknown:
         DesignFolder(tmp_path).load()
+    (problem,) = unknown.value.problems
+    assert problem.where == Location(file="design.json", address="parts.a.colour")
 
 
 def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> None:
@@ -338,30 +332,39 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
 def test_results_with_one_cause_are_one_problem_and_pattern_copies_fold() -> None:
     """The README's seeded mistake fails two checks and leaves a motion unverified: one problem. Four screws too
     long are one problem at four indices. Info results are no checks, and the tally counts problems."""
-    from hitlcad.core.report import BuildReport, Cause, Result
-    from hitlcad.graph import problem_lines
+    from hitlcad.agent.graph import problem_lines
+    from hitlcad.core.report import BuildReport, Cause, Earlier, Result
+    from hitlcad.kernel.errors import advice
 
     overlap = Cause.overlap("impeller", "duct")
     found = [
-        Result(analysis="part", subject="duct", status="pass", detail="closed mesh"),
-        *(Result(analysis="fastener", subject="screw.seat:lid.screws>base.holes", status="fail",
+        Result(analysis="part", code="part.mesh_open", subject="duct", status="pass", detail="closed mesh"),
+        *(Result(analysis="fastener", code="fastener.stack", subject="screw.seat:lid.screws>base.holes", status="fail",
                  detail=f"screw[{k}].seat into base.holes[{k}]: bottoms out at {6 + k / 10:.2f}") for k in range(4)),
-        Result(analysis="interference", subject="duct+impeller", status="fail", detail="overlap by 91.11 mm³",
-               cause=overlap),
-        Result(analysis="interference", subject="base+insert[0]", status="pass", severity="info", detail="expected"),
-        Result(analysis="motion", subject="motor.shaft+impeller.bore", status="unverified", detail="already overlap",
-               cause=overlap),
-        Result(analysis="requirement", subject="Impeller blade tips clear the duct", status="fail",
-               detail="impeller and duct overlap by 91.1 mm³", cause=overlap),
-        Result(analysis="requirement", subject="Finger-safe", status="unverified", detail="the human judges it"),
+        Result(analysis="interference", code="interference.overlap", subject="duct+impeller", status="fail",
+               detail="overlap by 91.11 mm³", cause=overlap),
+        Result(analysis="interference", code="interference.expected", subject="base+insert[0]", status="pass",
+               severity="info", detail="expected"),
+        Result(analysis="motion", code="motion.partial", subject="motor.shaft+impeller.bore", status="unverified",
+               detail="already overlap", cause=overlap),
+        Result(analysis="requirement", code="requirement.clearance", subject="Impeller blade tips clear the duct",
+               status="fail", detail="impeller and duct overlap by 91.1 mm³", cause=overlap),
+        Result(analysis="requirement", code="requirement.unchecked", subject="Finger-safe", status="unverified",
+               detail="the human judges it"),
     ]  # fmt: skip
     report = BuildReport(status="succeeded", duration_s=1, results=found)
     assert problem_lines(report.results, report.problems, 10) == [
-        "  ✗ fastener screw.seat:lid.screws>base.holes ×4 at [0, 1, 2, 3]: screw[0].seat into base.holes[0]: "
-        "bottoms out at 6.00",
-        "  ✗ interference duct+impeller: overlap by 91.11 mm³ (also: motion motor.shaft+impeller.bore, "
-        "requirement 'Impeller blade tips clear the duct')",
-        "  ? requirement Finger-safe: the human judges it",
+        "  ✗ fastener screw.seat:lid.screws>base.holes ×4 at [0, 1, 2, 3] [fastener.stack]: screw[0].seat into "
+        "base.holes[0]: bottoms out at 6.00",
+        "  ✗ interference duct+impeller [interference.overlap]: overlap by 91.11 mm³ (also: motion "
+        "motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')",
+        "  ? requirement Finger-safe [requirement.unchecked]: the human judges it",
     ]
+    # For the agent, the usual fix follows a code's first problem; one the revision before had too says so.
+    before = Earlier(4, frozenset({("fastener.stack", "screw.seat:lid.screws>base.holes")}))
+    lines = problem_lines(report.results, report.problems, 10, hints=True, previous=before)
+    assert lines[1] == f"    → {advice('fastener.stack')}" and advice("fastener.stack").startswith("Size the clearance")
+    assert lines[2] == "    Same as revision 4: the change since did not reach it."
+    assert lines[4].startswith("    → Move or resize one of them")
     assert report.tally.text == "2 problems (6 failing checks), 1 unverified; 1 check passes"
     assert BuildReport.model_validate_json(report.model_dump_json()).problems == report.problems

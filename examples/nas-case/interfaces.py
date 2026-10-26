@@ -8,7 +8,7 @@ printed part is modelled in its own frame, the way it prints; `print_frames` say
 
 import math
 
-from hitlcad.catalogs.bd_warehouse import screw as _screw
+from hitlcad.builtin.catalogs.bd_warehouse import screw as _screw
 
 # Fixed standards (not tunable): micro-ATX board and 3.5" drive envelopes.
 MATX = 244.0

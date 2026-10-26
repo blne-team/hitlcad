@@ -140,6 +140,12 @@ function PinRow({ pin, index, elsewhere, active, onFocus, onNote, onResolve, onR
           }}
         />
         {pin.label && <span className="muted tiny">{pin.label}</span>}
+        {pin.motion && (
+          <span className="muted tiny">
+            with {pin.motion.pair} at {pin.motion.at.toFixed(1)}
+            {pin.motion.kind === "angle" ? "°" : " mm"}
+          </span>
+        )}
         {elsewhere !== null && (
           <span className="notice tiny">
             Not found in revision {elsewhere}; this pin is on revision {pin.revision}.

@@ -14,15 +14,23 @@ from hitlcad.config import get_settings
 def cmd_serve(_: argparse.Namespace) -> int:
     import uvicorn
 
-    from hitlcad.api.app import create_app
+    from hitlcad.api.rest import create_app
+    from hitlcad.kernel.errors import HitlcadError, agent_text
 
     settings = get_settings()
-    uvicorn.run(create_app(), host=settings.host, port=settings.port, log_level="info")
+    try:
+        app = create_app()
+    except HitlcadError as e:  # another server keeps the data folder, a backend that will not start
+        print(agent_text(e.diagnostic), file=sys.stderr)
+        return 1
+    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
     return 0
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     from hitlcad.backends.registry import BackendRegistry
+    from hitlcad.kernel.errors import agent_text
+    from hitlcad.kernel.plugins import registry
     from hitlcad.render.base import NullRenderer, preview_renderer
 
     settings = get_settings()
@@ -32,6 +40,12 @@ def cmd_doctor(_: argparse.Namespace) -> int:
         print(f"[{'ok ' if b.available else 'MISSING'}] backend {b.name}: {b.detail}")
     renderer = not isinstance(preview_renderer(settings), NullRenderer)
     print(f"[{'ok ' if renderer else 'MISSING'}] preview renderer (Blender Workbench)")
+    found = registry()
+    for plugin in found.plugins.values():
+        print(f"[ok ] plugin {plugin.name}: {plugin.distribution} {plugin.version}")
+    for problem in found.failures:
+        ok = False
+        print(f"[FAIL] {agent_text(problem)}")
     print(f"[info] coding agents reach hitlcad's tools at {settings.mcp_url}")
     print(f"[info] data dir {settings.data_dir.resolve()}")
     print(f"[info] models build with {sys.executable}, the interpreter part files resolve their imports in")
@@ -41,23 +55,29 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 def cmd_build(args: argparse.Namespace) -> int:
     """Build a design folder through the full pipeline into a directory of its own, outside the server: for
     CI and for backend authors."""
+    from hitlcad.agent.graph import revision_summary
     from hitlcad.app import build_pipeline
     from hitlcad.core.report import Revision
-    from hitlcad.designs.folder import DesignFolder
-    from hitlcad.graph import revision_summary
+    from hitlcad.kernel.errors import HitlcadError, agent_text
     from hitlcad.render.base import NullRenderer
+    from hitlcad.workspace.folder import DesignFolder
 
     settings = get_settings()
     pipeline = build_pipeline(settings, renderer=NullRenderer() if args.no_render else None)
     folder = DesignFolder(Path(args.design))
     try:
         spec = folder.spec(settings.tolerances, args.configuration)
-    except ValueError as e:
-        print(f"error: {e}", file=sys.stderr)
+    except HitlcadError as e:
+        print(agent_text(e.diagnostic), file=sys.stderr)
         return 1
     out = Path(args.out).resolve()
-    report = asyncio.run(pipeline.run(spec, folder.path, out))
-    print(revision_summary(Revision(id=0, origin="file", spec=spec, report=report), limit=settings.explore_limit))
+    try:
+        report = asyncio.run(pipeline.run(spec, folder.path, out))
+    except HitlcadError as e:
+        print(agent_text(e.diagnostic), file=sys.stderr)
+        return 1
+    revision = Revision(id=0, origin="file", configuration=spec.configuration, spec=spec, report=report)
+    print(revision_summary(revision, limit=settings.explore_limit))
     print(f"outputs in {out}")
     return 0 if report.status == "succeeded" and not report.failing() else 1
 
@@ -74,8 +94,8 @@ def _permission(flag: bool | None, question: str, option: str) -> bool:
 
 def cmd_init(args: argparse.Namespace) -> int:
     from hitlcad.backends.registry import BackendRegistry
-    from hitlcad.designs import agents
-    from hitlcad.designs.project import init_project
+    from hitlcad.workspace import agents
+    from hitlcad.workspace.project import init_project
 
     settings = get_settings()
     target = Path(args.path).expanduser().resolve()
@@ -106,7 +126,7 @@ def cmd_context(args: argparse.Namespace) -> int:
     import urllib.parse
     import urllib.request
 
-    from hitlcad.designs.agents import SERVER_WAIT_S
+    from hitlcad.workspace.agents import SERVER_WAIT_S
 
     server = (args.server or get_settings().base_url).rstrip("/")
 
@@ -140,7 +160,7 @@ def cmd_connect(_: argparse.Namespace) -> int:
 
     import tomlkit
 
-    from hitlcad.designs.agents import codex_server
+    from hitlcad.workspace.agents import codex_server
 
     url = get_settings().mcp_url
     print("Claude Code:\n  claude mcp add --transport http hitlcad " + url)

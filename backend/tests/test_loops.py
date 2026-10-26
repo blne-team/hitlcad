@@ -1,0 +1,111 @@
+"""Loops of motion without a build: what relations count as moved, and the loop solver on four-bars whose motion is
+known in closed form."""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+from hitlcad.builtin.gears.relations import GearRelation, RackRelation, ScrewRelation
+from hitlcad.builtin.joints.mates import RevoluteMate
+from hitlcad.builtin.solvers.least_squares import LeastSquares
+from hitlcad.core import frames as fr
+from hitlcad.core.loops import LoopMate, LoopProblem
+from hitlcad.core.structure import Tolerances
+
+TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
+Z = (0.0, 0.0, 1.0)
+
+
+def turned(f: fr.Frame, point: tuple[float, float, float], degrees: float) -> fr.Frame:
+    return fr.rotation_about(point, Z, degrees) @ f
+
+
+def test_gears_on_fixed_axes_turn_by_their_ratio() -> None:
+    gear = GearRelation(type="gear", a="sun.teeth", b="planet.teeth")
+    fa, fb = fr.IDENTITY, fr.translation([30.0, 0.0, 0.0])
+    ratio = gear.ratio({"teeth": 12}, {"teeth": 18})
+    qa, qb = gear.coordinates(fa, fb, turned(fa, (0, 0, 0), 30.0), turned(fb, (30, 0, 0), 30.0 * ratio))
+    assert (qa, qb) == pytest.approx((30.0, -20.0))
+    assert qb == pytest.approx(ratio * qa)
+
+
+def test_a_planet_on_a_moving_carrier_turns_by_willis() -> None:
+    """The carrier turns 10°, the sun stays: the planet turns against the line of centres as the sun does, by the
+    ratio, so (planet − carrier) = −z_s/z_p × (sun − carrier)."""
+    gear = GearRelation(type="gear", a="sun.teeth", b="planet.teeth")
+    fa, fb = fr.IDENTITY, fr.translation([30.0, 0.0, 0.0])
+    planet = turned(turned(fb, (30, 0, 0), 10.0 * 12 / 18), (0, 0, 0), 10.0)  # spun on its pin, then carried
+    qa, qb = gear.coordinates(fa, fb, fa, planet)
+    assert qa == pytest.approx(-10.0)  # the sun against the line of centres, which turned 10°
+    assert qb == pytest.approx(gear.ratio({"teeth": 12}, {"teeth": 18}) * qa)
+
+
+def test_a_rack_travels_the_pinion_s_pitch_arc() -> None:
+    rack = RackRelation(type="rack", a="pinion.teeth", b="rack.pitch_line")
+    fa = fr.IDENTITY
+    fb = fr.translation([0.0, -10.0, 0.0]) @ fr.rotation_about((0, 0, 0), (1, 0, 0), 90.0)  # pitch line below
+    _, along = rack.axes(fa, fb)
+    ratio = rack.ratio({"module": 1.0, "teeth": 20}, {})
+    qa, qb = rack.coordinates(fa, fb, turned(fa, (0, 0, 0), 36.0), fr.translation(along.direction * ratio * 36.0) @ fb)
+    assert (qa, qb) == pytest.approx((36.0, ratio * 36.0))
+
+
+def test_a_nut_travels_its_lead_per_turn_of_the_screw() -> None:
+    screw = ScrewRelation(type="screw", a="leadscrew.axis", b="nut.axis", lead=8)
+    fa, fb = fr.IDENTITY, fr.translation([0.0, 0.0, 20.0])
+    qa, qb = screw.coordinates(fa, fb, turned(fa, (0, 0, 0), 90.0), fr.translation([0.0, 0.0, -2.0]) @ fb)
+    assert (qa, qb) == pytest.approx((90.0, 2.0))
+
+
+def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> LoopProblem:
+    """A planar four-bar in XY with the crank at 90°, every pivot a revolute about Z: overconstrained, as CAD has it."""
+    b = (0.0, crank)
+    dx, dy = ground - b[0], -b[1]
+    bd = math.hypot(dx, dy)
+    along = (coupler**2 - rocker**2 + bd**2) / (2 * bd)
+    up = math.sqrt(coupler**2 - along**2)
+    c = (b[0] + along * dx / bd - up * dy / bd, b[1] + along * dy / bd + up * dx / bd)
+
+    def at(p: tuple[float, float], facing: bool = False) -> fr.Frame:
+        f = fr.translation([p[0], p[1], 0.0])
+        return f @ fr.flip_x() if facing else f
+
+    holds = frozenset({"origin_xy", "origin_z", "axis"})
+    pivots = [("A", "g", "c", (0.0, 0.0)), ("B", "c", "k", b), ("C", "k", "r", c), ("D", "g", "r", (ground, 0.0))]
+    mates = [LoopMate(name, RevoluteMate(type="revolute", a=f"{a}.x", b=f"{m}.x"), a, m, at(p), at(p, True), holds)
+             for name, a, m, p in pivots]  # fmt: skip
+
+    def bar(u: tuple[float, float], v: tuple[float, float]) -> np.ndarray:
+        return np.array([[*u, -1.0], [*u, 1.0], [*v, -1.0], [*v, 1.0]])
+
+    corners = {"c": bar((0.0, 0.0), b), "k": bar(b, c), "r": bar(c, (ground, 0.0))}
+    return LoopProblem(["c", "k", "r"], mates, [], 0, "angle", corners, TOL)
+
+
+def trace(problem: LoopProblem, end: float) -> list[float]:
+    start = problem.start()
+    return [start.value] + [p.value for p in LeastSquares().trace(problem, start, end, TOL.motion_steps)]
+
+
+def test_a_crank_rocker_turns_its_crank_a_full_turn_and_swings_its_rocker_as_it_must() -> None:
+    problem = four_bar(15, 40, 30, 40)
+    assert problem.freedoms() == (True, 0)
+    start, swing = problem.start(), []
+    for end in (start.value + 180, start.value - 180):
+        positions = list(LeastSquares().trace(problem, start, end, TOL.motion_steps))
+        assert positions[-1].value == pytest.approx(end)
+        swing += [problem.coordinate(p, 3, "angle") - problem.coordinate(start, 3, "angle") for p in positions]
+    assert (min(swing), max(swing)) == pytest.approx((-18.11, 45.90), abs=0.02)  # in closed form
+
+
+def test_a_linkage_that_cannot_turn_its_crank_locks_where_it_must() -> None:
+    """15/20/30/40: the crank locks where B is coupler + rocker from D, 124.23° from the ground line, 34.23° on from
+    where it sits; the joints' position tolerance lets it go a little further, never less far."""
+    problem = four_bar(15, 20, 30, 40)
+    start = problem.start()
+    up = trace(problem, start.value + 180)[-1] - start.value
+    assert 34.23 <= up <= 34.8
+    assert trace(problem, start.value - 180)[-1] == pytest.approx(start.value - 180)  # the other way it turns on

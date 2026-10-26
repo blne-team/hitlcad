@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hitlcad-lasercut"
+version = "0.1.0"
+description = "Laser cutting for hitlcad: a process checked on every build, and plates to cut"
+requires-python = ">=3.11"
+dependencies = ["hitlcad"]
+
+[project.entry-points."hitlcad.plugins"]
+lasercut = "hitlcad_lasercut"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hitlcad_lasercut"]
+
+[tool.uv.sources]
+hitlcad = { workspace = true }

@@ -18,42 +18,44 @@ flowchart LR
     EXT[hitlcad extension]
     PANEL[hitlcad panel<br/>React + three-cad-viewer webview]
   end
-  CC -- MCP /mcp --> MCP[api/mcp_server.py]
+  CC -- MCP /mcp --> MCP[api/mcp.py]
   CC -. UserPromptSubmit hook<br/>hitlcad context --hook .-> API
   CC -- edits --> F[(design folder<br/>design.json · interfaces.py<br/>parts/ · assembly.py)]
-  EXT -- REST --> API[api/app.py]
+  EXT -- REST --> API[api/rest.py]
   PANEL -- REST + WebSocket --> API
   F -- watchfiles --> W[FolderWatcher]
   W --> S
-  API --> S[services<br/>service/]
+  API --> S[services<br/>services/]
   MCP --> S
   S --> P[BuildPipeline] --> B[CAD backends<br/>model runtime in child processes]
   P --> A[analyses]
   P --> X[assembly STEP · mesh · 3D view · exporters]
   S --> G[design graph]
-  S --> ST[(DesignStore<br/>events.jsonl · revisions/)]
+  S --> ST[(DesignStore<br/>hitlcad.db · revisions/)]
+  REG[plugin registry<br/>hitlcad.builtin · installed] -. members, backends,<br/>catalogs, exporters .-> P
   S -- events --> BUS[EventBus] --> API
 ```
 
 ## Layers
 
-| Layer | Module | Responsibility | Extension point |
+Each package imports only the packages below it, and packages on one line import neither each other;
+`uv run lint-imports` checks it (`pyproject.toml`), and that nothing but the plugin registry reaches
+hitlcad's own plugins (`builtin/`).
+
+| Layer | Package | Responsibility | Extension point |
 | --- | --- | --- | --- |
-| Domain | `core/` | `types.py`: parameters, briefs, picks, pins. `structure.py`: connector kinds, mates, relations, fastener sets, verification tolerances. `design.py`: design.json format 2. `checks.py`: requirement checks and manufacturing processes. `report.py`: build spec, results and the problems they add up to, report, revisions. `address.py`: the address grammar. `frames.py`: 4 × 4 frames and the measurements mates make. `iso286.py`: ISO 286 fits. `events.py`: the event log and its projection `DesignState` | `ConnectorSpec`, `MateSpec`, `RelationSpec`, `RequirementCheck`, `Manufacturing` unions |
-| Model runtime | `backends/runtime.py` | Runs a design's code (`interfaces.py`, part files, `assembly.py`) with `p` and `i`, evaluates interface values lazily, records what each piece of code read. Standard library only, so every backend's Python runs it | — |
-| CAD backends | `backends/` | Child processes that plan (interface values, placements) and build part files, exporting each part in its own frame (STL, a STEP on B-rep backends) with its connector frames; Blender also writes the assembly as `model.blend` | `CADBackend` / `SubprocessBackend`, entry points `hitlcad.backends` |
-| Execution | `backends/executor.py` | Run untrusted code under a deadline and a memory limit; nothing it starts outlives it | `Executor` protocol |
+| Surfaces | `cli.py`, `api/`, `app.py` | `rest.py`: REST and WebSocket streams for the panel and extension (its OpenAPI schema generates the extension's and the panel's types, `vscode-extension/src/lib/schema.ts`, with `scripts/api-types.sh`). `mcp.py`: the agents' tools. `cli.py`: the CLI and the prompt hook. `app.py`: `HitlCad.create(...)` wires everything from `Settings`; tests swap in their own backends, renderer, analyses and exporters | — |
+| Services | `services/` | `designs.py`: folders bound to event logs, revisions read when asked for, where-used. `builds.py`: builds on request, after parameter edits and debounced after saves; configurations; structure checks; dependents. `watcher.py`: saves to builds. `feedback.py`: selection and pins, carried across rebuilds. `explore.py`: the graph with staleness, revision comparisons. `context.py`: what the agent's hook is told. `bus.py`: design events to live subscribers. Never call an LLM | — |
+| Workspace, store | `workspace/`, `store/` | `folder.py`: a design folder and its files. `project.py`: scaffolding a project. `agents.py`: the agents' hooks and Codex's config. `store/`: the SQLite database of folders, events, revisions and results in the data folder | `DesignStore` protocol |
 | Build | `build/` | `pipeline.py`: the build (below). `cache.py`: part files by their recorded reads. `assemble.py`: the assembly as STEP product structure, as one mesh, as the instanced 3D view, and as the tree a backend writes its own assembly file from | — |
-| Analysis | `analysis/` | `base.py`: the `Analysis` protocol, the analyses in the order they run, results. `model.py`: the built design (parts, placements, components, connector frames, bodies). `mesh.py`: loading and measuring meshes. `features.py`: measuring a part's features, on its B-rep or its mesh (one interface, two adapters). The analyses: `structure.py`, `checks.py` (parts, connectors, manufacturing, requirements), `mates.py`, `relations.py`, `fasteners.py`, `coverage.py`, `interference.py`, `motion.py`; `processes.py`: the manufacturing processes' checks. `geometry.py`, `selection.py`, `anchors.py`: describing picks and carrying them across rebuilds. `cadview.py`: the 3D view, written the same way for builds and loose model files, which open as parts with their features | `Analysis` protocol, listed in `analysis/base.py` |
-| Catalogs | `catalogs/`, `sdk/` | Catalog providers (standard parts with their connectors and data, vendor STEP files) and the model SDK model code imports | `CatalogProvider`, entry points `hitlcad.catalogs` |
-| Materials | `materials/` | Density, processes, minimum thread engagement; projects extend it with a `materials.json` | data |
-| Exporters | `exporters/` | BOM, 3MF, URDF, SDF, chosen per design by `outputs` | `Exporter`, entry points `hitlcad.exporters` |
-| Rendering | `render/` | Preview sheet (iso/front/right/top) of the assembly; section views through failing joints for agents | `Renderer` protocol |
-| Design graph | `graph.py`, `describe.py` | The agent's context: a projection of design.json, the latest build report and the review state, answering in the address grammar, with impact; plain-text descriptions of picks and the guides generated from the domain's unions | — |
-| Services | `service/` | `designs.py`: folders bound to event logs, where-used. `builds.py`: builds on request, after parameter edits and debounced after saves; configurations; structure checks; dependents. `feedback.py`: selection and pins, carried across rebuilds. `explore.py`: the graph with staleness, revision comparisons. `context.py`: what the agent's hook is told. `bus.py`: design events to live subscribers. Never call an LLM | — |
-| Design folders and projects | `designs/`, `store/`, `skills/` | `folder.py`: a design folder and its files. `watcher.py`: saves to builds. `project.py`: scaffolding a project. `agents.py`: the agents' hooks and Codex's config. `store/`: the event logs and revisions in the data folder. `skills/`: the agents' skills a project gets | `DesignStore` protocol |
-| Interfaces | `api/app.py`, `api/mcp_server.py`, `cli.py` | REST and WebSocket streams for the panel and extension (its OpenAPI schema generates the extension's and the panel's types, `vscode-extension/src/lib/schema.ts`, with `scripts/api-types.sh`), MCP for agents, CLI and hook | — |
-| Composition | `app.py`, `config.py` | `Settings` (environment `HITLCAD_*`); `HitlCad.create(...)` wires everything from settings; tests swap in their own backends, renderer, analyses and exporters | — |
+| Agent, review, preview | `agent/`, `review/`, `render/` | `agent/`: what the agent reads. `graph.py`, the design graph: a projection of design.json, the latest build report and the review state, answering in the address grammar, with impact. `describe.py`: picks described, the guides generated from the installed members, the playbook from the error catalog. `sections.py`: section views through failing joints. `skills/`: the skills a project gets. `review/`: what the human points at. `selection.py`: picks described. `anchors.py`: picks and pins carried across rebuilds. `measure.py`: every face, edge and vertex of a build, and the distances between them. `render/`: the preview sheet (iso/front/right/top), in Blender | `Renderer` protocol |
+| Analysis | `analysis/` | `base.py`: the `Analysis` protocol, the stages analyses run at, results. `model.py`: the built design (parts, placements, components, connector frames, bodies). The analyses, each looping over what a design declares and asking each member to verify itself: `structure.py`, `checks.py` (parts, connectors, manufacturing, requirements), `mates.py`, `relations.py`, `fasteners.py`, `coverage.py`, `interference.py`, `motion/` (what moves, the exact sweep about fixed axes, loops swept at a solver's positions) | `Analysis` protocol, through plugins |
+| Measuring toolkit, backends, exporters | `geometry/`, `backends/`, `exporters.py` | `geometry/`: `mesh.py` (loading and measuring meshes), `features.py` (a part's features, on its B-rep or its mesh: one interface, two adapters), `walls.py` (wall thickness), `brep.py` (B-rep items described), `cadview.py` (the 3D view, written the same way for builds and loose model files, which open as parts with their features). `backends/`: `base.py`, `subprocess_backend.py`: child processes that plan (interface values, placements) and build part files, exporting each part in its own frame (STL, a STEP on B-rep backends) with its connector frames; `registry.py`: the backends `HITLCAD_BACKENDS` enables, of those plugins give. `exporters.py`: the `Exporter` protocol; exporters run per design by `outputs` | `CADBackend` / `SubprocessBackend`, `Exporter`, through plugins |
+| Execution | `execution/` | `executor.py`: run untrusted code under a deadline and a memory limit; nothing it starts outlives it. A build process is started before its job and waits for it on stdin, so one kept started (`warm_builds`) takes the next build. `runtime.py`: runs a design's code (`interfaces.py`, part files, `assembly.py`) with `p` and `i` in the build process, evaluates interface values lazily, records what each piece of code read, and writes what went wrong as diagnostics; standard library only, so every backend's Python runs it | `Executor` protocol |
+| Settings | `config.py` | `Settings` (environment `HITLCAD_*`) | — |
+| Domain | `core/`, `catalogs.py`, `materials.py` | `core/`: `types.py`: parameters, briefs, picks, pins. `structure.py`: what a connector kind, a mate type and a relation type are (`Connector`, `Mate`, `Relation`), components, fits, fastener sets, verification tolerances. `checks.py`: what a requirement check and a manufacturing process are (`Check`, `Process`). `design.py`: design.json format 2, its unions made of the members plugins give, parts, requirements. `report.py`: build spec, results and the problems they add up to, report, revisions. `address.py`: the address grammar. `frames.py`: 4 × 4 frames and the measurements mates make. `iso286.py`: ISO 286 fits. `events.py`: the event log and its projection `DesignState`. `loops.py`: a closed loop of motion as a solver gets it, the check of every position it gives, and the `Solver` protocol. `catalogs.py`: the `CatalogProvider` protocol and the search across providers. `materials.py`: density, processes, minimum thread engagement, from the plugins' `materials.json` files; projects extend it with their own | members, providers, materials, through plugins |
+| Kernel, model SDK | `kernel/`, `sdk/` | `kernel/`: `model.py`, the base of every model; `errors.py`, diagnostics (a code, its owner, a message, where), the catalog of their kinds with each one's usual fix, and how each surface presents them; `plugins.py`, the plugin hooks and the registry that gathers what plugins contribute. `sdk/`: what model code imports (`mate_to`, `CatalogPart`); it imports nothing | `ErrorKind`, the `hitlcad.plugins` entry-point group |
+| Built-in plugins | `builtin/` | hitlcad's own, registered as any installed plugin is: `joints` (frame, face, hole and shaft connectors; the mate types), `gears` (the gear connector; gear, rack and screw relations), `checks` (requirement checks), `processes` (the five processes and their checks), `build123d` and `blender` (the backends), `catalogs` (bd_warehouse and vendor STEP), `exports` (BOM, 3MF), `robot` (URDF, SDF), `materials`. Nothing else in hitlcad imports it | — |
 
 ## Design folders are the source of truth
 
@@ -61,10 +63,18 @@ A design is any folder holding `design.json` and its code (layout and format:
 [assembly-model.md](assembly-model.md)). People and agents edit these files with normal tools and
 commit them. hitlcad keeps everything machine-local in `<data_dir>`:
 
-- `folders.json` maps folder paths to design ids, so committed files hold no ids.
-- `designs/<id>/events.jsonl` is the design's review history: `design_opened`, `design_updated`
-  (name, backend, brief), `build_started`, `revision_created`, `error`, `selection_changed`,
-  `pins_changed`, `feedback_delivered`. `DesignState` is a pure fold of it.
+- `hitlcad.db`, one SQLite database (`store/sqlite.py`):
+  - `folders` maps folder paths to design ids, so committed files hold no ids.
+  - `events` is each design's review history: `design_opened`, `design_updated` (name, backend,
+    brief), `build_started`, `revision_created`, `error`, `selection_changed`, `pins_changed`,
+    `feedback_delivered`. `DesignState` is a pure fold of it. A revision's event lists it
+    (`RevisionInfo`: its status, tally, what a failed build failed on).
+  - `revisions` holds each revision in full (what it built from and its report), read when asked
+    for: opening a design reads none of them. `results` holds their results, so what a revision
+    failed is a query (the build summary's "Same as revision 6").
+  - A database of another layout is set aside whole (`hitlcad.<time>.db`) and a new one started; a
+    design's history that does not read is set aside on its own.
+- `hitlcad.lock`, held by the server that keeps the folder: a second server on it refuses to start.
 - `designs/<id>/revisions/<n>/` holds each build, self-contained: its sources (`src/`), each part
   in its own frame (`parts/`), each component's own build (`components/<name>/`, the same layout),
   the assembly (`model.step`, `mesh.stl`, `model.blend`), the 3D view (`view.json`), the preview,
@@ -82,7 +92,8 @@ build leaves the last good outputs in place.
 `FolderWatcher` watches registered folders recursively (`watchfiles`), ignoring `build/` and editors'
 temporary files. A change schedules a debounced rebuild of the design whose folder holds it. The
 rebuild is skipped when the folder's `BuildSpec` (design.json without the brief, the code, the
-vendor files' checksums, the components' specs) hashes the same as the last build's. A design that
+vendor files' checksums, the components' specs, the installed plugins' versions) hashes the same as the
+last build's. A design that
 builds schedules the designs that use it as a component; their specs include its own, so they
 rebuild only when it changed. Whenever the set of folders changes, and at startup, it builds folders
 whose files differ from their latest build. Parameter edits from the panel are written to
@@ -104,8 +115,11 @@ whose files differ from their latest build. Parameter edits from the panel are w
    child processes (`build_workers`), files of one backend shared out among them. A file that
    fails is reported with its line; the others still build, and the build fails as a whole.
 5. **The built design.** Parts, placements, components, then every connector measured on its part.
-6. **Analyses.** Each registered `Analysis` returns `Result`s naming the addresses they are about.
-   A structure error met by one analysis is reported as a structure result; a bug raises.
+6. **Analyses.** Each `Analysis`, at its stage, returns `Result`s naming the kind of check (its
+   code) and the addresses they are about. A structure error met by one analysis is reported as a
+   structure result; a member's own code that raises (a plugin's check or process) is an unverified
+   `plugin.error` result, and the rest of the build goes on; a bug in an analysis is an unverified
+   `hitlcad.bug` result.
 7. **Outputs.** Part files, the assembly STEP (when every part is B-rep), the mesh, the instanced
    3D view (each part tessellated once, drawn per instance at `/<design>/<instance path>`, mesh
    parts in their materials' colours), the preview, the exporters `outputs` names, and the assembly
@@ -114,10 +128,14 @@ whose files differ from their latest build. Parameter edits from the panel are w
 8. **Report.** Results, parts (with their reads and measured connectors), instances, components'
    reports, interface values, mass properties, ranges of motion, the bill of materials, artifacts.
 
-A build fails only when it cannot produce geometry (an error in the code, an unknown name placed,
-a component that fails). Everything else (a mate whose frames disagree, a fit out of range, a
-collision, a requirement missed) is a failing result of a build that succeeded, which the agent and
-the human read and fix.
+A build fails only when the design's files cannot produce geometry (design.json does not validate,
+an error in the code, an unknown name placed, a component that fails, a build process that runs out
+of time or memory). It is a revision like any other, and its results say why, each with its code and
+where in the files (`parts/lid.py line 31`). Everything else (a mate whose frames disagree, a fit out
+of range, a collision, a requirement missed) is a failing result of a build that succeeded, which the
+agent and the human read and fix. What stops a build that is not the design's to fix (a backend
+missing, a plugin missing, a bug) is raised: the tool answers with its diagnostic, and the panel shows
+it as the design's error. How each error reads, and whose it is, is in [plugins.md](plugins.md).
 
 ## How the agent and the human meet
 
@@ -148,7 +166,7 @@ three-cad-viewer and ocp-tessellate are pinned together.
   objects.
 - **Pins**: notes on the surface, stored with the instance and connector they are on. They stay
   open until the agent calls `resolve_pins` or the human resolves them.
-- **Across rebuilds** (`analysis/anchors.py`): a pick keeps its instance path; a pick on a
+- **Across rebuilds** (`review/anchors.py`): a pick keeps its instance path; a pick on a
   connector's feature keeps that connector; any other face, edge or vertex is matched by geometry
   in its part's own frame (same kind and type, same orientation, nearest within reach, clearly
   nearer than any other; thresholds in settings); a mesh point moves to the nearest point of the
@@ -157,10 +175,11 @@ three-cad-viewer and ocp-tessellate are pinned together.
   Parameters (written to `design.json` and rebuilt) with configurations; Changes (against any
   earlier revision, with an X-ray ghost); Results (every analysis, the parts, components, renders
   and files); BOM; Brief.
-- **Motion**: each reported range of motion gets a slider that moves its moving side in the view.
+- **Motion**: each reported range of motion gets a slider that moves what it moves in the view: about
+  fixed axes, or a loop through its solved positions, which the human can mark as watched.
 
 What the human points at reaches the agent with their next message, the same way for Claude Code
-and Codex. With the human's permission (`designs/agents.py`; `hitlcad init` asks on a terminal or
+and Codex. With the human's permission (`workspace/agents.py`; `hitlcad init` asks on a terminal or
 takes `--hooks`/`--codex`, the extension asks in a dialog when it creates a project and offers it for
 a project that lacks it), `hitlcad init` writes a `UserPromptSubmit` hook for each. The hook names
 this machine's interpreter, so it goes where only this machine reads it: Claude Code's per-user
@@ -193,10 +212,11 @@ plus model-file selections, to paste into any chat.
 `hitlcad init` also installs hitlcad's skills, in `.claude/skills/` for Claude Code and
 `.agents/skills/` for Codex. They are how hitlcad teaches the agent; `CLAUDE.md` and `AGENTS.md`
 only point at them and state the rules. The `hitlcad` skill (structure first, catalog first,
-interfaces once, one part file at a time) has its reference sections generated from the unions:
-connector kinds, mate and relation types, fastener sets, requirement checks and processes, each
-from its docstring and example. Every enabled backend adds `hitlcad-<backend>` from its
-`authoring_guide()`. Skill folders named `hitlcad*` belong to hitlcad: each `init` rewrites changed
+interfaces once, one part file at a time) has its reference sections generated from the installed
+members: connector kinds, mate and relation types, fastener sets, requirement checks and processes,
+each from its docstring and example. Its `playbook.md` lists every code a build or a tool answers
+with, and its usual fix, from the error catalog; plugins add reference files under `reference/`.
+Every enabled backend adds `hitlcad-<backend>` from its `authoring_guide()`. Skill folders named `hitlcad*` belong to hitlcad: each `init` rewrites changed
 ones and removes ones that no longer exist. The skills also claim building, exporting and rendering
 for the hitlcad tools, so generic CAD or Blender skills the user has installed serve as API
 reference instead of running their own pipelines.
@@ -233,29 +253,40 @@ the part's. Loose glTF files (metres, Y up) are converted to millimetres, Z up, 
 
 ## Extension points
 
-Adding a member to a union or a provider to a registry changes nothing else: the pipeline, the
-graph, the address grammar and the tools present any member's results.
+Adding a member or a provider changes nothing else: the pipeline, the graph, the address grammar and
+the tools present any member's results.
 
-- **A CAD backend**: subclass `SubprocessBackend` with an `entry` script that runs
-  `backends/runtime.run` with a `plan` mode (via `runtime.plan` and a function turning the kernel's
-  placements into 4 × 4 matrices) and a `parts` mode (export each part's STL, and STEP if it has
-  one, with its connector frames), give it an `authoring_guide()`, set `brep`, and register a
-  factory under `hitlcad.backends`; enable it with `HITLCAD_BACKENDS`. To also write the assembly
-  in its own format, override `write_assembly` (Blender's runs an `assembly` mode).
-- **An analysis**: a class with `name`, `title`, `summary` (the panel shows them) and
-  `run(ctx) -> list[Result]`, added to `analysis.base.default_analyses()` (or passed to
-  `HitlCad.create`) in its place in the order: cause before effect. A result that another analysis
-  may report too names their shared `cause` (`core.report.Cause`). Cache costly results with
-  `ctx.cache`.
-- **A connector kind, mate type or relation type**: a model in `core/structure.py` with a literal
-  discriminator, a docstring, an `example`, and its `measure` / `verify` / `ratio`, added to its union.
-- **A requirement check or a manufacturing process**: a model in `core/checks.py` (`_OnTarget` or
-  `_Check` with `verify(build)`; `_Process` with `checks(body)` and `allowance`), added to its union.
-- **A catalog provider**: a module with helpers that return `sdk.CatalogPart`s and an object with
-  `name`, `usage` and `search(query, limit)`, registered under `hitlcad.catalogs`.
-- **An exporter**: an object with `name`, `title` (the panel's label for its files), `summary` and
-  `export(built, report, out_dir)`, registered under `hitlcad.exporters`.
-- **A material**: an entry in a project's `materials.json`.
+Every extension is a plugin: a module registered under the `hitlcad.plugins` entry-point group,
+with `hookimpl` functions (`kernel/plugins.py`). hitlcad's own are plugins too (`builtin/`), so each
+of them is a worked example; so is [examples/plugins/hitlcad-lasercut](../examples/plugins/hitlcad-lasercut),
+a plugin outside hitlcad. What each hook takes, and what core asks of each member, is in
+[plugins.md](plugins.md).
+
+- **A CAD backend** (`hitlcad_backends`, a factory by name): subclass `SubprocessBackend` with an
+  `entry` script that loads what it needs and runs `execution/runtime.run` with a `plan` mode (via
+  `runtime.plan` and a function turning the kernel's placements into 4 × 4 matrices) and a `parts`
+  mode (export each part's STL, and STEP if it has one, with its connector frames), give it an
+  `authoring_guide()` and a `command()`, set `brep`; enable it with `HITLCAD_BACKENDS`. To also write
+  the assembly in its own format, override `write_assembly` (Blender's runs an `assembly` mode).
+- **A connector kind, mate type or relation type** (`hitlcad_connectors`, `hitlcad_mates`,
+  `hitlcad_relations`): a `Connector`, `Mate` or `Relation` subclass with a literal discriminator, a
+  docstring, an `example`, and its `measure` / `verify` / `ratio`; a round feature says which
+  (`round`), and a connector names the faces that are its feature (`owns`).
+- **A requirement check or a manufacturing process** (`hitlcad_checks`, `hitlcad_processes`): a
+  `Check` (or `OnTarget`) subclass with `verify(build)` and a `hint`, a `Process` subclass with
+  `checks(body)`, `allowance` and its `findings` (each one's title and usual fix). Their kinds of
+  result enter the error catalog with them.
+- **An analysis of a new kind** (`hitlcad_analyses`): an object with `name`, `stage`, `title`,
+  `summary` (the panel shows them) and `run(ctx) -> list[Result]`. A result that another analysis may
+  report too names their shared `cause` (`core.report.Cause`). Cache costly results with `ctx.cache`.
+- **A catalog provider** (`hitlcad_catalogs`, and its module as a model package): helpers that
+  return `sdk.CatalogPart`s and an object with `name`, `usage` and `search(query, limit)`.
+- **An exporter** (`hitlcad_exporters`): an object with `name`, `title` (the panel's label for its
+  files), `summary` and `export(built, report, out_dir)`.
+- **Materials** (`hitlcad_materials`): a `materials.json`; a project adds its own beside its designs.
+- **Code part files import** (`hitlcad_model_packages`): building blocks, catalog helpers.
+- **Error kinds and skill references** (`hitlcad_error_kinds`, `hitlcad_skill_references`): the
+  kinds of a plugin's own diagnostics, and reference files for the agents' `hitlcad` skill.
 
 ## Safety
 

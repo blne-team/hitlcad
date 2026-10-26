@@ -69,6 +69,7 @@ Click an `.stl`, `.step`/`.stp`, `.glb`/`.gltf`, `.3mf`, `.obj` or `.ply` file, 
 | `hitlcad.serverCommand` | `["hitlcad", "serve"]` | How to start the server. If `hitlcad` is not on PATH and a workspace folder is the hitlcad source checkout, `uv run hitlcad serve` is used there. |
 | `hitlcad.serverCwd` | *(empty)* | Working directory for the server command; not needed for the installed tool |
 | `hitlcad.autoOpenPanel` | `open` | When a design is rebuilt (by you or an agent) and its panel isn't showing: `open` it beside the editor, `notify`, or `off` |
+| `hitlcad.selectionHint` | `true` | Show the hint on how to select along the bottom of a 3D view; its × turns it off |
 
 ## Remote and dev containers
 

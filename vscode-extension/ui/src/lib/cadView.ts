@@ -10,12 +10,15 @@ import {
 } from "three-cad-viewer";
 import "three-cad-viewer/css";
 import type { Pick, Vec3 } from "../api/types";
+import type { CadMove } from "./motion";
 
 /** A numbered marker drawn over the model: an agent pin or a selected item. */
 export interface CadMarker {
   id: string;
   kind: "pin" | "selection";
+  /** Where it is on its instance as built: drawn wherever the view has moved that instance to. */
   point: Vec3;
+  instance: string | null;
   normal: Vec3 | null;
   label: string;
   active?: boolean;
@@ -28,14 +31,8 @@ export interface CadBounds {
   max: Vec3;
 }
 
-/** Instances moved along a mate's free motion: turned `amount` degrees about the axis, or slid `amount` mm along it. */
-export interface CadMotion {
-  instances: string[];
-  origin: Vec3;
-  axis: Vec3;
-  kind: "angle" | "travel";
-  amount: number;
-}
+/** A mate's motion at one position: what moves, each by its rigid motion from as built (`motion.movesAt`). */
+export type CadMotion = CadMove[];
 
 const TREE_WIDTH = 240;
 const CLICK_SLOP_PX = 4; // a press that moves further is an orbit, not a click
@@ -53,6 +50,13 @@ const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, direct
 const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, axes0: true, grid: [true, false, false], collapse: 1 };
 
 /** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
+/** A box's eight corners. */
+function corners([lo, hi]: [Vec3, Vec3]): Vec3[] {
+  const out: Vec3[] = [];
+  for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) out.push([x, y, z]);
+  return out;
+}
+
 export const instanceOf = (viewerPath: string): string => viewerPath.replace(/^\/+/, "").split("/").slice(1).join("/");
 
 interface ViewNode {
@@ -112,6 +116,7 @@ export class CadView {
   private readonly exact: Set<string>;
   /** Every group `place` has moved, as built. */
   private readonly built = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
+  private marked: CadMarker[] = [];
   /** Each shape's way out from the model's middle, in its parent's frame: its offset at a spread of 1. */
   private readonly outward = new Map<Three.Object3D, Three.Vector3>();
   private motion: CadMotion | null = null;
@@ -193,19 +198,51 @@ export class CadView {
 
   /** Replace the numbered markers (pins and selected items). */
   setMarkers(markers: CadMarker[]): void {
+    this.marked = markers;
+    this.drawMarkers();
+    this.redraw();
+  }
+
+  private drawMarkers() {
     this.clear(this.markers);
     this.onScreen.length = 0;
     let pins = 0;
     let selected = 0;
-    for (const m of markers) {
+    for (const marker of this.marked) {
+      const m = this.whereShown(marker);
       this.markers.add(m.kind === "pin" ? this.pin(m, ++pins) : this.selection(m, ++selected));
     }
-    this.redraw();
+  }
+
+  /** A marker where its instance is on screen, moved as the view moved the instance (a motion, an explode). */
+  private whereShown(m: CadMarker): CadMarker {
+    const moved = m.instance === null ? null : this.displaced(`${this.rootId}/${m.instance}`);
+    if (!moved) return m;
+    const T = this.three;
+    const at = (p: Vec3) => new T.Vector3(...p).applyMatrix4(moved).toArray();
+    const turned = m.normal && new T.Vector3(...m.normal).transformDirection(moved).toArray();
+    const box = m.box && new T.Box3().setFromPoints(corners(m.box).map((c) => new T.Vector3(...c).applyMatrix4(moved)));
+    return { ...m, point: at(m.point), normal: turned ?? null, box: box ? [box.min.toArray(), box.max.toArray()] : undefined };
+  }
+
+  /** How the view has moved a group, or the one it is in (a mate's motion, an explode), from where it was built,
+   * in model space; null where it has not. */
+  private displaced(key: string): Three.Matrix4 | null {
+    const T = this.three;
+    for (let g: Three.Object3D | null = this.viewer.nestedGroup.groups[key] ?? null; g; g = g.parent) {
+      const base = this.built.get(g);
+      if (!base || !g.parent) continue;
+      const parent = g.parent.matrixWorld;
+      const now = new T.Matrix4().compose(g.position, g.quaternion, g.scale);
+      const then = new T.Matrix4().compose(base.position, base.quaternion, g.scale);
+      return parent.clone().multiply(now).multiply(then.invert()).multiply(parent.clone().invert());
+    }
+    return null;
   }
 
   /**
-   * Move instances along a mate's free motion (their viewer groups, `${root}/${instance}`), or put everything
-   * back (`null`). The build places parts as assembled; this only previews the motion the build swept.
+   * Move instances by a mate's motion at one position (their viewer groups, `${root}/${instance}`), or put
+   * everything back (`null`). The build places parts as assembled; this only previews the motion the build swept.
    */
   setMotion(motion: CadMotion | null): void {
     this.motion = motion;
@@ -316,18 +353,9 @@ export class CadView {
     const hold = (group: Three.Object3D) => {
       if (!this.built.has(group)) this.built.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone() });
     };
-    const motion = this.motion;
-    if (motion && motion.amount !== 0) {
-      const axis = new T.Vector3(...motion.axis).normalize();
-      const origin = new T.Vector3(...motion.origin);
-      const step =
-        motion.kind === "angle"
-          ? new T.Matrix4()
-              .makeTranslation(origin.x, origin.y, origin.z)
-              .multiply(new T.Matrix4().makeRotationAxis(axis, (motion.amount * Math.PI) / 180))
-              .multiply(new T.Matrix4().makeTranslation(-origin.x, -origin.y, -origin.z))
-          : new T.Matrix4().makeTranslation(axis.x * motion.amount, axis.y * motion.amount, axis.z * motion.amount);
-      for (const instance of motion.instances) {
+    for (const move of this.motion ?? []) {
+      const step = new T.Matrix4().fromArray([...move.matrix, 0, 0, 0, 1]).transpose(); // by rows, as the report has it
+      for (const instance of move.instances) {
         const group = this.viewer.nestedGroup.groups[`${this.rootId}/${instance}`];
         if (!group) continue;
         hold(group);
@@ -341,6 +369,8 @@ export class CadView {
         group.position.addScaledVector(out, this.spread);
       }
     }
+    this.viewer.scene.updateMatrixWorld(true);
+    this.drawMarkers(); // markers go with their parts
     this.viewer.idPicker?.setDirty(); // the pick buffer shows the parts where they were drawn last
     this.redraw();
   }
@@ -368,9 +398,10 @@ export class CadView {
     const filter = this.exact.size ? this.display.shapeFilterDropDownMenu.currentFilter.filter((f) => f !== null) : ["face" as const];
     const hit = this.viewer.idPicker?.pickAt(clientX - rect.left, clientY - rect.top, filter.length ? { topoFilter: filter } : {});
     if (!hit?.point) return null;
-    const point = hit.point.toArray();
     const m = COMPONENT_PATH.exec(hit.info.path);
     const shape = hit.info.solidPath ?? m?.[1];
+    const moved = shape ? this.displaced(shape.replace(/^\/+/, "")) : null; // a pick is where it is as built
+    const point = (moved ? hit.point.clone().applyMatrix4(moved.invert()) : hit.point).toArray();
     if (!shape || !this.exact.has(shape)) return { point, normal: null, component: null };
     if (filter.includes("solid")) return { point, normal: null, component: { instance: instanceOf(shape), topo: "solid", index: 0 } };
     if (!m) return null;

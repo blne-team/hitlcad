@@ -1,5 +1,5 @@
 import { fileUrl } from "../api/client";
-import type { AnalysisInfo, Finding, Problem, Result, Revision } from "../api/types";
+import type { AnalysisInfo, ErrorKind, Finding, Problem, Result, Revision } from "../api/types";
 import { useCapabilities } from "../hooks/useCapabilities";
 import { bytes } from "../lib/format";
 import { toExtension } from "../lib/host";
@@ -15,6 +15,18 @@ const rowClass = (r: Pick<Result, "status" | "severity">) =>
 function copies(f: Finding): string {
   if (f.results.length === 1) return "";
   return ` ×${f.results.length}${f.indices.length ? ` at [${f.indices.join(", ")}]` : ""}`;
+}
+
+/** Where in the design's files, past what the subject says: " line 31" after a file, " (design.json)" after a
+ * field of it; as the agent reads it. */
+function where(r: Result): string {
+  const w = r.where;
+  if (!w) return "";
+  const file = w.file && w.file !== r.subject ? w.file : "";
+  const address = w.address && w.address !== r.subject ? w.address : "";
+  const at = [file, w.line ? `line ${w.line}` : ""].filter(Boolean).join(" ");
+  const text = [at, address].filter(Boolean).join(", ");
+  return !text ? "" : text.startsWith("line") ? ` ${text}` : ` (${text})`;
 }
 
 /** A report's results by analysis, in the order the server runs them (others after, by name). */
@@ -45,7 +57,9 @@ function ResultList({ results }: { results: Result[] }) {
 }
 
 /** One problem: what leads it (folded copies at their pattern indices), what else saw it, and every check in it. */
-function ProblemRow({ problem, results, title }: { problem: Problem; results: Result[]; title: (analysis: string) => string }) {
+type ProblemProps = { problem: Problem; results: Result[]; title: (analysis: string) => string; kind: (code: string) => ErrorKind | undefined };
+
+function ProblemRow({ problem, results, title, kind }: ProblemProps) {
   const [lead, ...also] = problem.findings;
   const first = results[lead!.results[0]!]!;
   const all = problem.findings.flatMap((f) => f.results.map((i) => results[i]!));
@@ -56,11 +70,13 @@ function ProblemRow({ problem, results, title }: { problem: Problem; results: Re
         {warning ? WARNING : MARK[problem.status]}
       </span>
       <div>
-        <span className="check-name">
+        <span className="check-name" title={kind(first.code)?.title ?? first.code}>
           {title(first.analysis)} {first.subject}
+          {where(first)}
           {copies(lead!)}
         </span>
-        <span className="muted"> {first.detail}</span>
+        <span className="muted detail"> {first.detail}</span>
+        {kind(first.code)?.hint && <div className="hint muted">→ {kind(first.code)!.hint}</div>}
         {also.length > 0 && (
           <div className="also muted">
             also:{" "}
@@ -96,6 +112,7 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
   const preview = report.artifacts.find((a) => a.role === "preview");
   const analyses = capabilities?.analyses ?? [];
   const title = (name: string) => analyses.find((a) => a.name === name)?.title ?? name;
+  const kind = (code: string) => capabilities?.error_kinds.find((k) => k.code === code);
   return (
     <div className="report">
       <p>
@@ -109,18 +126,11 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
       </p>
       {report.results.length > 0 && <p className="tally">{report.tally.text}</p>}
       {revision.summary && <p>{revision.summary}</p>}
-      {report.error && <pre className="error-block">{report.error}</pre>}
-      {report.log_tail && (
-        <details>
-          <summary>Build log</summary>
-          <pre className="code">{report.log_tail}</pre>
-        </details>
-      )}
 
       {report.problems.length > 0 && (
         <ul className="checks problems">
           {report.problems.map((p) => (
-            <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} />
+            <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} kind={kind} />
           ))}
         </ul>
       )}
@@ -224,7 +234,7 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
 
       <details>
         <summary>Source code</summary>
-        {Object.entries(revision.spec.sources).map(([path, text]) => (
+        {Object.entries(revision.spec?.sources ?? {}).map(([path, text]) => (
           <details key={path} className="source-file">
             <summary className="muted">{path}</summary>
             <pre className="code">{text}</pre>

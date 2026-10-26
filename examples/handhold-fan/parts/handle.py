@@ -3,7 +3,7 @@ Z=0 and the ESC bay opens at the top, where the cap closes it. X points forward 
 
 from build123d import Align, Axis, Box, BuildPart, Cylinder, Location, Locations, Mode, Pos, add, fillet
 
-from hitlcad.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
 
 from lib.printing import teardrop
 

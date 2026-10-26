@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { hideSelectionHint } from "./hints";
 import { parseUiMessage, UiStates } from "./lib/uiState";
 
 /**
@@ -32,6 +33,8 @@ export class DesignUiHub {
       if (msg.reveal) this.reveal();
     } else if (msg?.kind === "copy") {
       void vscode.commands.executeCommand("hitlcad.copyForChat");
+    } else if (msg?.kind === "hideSelectionHint") {
+      hideSelectionHint();
     } else if (msg?.kind === "fullscreen") {
       void vscode.commands.executeCommand("workbench.action.toggleZenMode");
     } else if (msg?.kind === "save") {

@@ -14,11 +14,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hitlcad.analysis import cadview
-from hitlcad.analysis.features import Unmeasurable, flat
-from hitlcad.analysis.geometry import location
 from hitlcad.analysis.model import BuiltDesign, PartGeometry
 from hitlcad.core import frames as fr
+from hitlcad.geometry import cadview
+from hitlcad.geometry.features import flat
+from hitlcad.kernel.errors import Unmeasurable
+from hitlcad.review.measure import location
 
 
 def step_assembly(built: BuiltDesign, target: Path) -> bool:

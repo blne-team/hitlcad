@@ -18,12 +18,12 @@ import pytest
 import trimesh
 
 from hitlcad import cli
-from hitlcad.api.app import _until_gone, create_app
+from hitlcad.api.rest import _until_gone, create_app
 from hitlcad.app import HitlCad
 from hitlcad.config import Settings
 from hitlcad.core.events import SelectionChanged
 from hitlcad.render.base import NullRenderer
-from hitlcad.service.bus import MAX_QUEUE, EventBus
+from hitlcad.services.bus import MAX_QUEUE, EventBus
 
 from .conftest import copy_design
 
@@ -39,7 +39,8 @@ async def api(core: HitlCad) -> AsyncIterator[httpx.AsyncClient]:
 @pytest.mark.geometry
 async def test_rest_design_lifecycle(api: httpx.AsyncClient, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
-    assert (await api.post("/api/designs", json={"path": str(tmp_path / "missing")})).status_code == 404
+    missing = await api.post("/api/designs", json={"path": str(tmp_path / "missing")})
+    assert missing.status_code == 404 and missing.json()["diagnostic"]["code"] == "not_found.design"
     opened = (await api.post("/api/designs", json={"path": str(folder)})).json()
     design_id = opened["id"]
     assert opened["name"] == "Enclosure" and opened["created"] is False
@@ -57,7 +58,8 @@ async def test_rest_design_lifecycle(api: httpx.AsyncClient, tmp_path: Path) -> 
     assert {n["id"] for n in structure["graph"]["nodes"]} == {"base", "lid", "insert", "screw"}
     assert any(e["kind"] == "fastener" for e in structure["graph"]["edges"]) and "10 instances" in structure["overview"]
 
-    assert (await api.post(f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}})).status_code == 422
+    too_wide = await api.post(f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}})
+    assert too_wide.status_code == 422 and too_wide.json()["diagnostic"]["code"] == "parameter.invalid"
     pin = (await api.post(f"/api/designs/{design_id}/pins", json={
         "point": [0, 0, 24], "note": "here", "component": {"instance": "lid", "topo": "solid"}})).json()  # fmt: skip
     assert pin["instance"] == "lid" and pin["label"].startswith("Whole part")

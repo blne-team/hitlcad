@@ -98,7 +98,8 @@ Open pins (resolve them with resolve_pins once addressed):
   连接本来就要求的 6 处重叠会列出来，但不算作检查。
 - **Motion**（1）：运动件在整个行程里扫一遍，看会不会撞：
   `motor.shaft ↔ impeller.bore moves through a full turn without collision (nothing in its reach meets its sweep)`；
-  被其他连接固定住、不会动的 4 个 mate 会列出来，但不算作检查。
+  被其他连接固定住、不会动的 4 个 mate 会列出来，但不算作检查。闭环的 mate（四连杆、行星齿轮）会在
+  环路求解器解出的每个位置上检查；你在面板里看它动一遍，确认后才算通过。
 - **Manufacturing**（21）：每个零件按自己的加工工艺和摆放方向检查，比如壁厚
   `duct: thinnest wall 2.49 mm (minimum 0.8 mm)`，还有悬垂和热床接触面。FDM、光固化、CNC、钣金、
   注塑各有一套规则。
@@ -174,6 +175,7 @@ handhold-fan/
 - [INSTALL.md](INSTALL.md)：安装、项目配置、设置、问题排查
 - [docs/assembly-model.md](docs/assembly-model.md)：一个设计包含哪些内容，每部分怎么检查
 - [docs/architecture.md](docs/architecture.md)：hitlcad 内部是怎么工作的
+- [docs/plugins.md](docs/plugins.md)：插件（hitlcad 自带的词汇也是插件），以及每个错误如何呈现
 - [docs/development.md](docs/development.md)：参与 hitlcad 本身的开发
 - [docs/roadmap.md](docs/roadmap.md)：接下来的计划
 

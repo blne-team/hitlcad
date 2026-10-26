@@ -1,6 +1,6 @@
 import { errorDetail } from "../../../src/lib/errorDetail";
 import { server } from "../lib/host";
-import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, Revision, SelectionItem, Structure } from "./types";
+import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, PinMotion, Revision, SelectionItem, Structure } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -26,12 +26,17 @@ const send = <T>(method: string, path: string, body: unknown) => request<T>(path
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   design: (id: string) => request<DesignState>(`/api/designs/${id}`),
+  revision: (id: string, revision: number) => request<Revision>(`/api/designs/${id}/revisions/${revision}`),
   setSelection: (id: string, revision: number | null, items: Pick[]) =>
     send<{ items: SelectionItem[] }>("PUT", `/api/designs/${id}/selection`, { revision, items }),
-  addPin: (id: string, pin: Pick & { revision: number | null; note?: string }) => send<Pin>("POST", `/api/designs/${id}/pins`, pin),
+  addPin: (id: string, pin: Pick & { revision: number | null; note?: string; motion?: PinMotion | null }) =>
+    send<Pin>("POST", `/api/designs/${id}/pins`, pin),
   updatePin: (id: string, pinId: string, changes: { note?: string; resolved?: boolean }) =>
     send<Pin>("PATCH", `/api/designs/${id}/pins/${pinId}`, changes),
   removePin: (id: string, pinId: string) => request<void>(`/api/designs/${id}/pins/${pinId}`, { method: "DELETE" }),
+  watchMotion: (id: string, revision: number, key: string) => send<Revision>("POST", `/api/designs/${id}/watched`, { revision, key }),
+  unwatchMotion: (id: string, revision: number, key: string) =>
+    request<Revision>(`/api/designs/${id}/watched/${key}?revision=${revision}`, { method: "DELETE" }),
   editParameters: (id: string, values: Record<string, ParamValue>) =>
     send<Revision>("POST", `/api/designs/${id}/parameters`, { values }),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),

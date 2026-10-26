@@ -104,7 +104,9 @@ lines your agent reads: the checks one mistake fails together, a pattern's copie
   melted into the duct; the 6 overlaps joints expect are listed, not counted.
 - **Motion** (1). Moving parts are swept through their range:
   `motor.shaft ↔ impeller.bore moves through a full turn without collision (nothing in its reach meets its sweep)`;
-  the 4 mates other joints hold still are listed, not counted.
+  the 4 mates other joints hold still are listed, not counted. A closed loop of mates (a four-bar, a
+  planetary) is checked at every position a loop solver finds; you watch it move in the panel to
+  pass it.
 - **Manufacturing** (21). Each part is checked against its process in the orientation it's made:
   `duct: thinnest wall 2.49 mm (minimum 0.8 mm)`, overhangs, bed contact. FDM, resin printing, CNC
   milling, sheet metal and injection molding each have their own rules.
@@ -184,6 +186,8 @@ assembly as a graph, the BOM and the brief.
 - [docs/assembly-model.md](docs/assembly-model.md): what a design contains and how each part of it
   is checked
 - [docs/architecture.md](docs/architecture.md): how hitlcad works inside
+- [docs/plugins.md](docs/plugins.md): plugins (hitlcad's own vocabulary is one), and how every error
+  reads
 - [docs/development.md](docs/development.md): working on hitlcad itself
 - [docs/roadmap.md](docs/roadmap.md): what comes next
 

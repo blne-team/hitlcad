@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
+import { hideSelectionHint, selectionHint } from "./hints";
 import { esc, panelHtml, type PanelView } from "./lib/panelHtml";
 import { parseUiMessage } from "./lib/uiState";
 import { serverUrl } from "./server";
@@ -18,7 +19,7 @@ export async function panelPage(webview: vscode.Webview, extensionUri: vscode.Ur
     cspSource: webview.cspSource,
     nonce: randomBytes(16).toString("base64"),
     title,
-    config: { server, view },
+    config: { server, view, selectionHint: selectionHint() },
   });
 }
 
@@ -36,6 +37,7 @@ export class SelectionStore {
       panel.webview.onDidReceiveMessage((m: unknown) => {
         const msg = parseUiMessage(m);
         if (msg?.kind === "copy") void vscode.commands.executeCommand("hitlcad.copyForChat");
+        if (msg?.kind === "hideSelectionHint") hideSelectionHint();
         if (msg?.kind !== "selection") return;
         if (msg.text) this.texts.set(panel, msg.text);
         else this.texts.delete(panel);

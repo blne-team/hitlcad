@@ -1,24 +1,27 @@
 """The Analysis extension point.
 
-An analysis reads a built design and returns `Result`s, each naming the addresses it is about.
-Analyses are registered in `app.py`; the pipeline runs every one on every build. Costly results are
-cached by the inputs they depend on (`Context.cache`), so a rebuild only recomputes what changed.
+An analysis reads a built design and returns `Result`s, each naming the kind of check it is (its code, from the
+error catalog) and the addresses it is about. The pipeline runs every analysis in `default_analyses` on every
+build. Costly results are cached by the inputs they depend on (`Context.cache`), so a rebuild only recomputes what
+changed.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+import logging
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
 
-from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PlacedFrame, StructureError
+from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PlacedFrame
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result, Severity, Status
+from hitlcad.kernel.errors import Diagnostic, ErrorKind, StructureError
 
 
 class ResultCache:
@@ -47,31 +50,63 @@ class Context:
     settings: AnalysisSettings
     bodies: BuildBodies
     cache: ResultCache
+    watched: Mapping[str, int] = field(default_factory=dict)  # loop sweeps the human watched: key -> revision
 
     @property
     def tol(self) -> Any:
         return self.built.tolerances
 
 
+#: When an analysis runs: cause before effect. Where results share a cause (`Result.cause`), the earliest
+#: analysis's lead the problem.
+STAGES = ("structure", "parts", "connectors", "joints", "assembly", "motion", "process", "requirements")
+
+
 class Analysis(Protocol):
     name: str  # what its results are filed under (`Result.analysis`)
+    stage: str  # one of STAGES
     title: str  # for the panel: "Fastener sets"
     summary: str  # one line for the panel: what it checks
 
     def run(self, ctx: Context) -> list[Result]: ...
 
 
-def result(analysis: str, subject: str, status: Status | bool | None, detail: str, about: Iterable[str] = (),
-           values: dict[str, Any] | None = None, severity: Severity = "error", cause: str = "") -> Result:  # fmt: skip
+def result(analysis: str, kind: ErrorKind, subject: str, status: Status | bool | None, detail: str,
+           about: Iterable[str] = (), values: dict[str, Any] | None = None, severity: Severity = "error",
+           cause: str = "") -> Result:  # fmt: skip
     if not isinstance(status, str):
         status = "unverified" if status is None else "pass" if status else "fail"
     clean = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in (values or {}).items()}
-    return Result(analysis=analysis, subject=subject, status=status, severity=severity, detail=detail,
+    return Result(analysis=analysis, code=kind.code, subject=subject, status=status, severity=severity, detail=detail,
                   about=sorted(set(about)), values=clean, cause=cause)  # fmt: skip
 
 
+def reported(analysis: str, d: Diagnostic, subject: str = "", about: Iterable[str] = (),
+             status: Status | bool | None = False) -> Result:  # fmt: skip
+    """A diagnostic as a result: what an analysis or the build met, where it is in the design's files."""
+    where = d.where
+    subject = subject or (where.address or where.file or "" if where else "") or d.code
+    if not isinstance(status, str):
+        status = "unverified" if status is None else "pass" if status else "fail"
+    return Result(analysis=analysis, code=d.code, subject=subject, status=status, detail=d.message, where=where,
+                  about=sorted(set(about)))  # fmt: skip
+
+
 def structural(subject: str, error: StructureError, about: Iterable[str] = ()) -> Result:
-    return result("structure", subject, False, str(error), about)
+    return reported("structure", error.diagnostic, subject, about)
+
+
+def member_failed(analysis: str, member: Any, what: str, e: Exception, about: Iterable[str] = (),
+                  subject: str = "") -> Result:  # fmt: skip
+    """A design model member's own code raising (a check's, a process's): unverified, with the plugin it is from,
+    or a bug in hitlcad when that is hitlcad's own."""
+    from hitlcad.kernel.plugins import registry
+
+    logging.getLogger(__name__).exception("%s failed", what)
+    found = registry()
+    about = list(about)
+    return reported(analysis, found.failed(found.origin(member), what, e), subject or (about[0] if about else what),
+                    about, status=None)  # fmt: skip
 
 
 def pair(a: list[PlacedFrame], b: list[PlacedFrame]) -> list[tuple[PlacedFrame, PlacedFrame]]:
@@ -104,7 +139,16 @@ def default_analyses() -> list[Analysis]:
     from hitlcad.analysis.motion import Motion
     from hitlcad.analysis.relations import Relations
     from hitlcad.analysis.structure import Structure
+    from hitlcad.kernel.errors import PLUGIN_ERROR
+    from hitlcad.kernel.plugins import registry
 
-    # Cause before effect: where results share a cause (`Result.cause`), the earliest analysis's lead the problem.
-    return [Structure(), Parts(), Connectors(), Mates(), Relations(), Fasteners(), Coverage(), Interference(), Motion(),
-            Manufacturing(), Requirements()]  # fmt: skip
+    own: list[Analysis] = [Structure(), Parts(), Connectors(), Mates(), Relations(), Fasteners(), Coverage(),
+                           Interference(), Motion(), Manufacturing(), Requirements()]  # fmt: skip
+    found = registry()
+    for a in found.analyses:
+        if a.stage not in STAGES:
+            plugin = found.origin(a)
+            found.failures.append(PLUGIN_ERROR.diagnostic(
+                f"{plugin.distribution if plugin else 'a plugin'}: analysis {a.name} runs at stage {a.stage!r}, which "
+                f"there is not; stages: {', '.join(STAGES)}"))  # fmt: skip
+    return sorted([*own, *(a for a in found.analyses if a.stage in STAGES)], key=lambda a: STAGES.index(a.stage))

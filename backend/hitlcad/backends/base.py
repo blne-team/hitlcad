@@ -10,7 +10,8 @@ in its own child process, in two steps:
 
 Everything after that (assembly, measurement, analyses, exports) is backend-independent, except that a
 backend may also write the built assembly in its own format (`write_assembly`) from the parts' files.
-Third-party backends register through the ``hitlcad.backends`` entry-point group.
+A plugin gives a backend from its `hitlcad_backends` hook (hitlcad's own: `hitlcad.builtin`). What went wrong
+comes back as a `Diagnostic`.
 """
 
 from __future__ import annotations
@@ -22,7 +23,9 @@ from typing import Any, ClassVar
 from pydantic import Field
 
 from hitlcad.core.report import CatalogInfo, Reads
-from hitlcad.core.types import Matrix, Model, Value
+from hitlcad.core.types import Matrix, Value
+from hitlcad.kernel.errors import Diagnostic
+from hitlcad.kernel.model import Model
 
 
 class BackendInfo(Model):
@@ -40,7 +43,7 @@ class InterfaceOutcome(Model):
 
 
 class PlanOutcome(Model):
-    error: str | None = None
+    error: Diagnostic | None = None
     log: str = ""
     interfaces: dict[str, InterfaceOutcome] = Field(default_factory=dict)
     placements: dict[str, list[Matrix]] = Field(default_factory=dict)
@@ -59,14 +62,14 @@ class BuiltPart(Model):
 
 class FileOutcome(Model):
     file: str
-    error: str | None = None
+    error: Diagnostic | None = None
     cached: bool = Field(default=False, description="Restored from the part cache, not built")
     reads: Reads = Field(default_factory=Reads)
     parts: list[BuiltPart] = Field(default_factory=list)
 
 
 class PartsOutcome(Model):
-    error: str | None = Field(default=None, description="The process failed as a whole")
+    error: Diagnostic | None = Field(default=None, description="The process failed as a whole")
     log: str = ""
     files: list[FileOutcome] = Field(default_factory=list)
 
@@ -105,6 +108,14 @@ class CADBackend(ABC):
     def fingerprint(self) -> str:
         """What cached parts built by this backend depend on besides their inputs: its code and settings."""
         return self.name
+
+    def warm(self) -> None:
+        """Get ready to build, before the first build asks: start what a build would otherwise wait for."""
+        return None
+
+    async def close(self) -> None:
+        """Stop what `warm` started."""
+        return None
 
     def describe(self) -> BackendInfo:
         ok, detail = self.availability()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -15,11 +16,12 @@ import numpy as np
 import pytest
 import trimesh
 
-from hitlcad.analysis import cadview
+from hitlcad.agent.graph import problem_lines
 from hitlcad.app import HitlCad
 from hitlcad.core.report import BuildReport
-from hitlcad.designs.folder import DesignFolder
-from hitlcad.graph import problem_lines
+from hitlcad.geometry import cadview
+from hitlcad.kernel.errors import Location
+from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import copy_design, results, write_design
 
@@ -52,7 +54,7 @@ def edit_json(path: Path, change: Any) -> None:
 async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     assert failing(report) == [] and not any(p.cached for p in report.parts)
     fasteners = results(report, "fastener", "pass")
     assert len(fasteners) == 4 and all("engages 5.00 mm" in r.detail for r in fasteners)
@@ -117,7 +119,8 @@ async def test_a_fastener_needs_the_into_thread_and_an_iso_273_clearance_hole(co
     assert "the M3-0.5 shank does not clear lid.screws[0]: Ø3.100 as made, ISO 273 asks Ø3.2 (fine)" in text
     # The four stacks fail alike: one problem, at their four indices
     (stacks,) = [line for line in problem_lines(report.results, report.problems, 10) if " fastener " in line]
-    assert stacks.startswith("  ✗ fastener screw.seat:lid.screws>insert.thread ×4 at [0, 1, 2, 3]: screw[0].seat")
+    assert stacks.startswith("  ✗ fastener screw.seat:lid.screws>insert.thread ×4 at [0, 1, 2, 3] [fastener.stack]: "
+                             "screw[0].seat")  # fmt: skip
 
 
 async def test_floating_parts_and_broken_references(core: HitlCad, tmp_path: Path) -> None:
@@ -143,8 +146,11 @@ async def test_errors_in_a_part_file_name_its_line_and_spare_the_others(core: Hi
     )
     report = await build(core, folder, tmp_path / "out")
     assert report.status == "failed"
-    assert "parts/hardware.py line 5, in build" in report.error and "ValueError: 没有这种嵌件 ✗" in report.error
-    assert [r.subject for r in report.results] == ["parts/hardware.py"]
+    (error,) = report.results
+    assert (error.analysis, error.code, error.subject) == ("build", "model.exception", "parts/hardware.py")
+    assert error.where == Location(file="parts/hardware.py", line=5)
+    assert "parts/hardware.py line 5, in build" in error.detail and "ValueError: 没有这种嵌件 ✗" in error.detail
+    assert set(error.about) == {"insert", "screw"}
 
 
 async def test_configurations_build_their_own_values_and_requirements_follow_them(
@@ -188,8 +194,9 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     assert motion.status == "fail" and "lid hits base at -99.0° on the way to -100°" in motion.detail
     assert "make them [-98.9, 0]" in motion.detail  # the limit to change, to where it last moved clear
     (sweep,) = report.motions  # what the panel moves: the lid, about the hinge axis, -100 … 0°
-    assert (sweep.kind, sweep.start, sweep.end, sweep.moving) == ("angle", -100, 0, ["lid"])
-    assert sweep.axis == pytest.approx((1, 0, 0)) and sweep.current == pytest.approx(0, abs=1e-6)
+    (lid,) = sweep.drives
+    assert (sweep.kind, sweep.start, sweep.end, lid.instances) == ("angle", -100, 0, ["lid"])
+    assert lid.axis == pytest.approx((1, 0, 0)) and lid.rate == 1 and sweep.current == pytest.approx(0, abs=1e-6)
     edit_json(folder / "design.json", lambda d: d["parameters"][6].update(value=0))  # no stop post
     clear = await build(core, folder, tmp_path / "b")
     (motion,) = results(clear, "motion")
@@ -303,7 +310,7 @@ async def test_a_turn_past_a_part_that_cannot_be_measured_is_not_called_clear(co
         post={"role": "in the way", "file": "parts/post.py", "backend": "blender", "material": "PLA"})))  # fmt: skip
     edit(folder / "assembly.py", "'paddle': [Pos(0, 0, 5)]", "'paddle': [Pos(0, 0, 5)], 'post': [Pos()]")
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     (motion,) = results(report, "motion")
     assert motion.status == "unverified" and "paddle against post is not measurable" in motion.detail, motion.detail
 
@@ -316,7 +323,7 @@ async def test_an_insert_set_into_solid_material_is_not_an_expected_overlap(core
     assert len(inserts) == 4 and all("the hole is not cut there" in r.detail for r in inserts), failing(report)
     # The screws threaded into them reach into the base for the same reason: one problem, four times over
     lines = problem_lines(report.results, report.problems, 10)
-    assert lines[0].startswith("  ✗ interference base+insert[0] ×4 at [0, 1, 2, 3]: "), lines
+    assert lines[0].startswith("  ✗ interference base+insert[0] ×4 at [0, 1, 2, 3] [interference.overlap]: "), lines
     assert report.tally.problems == 1, lines
 
 
@@ -331,7 +338,7 @@ async def test_the_fan_turns_into_a_pin_in_its_duct(core: HitlCad, tmp_path: Pat
          "Cylinder(0.6, 4.5, mode=Mode.PRIVATE))\n")  # fmt: skip
     edit(folder / "parts/duct.py", "Pos, add", "Pos, Rot, add")
     report = await build(core, folder, tmp_path / "pin")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
     assert motion.status == "fail" and "impeller hits duct at 18.5°" in motion.detail and "at -18.5°" in motion.detail
     (tips,) = [r for r in results(report, "requirement") if r.subject == "Impeller blade tips clear the duct"]
@@ -350,7 +357,8 @@ async def test_an_impeller_too_big_for_its_duct_is_one_problem(core: HitlCad, tm
     assert motion.status == "unverified" and "already overlap" in motion.detail
     # The README's seeded mistake: one problem, its interference leading and naming what else it fails
     (line, judged) = problem_lines(report.results, report.problems, 10)
-    assert line.startswith("  ✗ interference duct+impeller: duct and impeller overlap by 91.11 mm³"), line
+    assert line.startswith("  ✗ interference duct+impeller [interference.overlap]: duct and impeller overlap by "
+                           "91.11 mm³"), line  # fmt: skip
     assert line.endswith("(also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')")
     assert judged.startswith("  ? requirement Intake guard is finger-safe")
     assert report.tally.text.startswith("1 problem (2 failing checks), 1 unverified; ")
@@ -415,7 +423,7 @@ async def test_iso_fits_hold_over_the_standard_s_range_and_leave_a_moving_mate_r
         d["parameters"][3].update(value=pin_d, max=10), d["parameters"][4].update(value=gap),
         d["mates"][0].update(fit={"iso": fit})))  # fmt: skip
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     (mate,) = results(report, "mate")
     assert (mate.status == "pass") is passes and says in mate.detail, mate.detail
     # A fit modelled without a gap overlaps by its facets only: neither interference nor motion fails on that
@@ -436,19 +444,20 @@ async def test_an_analysis_that_crashes_is_reported_and_spares_the_others(
     report = await build(core, copy_design("hinge", tmp_path / "hinge"), tmp_path / "out")
     assert report.status == "succeeded"
     (crashed,) = results(report, "motion")
-    assert crashed.status == "unverified" and crashed.detail == "the analysis failed: boom"
+    assert crashed.status == "unverified" and crashed.detail == "the motion analysis failed: RuntimeError: boom"
+    assert crashed.code == "hitlcad.bug"
     assert results(report, "interference")
 
 
 async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("gearbox", tmp_path / "gearbox")
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     joints = [
         f for f in failing(report) if f.split()[0] in ("mate", "relation", "fastener", "interference", "coverage")
     ]
     assert joints == [
-        "mate motor.shaft+sun.bore: motor.shaft ↔ sun.bore: cylindrical, frames agree; fit 0.200 mm "
+        "mate rotor.shaft+sun.bore: rotor.shaft ↔ sun.bore: slider, frames agree; fit 0.200 mm "
         "(hole Ø5.200, shaft Ø5.000), needs 0 … 0.1"
     ]
     assert len(results(report, "relation", "pass")) == 6
@@ -456,9 +465,16 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     assert "closed mesh" in [r.detail for r in results(report, "part") if r.subject == "bearing"]
     (sun,) = [r for r in results(report, "connector") if r.subject == "sun.teeth"]
     assert sun.status == "pass" and sun.detail == "external gear m1.25, 18 teeth, 10 mm wide: tip Ø25.000"
-    motion = results(report, "motion")  # a planetary is a closed loop: not analysed, never wrongly failed
-    assert motion and not [r for r in motion if r.status == "fail"]
-    assert any(r.status == "unverified" and "closed loop" in r.detail for r in motion)
+    # A planetary is a closed loop: solved, clear at every position, and the human's to watch between them
+    motion = [r for r in results(report, "motion") if r.code != "motion.held"]
+    assert {r.code for r in motion} == {"motion.sampled"}, [r.detail for r in motion]
+    (rotor,) = [r for r in motion if r.subject == "motor.spindle+rotor.axis"]
+    assert rotor.detail.startswith("motor.spindle ↔ rotor.axis moves a full turn: clear at ")
+    assert "more way" not in rotor.detail  # the sun and planets sliding on their shafts move nothing else
+    (carrier,) = [r for r in motion if r.subject == "housing.axis+carrier.axis"]
+    assert "moves -45.0 … 45.0° with its loop" in carrier.detail  # Willis: 18 / (18 + 54) of the sun's turn
+    (loop,) = report.motions
+    assert loop.continuous and len(loop.values) == len(loop.poses[0].frames) and loop.key
     (stack,) = [r for r in results(report, "requirement") if "axial gap" in r.subject]
     assert stack.status == "pass" and stack.detail.startswith(
         "0.500 mm nominal, 0.300 … 0.700 worst case (± 0.200), ± 0.141 RSS"
@@ -469,6 +485,58 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
 async def test_the_gearbox_s_other_ratio_meshes_too(core: HitlCad, tmp_path: Path) -> None:
     report = await build(core, copy_design("gearbox", tmp_path / "gearbox"), tmp_path / "out", "ratio_5")
     assert report.status == "succeeded" and len(results(report, "relation", "pass")) == 6
+
+
+async def test_a_four_bar_moves_with_its_loop_and_says_what_it_checked(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("linkage", tmp_path / "linkage")
+    report = await build(core, folder, tmp_path / "a")
+    motion = {r.subject: r for r in results(report, "motion")}
+    crank, rocker = motion["base.a+crank.a"], motion["base.d+rocker.d"]
+    assert (crank.code, crank.status) == ("motion.sampled", "unverified")
+    assert crank.detail.startswith("base.a ↔ crank.a moves a full turn: clear at ")
+    assert "with its loop, driven by base.a ↔ crank.a" in rocker.detail
+    lo, hi = map(float, re.search(r"moves (-?[\d.]+) … (-?[\d.]+)°", rocker.detail).groups())
+    assert hi - lo == pytest.approx(64.0, abs=0.15)  # a crank-rocker 15/40/30/40 swings its rocker 64.0°
+    assert len({r.cause for r in motion.values()}) == 1  # one loop, one problem
+    (loop,) = report.motions
+    assert loop.continuous and len(loop.poses) == 3 and loop.key
+    edit_json(folder / "design.json", lambda d: d["parameters"][8].update(value=3))  # a post in the rocker's way
+    hit = await build(core, folder, tmp_path / "b")
+    (crank,) = [r for r in results(hit, "motion") if r.subject == "base.a+crank.a"]
+    assert crank.code == "motion.collision" and "rocker hits base at" in crank.detail, crank.detail
+
+    def locks(d: dict[str, Any]) -> None:  # a coupler too short for the crank to turn: it locks at 124.2°
+        d["parameters"][1].update(value=20)
+        d["parameters"][8].update(value=0)
+        d["mates"][0]["limits"] = {"angle": [0, 180]}
+
+    edit_json(folder / "design.json", locks)
+    locked = await build(core, folder, tmp_path / "c")
+    (crank,) = [r for r in results(locked, "motion") if r.subject == "base.a+crank.a"]
+    assert crank.code == "motion.locked" and "the loop goes no further than 124." in crank.detail, crank.detail
+    assert "limits.angle [0, 180] run past it; make them [0, 124." in crank.detail
+    assert 124.2 <= crank.values["angle"] <= 124.8  # to within what the joints' position tolerance lets it stretch
+
+
+async def test_the_panel_turns_the_gears_a_moving_gear_drives_about_their_own_axes(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    def open_train(d: dict[str, Any]) -> None:  # the planetary cut to a tree: a fixed carrier, no ring
+        loop = {("carrier.axis", "sun.axis"), ("carrier.output", "bearing.bore")}
+        d["mates"] = [m for m in d["mates"] if (m["a"], m["b"]) not in loop]
+        next(m for m in d["mates"] if m["b"] == "carrier.axis")["type"] = "rigid"
+        d["relations"] = [r for r in d["relations"] if r["b"] != "housing.ring"]
+
+    folder = copy_design("gearbox", tmp_path / "gearbox")
+    edit_json(folder / "design.json", open_train)
+    report = await build(core, folder, tmp_path / "out", "ratio_5")
+    (sweep,) = [m for m in report.motions if m.mate == "motor.spindle+rotor.axis"]
+    sun, *planets = sweep.drives
+    assert sun.instances == ["rotor", "sun"] and abs(sun.rate) == 1  # the sun slides on the rotor's D-shaft
+    assert sorted(i for p in planets for i in p.instances) == ["planet[0]", "planet[1]", "planet[2]"]
+    for planet in planets:  # 12 teeth drive 18, each about its own pin
+        assert abs(planet.rate) == pytest.approx(12 / 18) and np.hypot(*planet.origin[:2]) > 10
+        assert np.dot(sun.axis, planet.axis) * sun.rate * planet.rate < 0  # and the other way round
 
 
 async def test_a_gear_cut_to_another_module_fails_its_connector_and_meshes_with_nothing(
@@ -495,7 +563,7 @@ async def test_components_are_built_bound_and_counted_and_robot_descriptions_mes
     edit(folder / "parts/plate.py", 'return {"plate":', 'return {"base":')
     out = tmp_path / "out"
     report = await build(core, folder, out)
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     child = report.components["box"]
     assert child.values["size"] == 30  # bound from the shelf's box_size
     assert [r.status for r in results(report, "mate")] == ["pass", "pass"]
@@ -559,7 +627,7 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
         },
     )
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     (stem,) = [r for r in results(report, "connector") if r.subject == "knob.stem"]
     assert stem.status == "pass" and abs(stem.values["diameter"] - 3.8) < 0.05 and abs(stem.values["length"] - 6) < 0.05
     (mate,) = results(report, "mate")
@@ -654,7 +722,7 @@ async def test_blender_parts_are_measured_and_placed_with_the_sdk(
         "assembly.py": PEG_ASSEMBLY,
     })  # fmt: skip
     report = await build(core, folder, tmp_path / "out")
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     socket, tip = (r for r in results(report, "connector"))
     assert socket.values["diameter"] == pytest.approx(4, abs=0.02) and socket.values["length"] == pytest.approx(
         6, abs=0.05
@@ -702,7 +770,7 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     })  # fmt: skip
     out = tmp_path / "out"
     report = await build(core, folder, out)
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     red, white, blue = "#ff0000", "#ffffff", "#0000ff"
 
     # The view: a part in one colour is one shape at its instance; in two, a group of a shape per colour.
@@ -746,7 +814,7 @@ EXAMPLE_BUILDS = [
     # Each example's default on every platform; its other configurations, and the largest example, on one job
     pytest.param(folder.name, configuration, id=f"{folder.name}-{configuration or 'default'}",
                  marks=[pytest.mark.once] if configuration or folder.name == LARGEST_EXAMPLE else [])
-    for folder in sorted(p for p in EXAMPLES.iterdir() if p.is_dir())
+    for folder in sorted(p for p in EXAMPLES.iterdir() if (p / "design.json").is_file())  # examples/plugins is none
     for configuration in [
         None,
         *json.loads((folder / "design.json").read_text(encoding="utf-8")).get("configurations", {}),
@@ -760,7 +828,7 @@ async def test_the_readme_examples_build_and_verify_in_every_configuration(
 ) -> None:
     folder = shutil.copytree(EXAMPLES / name, tmp_path / name)
     report = await build(core, folder, tmp_path / "out", configuration)
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     assert failing(report) == []
 
 
@@ -788,7 +856,7 @@ def build(p, i):
     })  # fmt: skip
     out = tmp_path / "out"
     report = await build(core, folder, out)
-    assert report.status == "succeeded", report.error
+    assert report.status == "succeeded", report.lead()
     view = json.loads((out / "view.json").read_text(encoding="utf-8"))
     (leaf,) = view["shapes"]["parts"]
     buffer = view["instances"][leaf["shape"]["ref"]]["vertices"]

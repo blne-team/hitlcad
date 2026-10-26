@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -21,9 +22,13 @@ from pydantic import Field, model_validator
 from hitlcad.core.address import InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.structure import Measured, Tolerances
-from hitlcad.core.types import Matrix, Model, Value, utcnow
+from hitlcad.core.types import Matrix, Value, utcnow
+from hitlcad.kernel.errors import Location
+from hitlcad.kernel.model import Model
 
 Status = Literal["pass", "fail", "unverified"]
+#: What made a revision: files saved, the panel's parameters, or a review (the human watched a loop's motion)
+Origin = Literal["file", "parameter_edit", "review"]
 Severity = Literal["error", "warning", "info"]
 
 
@@ -40,7 +45,7 @@ class Cause:
         overlap:A|B      A and B share volume where they sit
         contact:M:A|B    moving mate M brings A against B
         mate:M:A|B       mate M's frames on A and B disagree: one of them is not where M puts it
-        loop:M1,M2,…     those mates close a loop of motion, which is not analysed without a solver
+        loop:L1,L2,…     those mates (links, by their frames) close a loop of motion, swept as one
     """
 
     @staticmethod
@@ -67,15 +72,22 @@ def _pair(a: str, b: str) -> str:
 class Result(Model):
     """One finding of one analysis."""
 
-    analysis: str = Field(description="The analysis that found it: structure, connector, mate, interference, …")
+    analysis: str = Field(description="The analysis that found it: build, structure, connector, mate, …")
+    code: str = Field(description="The kind of check, from the error catalog: 'mate.fit', 'model.exception'")
     subject: str = Field(description="What it is about, in the address grammar")
     status: Status
     severity: Severity = Field(default="error", description="info: not a check (an overlap expected, a mate held)")
     detail: str
+    where: Location | None = Field(default=None, description="Where in the design's files, when it is the code's")
     about: list[str] = Field(default_factory=list, description="Addresses it concerns: instances, parts, connectors")
     values: dict[str, float | str | bool] = Field(default_factory=dict)
     cause: str = Field(default="", description="The problem it follows from, where other analyses may see it too "
                        "(`Cause`: 'overlap:duct|impeller'); empty, it is its own")  # fmt: skip
+
+
+def results_key(results: list[Result]) -> str:
+    """What a list of results says, as a key: two builds that fail alike have the same."""
+    return hashlib.sha256(json.dumps([r.model_dump(mode="json") for r in results], sort_keys=True).encode()).hexdigest()
 
 
 class Finding(Model):
@@ -115,7 +127,7 @@ _INDEX = re.compile(r"\[(\d+)\]")
 
 def _shape(r: Result) -> tuple[str, ...]:
     """What a result says but for its numbers: results of the same shape differ by pattern index and measure."""
-    return r.analysis, r.status, r.severity, _NUMBER.sub("#", r.subject), _NUMBER.sub("#", r.detail)
+    return r.analysis, r.code, r.status, r.severity, _NUMBER.sub("#", r.subject), _NUMBER.sub("#", r.detail)
 
 
 def problems(results: list[Result]) -> list[Problem]:
@@ -234,8 +246,28 @@ class InstanceInfo(Model):
     transform: Matrix
 
 
+class MotionDrive(Model):
+    """Instances that move together through a range: `rate` times as far as the range moves, about or along
+    their own axis."""
+
+    kind: Literal["angle", "travel"]
+    origin: tuple[float, float, float]
+    axis: tuple[float, float, float]
+    rate: float = Field(description="Degrees or mm per unit of the range; negative: against the axis")
+    instances: list[str]
+
+
+class MotionPose(Model):
+    """Instances that move together through a loop's positions: their motion from as assembled at each, 3 × 4 by
+    rows."""
+
+    instances: list[str]
+    frames: list[list[float]]
+
+
 class MotionRange(Model):
-    """A mate's range of motion, for the panel to move its moving side through."""
+    """A mate's range of motion, for the panel to move what it moves through: about fixed axes (`drives`), or a
+    loop's solved positions (`values`, `poses`)."""
 
     mate: str
     pair: str = Field(description="Which frames of a pattern, e.g. 'base.hinge ↔ lid.pin'")
@@ -244,10 +276,15 @@ class MotionRange(Model):
     end: float
     continuous: bool
     current: float = Field(description="Where it sits as assembled")
-    origin: tuple[float, float, float]
-    axis: tuple[float, float, float]
-    sign: float = Field(description="+1: the moving side turns with the motion about the axis; -1: against it")
-    moving: list[str] = Field(description="The instances that move")
+    drives: list[MotionDrive] = Field(
+        default_factory=list,
+        description="What moves: the mate's moving side, then what relations drive from it (a gear on its own axis)",
+    )
+    values: list[float] = Field(
+        default_factory=list, description="A loop's: the driving mate at each solved position shown, ascending"
+    )
+    poses: list[MotionPose] = Field(default_factory=list, description="A loop's: what moves, at those positions")
+    key: str = Field(default="", description="A loop's sweep: what a human's watch of it is of")
 
 
 class InterfaceValue(Model):
@@ -287,12 +324,13 @@ class Artifact(Model):
 
 
 class BuildReport(Model):
+    """A build: what it built and what it found. A build that fails, fails because it cannot produce geometry, and
+    its results say why."""
+
     status: BuildStatus
     configuration: str | None = None
     values: dict[str, Value] = Field(default_factory=dict, description="The parameter values built")
     duration_s: float
-    error: str | None = None
-    log_tail: str = ""
     metrics: MeshMetrics | None = Field(default=None, description="The whole placed assembly")
     mass: MassProperties | None = None
     interfaces: list[InterfaceValue] = Field(default_factory=list)
@@ -323,15 +361,53 @@ class BuildReport(Model):
     def failing(self) -> list[Result]:
         return [r for r in self.results if r.status == "fail"]
 
+    def lead(self) -> Result | None:
+        """The result that leads the first problem: what a failed build failed on."""
+        return self.results[self.problems[0].findings[0].results[0]] if self.problems else None
+
+
+class RevisionInfo(Model):
+    """A revision as a design's state lists it: what it is and how it went. `Revision` is all of it."""
+
+    id: int
+    created_at: datetime
+    origin: Origin
+    parent: int | None = Field(description="The configuration's latest successful revision before it")
+    configuration: str | None
+    summary: str
+    status: BuildStatus
+    tally: Tally
+    failure: Result | None = Field(description="What a failed build failed on: the result that leads its problems")
+    key: str | None = Field(
+        description="Its build spec's key (`BuildSpec.key`); none when design.json did not validate"
+    )
+
 
 class Revision(Model):
     id: int
     created_at: datetime = Field(default_factory=utcnow)
-    origin: Literal["file", "parameter_edit"]
+    origin: Origin
     parent: int | None = None
-    spec: BuildSpec
+    configuration: str | None = None
+    spec: BuildSpec | None = Field(description="What it built from; none when design.json did not validate")
     summary: str = ""
     report: BuildReport
+
+    def info(self) -> RevisionInfo:
+        r = self.report
+        return RevisionInfo(id=self.id, created_at=self.created_at, origin=self.origin, parent=self.parent,
+                            configuration=self.configuration, summary=self.summary, status=r.status, tally=r.tally,
+                            failure=r.lead() if r.status == BuildStatus.FAILED else None,
+                            key=self.spec.key if self.spec else None)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Earlier:
+    """What an earlier revision of the same configuration failed: (code, subject) of each result that did not
+    pass, so a build can say which problems it still has."""
+
+    revision: int
+    failing: frozenset[tuple[str, str]]
 
 
 class BuildSpec(Model):
@@ -347,6 +423,8 @@ class BuildSpec(Model):
     overrides: dict[str, Value] = Field(default_factory=dict, description="Parameter values a parent design binds")
     tolerances: Tolerances
     components: dict[str, BuildSpec] = Field(default_factory=dict)
+    plugins: dict[str, str] = Field(default_factory=dict, description="The installed plugins it was built with, but "
+                                    "hitlcad's own: distribution -> version")  # fmt: skip
 
     def values(self) -> dict[str, Value]:
         values = self.design.values(self.configuration)

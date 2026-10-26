@@ -1,28 +1,29 @@
-"""What design.json declares about a product's structure: parts and their connectors, components,
-mates, relations and fastener sets, and the tolerances every check uses.
+"""What design.json declares about a product's structure, but for its parts (`core.design`): what a connector
+kind, a mate type and a relation type are (`Connector`, `Mate`, `Relation`), components, fits, fastener sets,
+and the tolerances every check uses.
 
-Connector kinds, mate types and relation types are unions: each member carries what it means
-(fields, docstring, example, verification). The framework knows them only through these unions,
-so a new kind of connector or mate is one class here and nothing anywhere else.
+The kinds and types themselves are plugins' members (hitlcad's own are in `hitlcad.builtin`): each carries what
+it means (fields, docstring, example, verification), and design.json's unions are made of those installed. The
+framework knows a member only through what its base class here declares, never by its name: a round feature is
+one whose `round` says so.
 """
 
 from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 
 import numpy as np
 from pydantic import Field, field_validator, model_validator
 
 from hitlcad.core import frames as fr
 from hitlcad.core import iso286
-from hitlcad.core.address import End, check_name
-from hitlcad.core.checks import Manufacturing
-from hitlcad.core.types import Model, members
+from hitlcad.core.address import End
+from hitlcad.kernel.model import Model
 
 if TYPE_CHECKING:
-    from hitlcad.analysis.features import Features
+    from hitlcad.geometry.features import Features
 
 Ref = str  # a parameter name, or "interfaces.<name>" for an interface value
 Symmetry = int | Literal["axial"] | None
@@ -61,7 +62,9 @@ class Measured(Model):
     uncertainty_mm: float = Field(default=0.0, description="Either way on the values in mm: a mesh's facets")
 
 
-class _Connector(Model):
+class Connector(Model):
+    """A connector kind: a named frame (or pattern of frames) on a part, at a feature another part meets."""
+
     count: int | str = Field(default=1, description="Frames in the pattern: a number or a parameter name")
     symmetry: Symmetry = Field(
         default=None, description="Rotations about Z that look the same: n (every 360°/n) or 'axial'"
@@ -71,85 +74,25 @@ class _Connector(Model):
     example: ClassVar[dict[str, Any]]
     #: Whether its frames have a feature to measure; a datum has none, so it has no result of its own.
     measures: ClassVar[bool] = True
+    #: The round feature it is, if one: a fit is between a "hole" and a "shaft", whatever their kinds.
+    round: ClassVar[Literal["hole", "shaft"] | None] = None
 
     def nominal_refs(self) -> dict[str, Ref]:
         """Nominal values the kind takes from parameters or interface values, by field."""
+        return {}
+
+    def fixed_nominals(self) -> dict[str, float]:
+        """Nominal values it states itself, by name (a gear's `internal`): what its relations read with the rest."""
         return {}
 
     @abstractmethod
     def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
         """The feature at `frame` on the part."""
 
-
-class FrameConnector(_Connector):
-    """A datum: a position and orientation with no feature to measure (an axis, a reference point)."""
-
-    kind: Literal["frame"]
-    example = {"kind": "frame", "symmetry": "axial"}
-    measures = False
-
-    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        return Measured(status="pass", detail="datum")
-
-
-class FaceConnector(_Connector):
-    """A planar face. Origin on its plane, inside its outline (the centre of a rim is fine), Z its outward
-    normal. Measured: the plane and its area."""
-
-    kind: Literal["face"]
-    example = {"kind": "face", "symmetry": 4}
-
-    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        return features.face(frame, tol)
-
-
-class HoleConnector(_Connector):
-    """A round hole. Origin at its opening on the axis, Z out of the opening. Measured: the diameter and
-    depth of the hole adjacent to the origin, below it."""
-
-    kind: Literal["hole"]
-    example = {"kind": "hole", "count": 4}
-
-    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        return features.round(frame, tol, inward=True)
-
-
-class ShaftConnector(_Connector):
-    """A round shaft or pin. Origin at its shoulder on the axis, Z towards its tip. Measured: the
-    diameter and length of the shaft adjacent to the origin, along Z."""
-
-    kind: Literal["shaft"]
-    example = {"kind": "shaft"}
-
-    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        return features.round(frame, tol, inward=False)
-
-
-class GearConnector(_Connector):
-    """A spur gear. Origin at its centre at the bottom of the teeth, Z along its axis. Measured: across its face
-    width, its tip diameter, m(z + 2) (m(z − 2) for an internal gear), and its teeth; its mesh is verified by its
-    relations and by interference. The nominal values name parameters or interface values."""
-
-    kind: Literal["gear"]
-    teeth: Ref
-    module: Ref
-    width: Ref
-    internal: bool = False
-    example = {"kind": "gear", "teeth": "sun_teeth", "module": "module", "width": "face_width"}
-
-    def nominal_refs(self) -> dict[str, Ref]:
-        return {"teeth": self.teeth, "module": self.module, "width": self.width}
-
-    def measure(self, features: Features, frame: fr.Frame, tol: Tolerances, nominals: dict[str, float]) -> Measured:
-        return features.gear(frame, tol, module=nominals["module"], teeth=round(nominals["teeth"]),
-                             width=nominals["width"], internal=self.internal)  # fmt: skip
-
-
-ConnectorSpec = Annotated[
-    FrameConnector | FaceConnector | HoleConnector | ShaftConnector | GearConnector, Field(discriminator="kind")
-]
-CONNECTOR_KINDS: tuple[type[_Connector], ...] = members(ConnectorSpec)
-ROUND_KINDS = frozenset({"hole", "shaft"})
+    def owns(self, item: Any, frame: fr.Frame, tol: Tolerances) -> bool:
+        """Whether a face of the part (in its own frame) is this connector's feature at `frame`: what a pick on it
+        is named after."""
+        return False
 
 
 def symmetry_of(a: Symmetry, b: Symmetry) -> int | Literal["axial"]:
@@ -173,39 +116,6 @@ class Catalog(Model):
     )
     supplier: str = ""
     mpn: str = Field(default="", description="Manufacturer part number")
-
-
-class PartSpec(Model):
-    role: str = Field(description="One line: what the part does")
-    file: str = Field(description="The part file that builds it, e.g. parts/lid.py")
-    number: str = Field(default="", description="The user's own part number")
-    material: str | None = Field(default=None, description="A name in the material registry")
-    manufacturing: Manufacturing | None = Field(
-        default=None, description="Overrides the design's process for this made part"
-    )
-    backend: str | None = Field(default=None, description="Overrides the design's backend")
-    catalog: Catalog | None = None
-    connectors: dict[str, ConnectorSpec] = Field(default_factory=dict)
-
-    @field_validator("file")
-    @classmethod
-    def _in_parts(cls, v: str) -> str:
-        if not (v.startswith("parts/") and v.endswith(".py")) or ".." in v:
-            raise ValueError(f"part file {v!r} must be a .py file under parts/")
-        return v
-
-    @field_validator("connectors")
-    @classmethod
-    def _names(cls, v: dict[str, Any]) -> dict[str, Any]:
-        for name in v:
-            check_name(name, "connector")
-        return v
-
-    @model_validator(mode="after")
-    def _bought_or_made(self) -> PartSpec:
-        if self.catalog and self.manufacturing:
-            raise ValueError("a catalog part is bought, not manufactured: drop its manufacturing")
-        return self
 
 
 class ComponentSpec(Model):
@@ -272,7 +182,9 @@ class MateCheck(Model):
     free: dict[str, float] = Field(default_factory=dict, description="Position along each free motion: angle, travel")
 
 
-class _Mate(Model):
+class Mate(Model):
+    """A mate type: two connector ends held together, with the motion it lets b make against a."""
+
     a: str = Field(description="Connector end, e.g. 'lid.bottom'")
     b: str
     fit: Fit | None = None
@@ -289,6 +201,10 @@ class _Mate(Model):
 
     example: ClassVar[dict[str, Any]]
     free_motion: ClassVar[tuple[str, ...]] = ()  # "angle", "travel": what sampling moves along
+    #: What of b's frame, seen in a's, stays as assembled while it moves: "origin_xy" and "origin_z" (b's
+    #: origin across and along a's Z), "axis" (b's Z) and "clocking" (b's X about it, up to the connectors'
+    #: symmetry). A loop solver holds these; what is not named moves freely.
+    holds: ClassVar[frozenset[str]]
 
     @field_validator("a", "b")
     @classmethod
@@ -316,120 +232,6 @@ class _Mate(Model):
         if kind == "angle":
             return fr.rotation_about(fr.origin(fa), fr.z_axis(fa), value)
         return fr.translation(fr.z_axis(fa) * value)
-
-
-def _opposed(fa: fr.Frame, fb: fr.Frame) -> float:
-    return fr.angle_deg(fr.z_axis(fa), -fr.z_axis(fb))
-
-
-def _clocking(fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"]) -> float:
-    angle = fr.signed_angle_deg(fr.x_axis(fa), fr.x_axis(fb), fr.z_axis(fa))
-    return 0.0 if symmetry == "axial" else fr.reduce_angle(angle, symmetry)
-
-
-def _summary(values: dict[str, float], tol: Any) -> tuple[bool, str]:
-    worst = []
-    ok = True
-    for key, v in values.items():
-        limit = tol.angle_deg if key.endswith("_deg") else tol.position_mm
-        if abs(v) > limit:
-            ok = False
-            worst.append(f"{key.removesuffix('_deg').removesuffix('_mm').replace('_', ' ')} "
-                         f"{abs(v):.3f}{'°' if key.endswith('_deg') else ' mm'}")  # fmt: skip
-    return ok, "frames agree" if ok else "off by " + ", ".join(worst)
-
-
-class RigidMate(_Mate):
-    """Nothing moves: origins coincide (Z apart by `offset`), Z axes face each other, X axes agree up to
-    the features' shared symmetry."""
-
-    type: Literal["rigid"]
-    offset: float = Field(default=0.0, description="Designed gap along a's Z, mm")
-    example = {"type": "rigid", "a": "lid.bottom", "b": "housing.top"}
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        target = fr.origin(fa) + fr.z_axis(fa) * self.offset
-        values = {"origin_mm": float(np.linalg.norm(fr.origin(fb) - target)), "axis_deg": _opposed(fa, fb),
-                  "clocking_deg": _clocking(fa, fb, symmetry)}  # fmt: skip
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values)
-
-
-class RevoluteMate(_Mate):
-    """Turns about Z: origins coincide (Z apart by `offset`), Z axes face each other."""
-
-    type: Literal["revolute"]
-    offset: float = 0.0
-    limits: Limits | None = None
-    example = {"type": "revolute", "a": "carrier.pins", "b": "planet.bore", "fit": {"clearance": [0.2, 0.5]}}
-    free_motion = ("angle",)
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        target = fr.origin(fa) + fr.z_axis(fa) * self.offset
-        values = {"origin_mm": float(np.linalg.norm(fr.origin(fb) - target)), "axis_deg": _opposed(fa, fb)}
-        angle = fr.signed_angle_deg(fr.x_axis(fa), fr.x_axis(fb), fr.z_axis(fa))
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values, free={"angle": angle})
-
-
-class SliderMate(_Mate):
-    """Slides along Z: origins on one line along Z, Z axes face each other, X axes agree up to symmetry."""
-
-    type: Literal["slider"]
-    limits: Limits | None = None
-    example = {"type": "slider", "a": "rail.track", "b": "carriage.runner", "limits": {"travel": [0, 120]}}
-    free_motion = ("travel",)
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        oa, za = fr.origin(fa), fr.z_axis(fa)
-        values = {"axis_offset_mm": fr.distance_to_line(fr.origin(fb), oa, za), "axis_deg": _opposed(fa, fb),
-                  "clocking_deg": _clocking(fa, fb, symmetry)}  # fmt: skip
-        free = {"travel": fr.along(fr.origin(fb), oa, za)}
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values, free=free)
-
-
-class CylindricalMate(_Mate):
-    """Turns about and slides along Z: origins on one line along Z, Z axes face each other."""
-
-    type: Literal["cylindrical"]
-    limits: Limits | None = None
-    example = {"type": "cylindrical", "a": "motor.shaft", "b": "sun.bore", "fit": {"clearance": [0.0, 0.1]}}
-    free_motion = ("angle", "travel")
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        oa, za = fr.origin(fa), fr.z_axis(fa)
-        values = {"axis_offset_mm": fr.distance_to_line(fr.origin(fb), oa, za), "axis_deg": _opposed(fa, fb)}
-        free = {"travel": fr.along(fr.origin(fb), oa, za),
-                "angle": fr.signed_angle_deg(fr.x_axis(fa), fr.x_axis(fb), za)}  # fmt: skip
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values, free=free)
-
-
-class PlanarMate(_Mate):
-    """Slides in the plane and turns about Z: b's origin on a's plane (apart by `offset`), Z axes face each other."""
-
-    type: Literal["planar"]
-    offset: float = 0.0
-    example = {"type": "planar", "a": "table.top", "b": "box.bottom"}
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        gap = fr.along(fr.origin(fb), fr.origin(fa), fr.z_axis(fa)) - self.offset
-        values = {"plane_mm": gap, "axis_deg": _opposed(fa, fb)}
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values)
-
-
-class BallMate(_Mate):
-    """Turns about its origin: the origins coincide."""
-
-    type: Literal["ball"]
-    example = {"type": "ball", "a": "arm.socket", "b": "rod.ball"}
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, symmetry: int | Literal["axial"], tol: Any) -> MateCheck:
-        values = {"origin_mm": float(np.linalg.norm(fr.origin(fb) - fr.origin(fa)))}
-        return MateCheck(passed=(s := _summary(values, tol))[0], detail=s[1], values=values)
-
-
-MateSpec = Annotated[
-    RigidMate | RevoluteMate | SliderMate | CylindricalMate | PlanarMate | BallMate, Field(discriminator="type")
-]
-MATE_TYPES: tuple[type[_Mate], ...] = members(MateSpec)
 
 
 # --------------------------------------------------------------------------- relations
@@ -464,7 +266,9 @@ class Axis(NamedTuple):
         return float(np.dot(motion[:3, :3] @ self.origin + motion[:3, 3] - self.origin, self.direction))
 
 
-class _Relation(Model):
+class Relation(Model):
+    """A relation type: motion coupled between two connectors (gears, a rack, a lead screw)."""
+
     a: str
     b: str
     tolerance: float | None = Field(default=None, gt=0, description="mm; default: verification.position_mm")
@@ -494,109 +298,12 @@ class _Relation(Model):
     def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
         """How far b moves along its axis per unit a moves along its own (degrees per degree, mm per degree)."""
 
-
-class GearRelation(_Relation):
-    """Two spur gears in mesh: same module, parallel axes, centre distance m(z₁ ± z₂)/2 (minus when one is
-    internal), overlapping face widths. b turns −z_a/z_b times a (+ for an internal gear)."""
-
-    type: Literal["gear"]
-    example = {"type": "gear", "a": "sun.teeth", "b": "planet.teeth"}
-    joins = ("gear", "gear")
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
-        limit = self.tolerance or tol.position_mm
-        if not math.isclose(na["module"], nb["module"]):
-            return RelationCheck(passed=False, detail=f"modules differ: {na['module']:g} and {nb['module']:g}")
-        m, za, zb = na["module"], na["teeth"], nb["teeth"]
-        internal = bool(na.get("internal") or nb.get("internal"))
-        expected = m * (abs(za - zb) if internal else za + zb) / 2
-        oa, axis = fr.origin(fa), fr.z_axis(fa)
-        actual = fr.distance_to_line(fr.origin(fb), oa, axis)
-        tilt = min(fr.angle_deg(axis, fr.z_axis(fb)), fr.angle_deg(axis, -fr.z_axis(fb)))
-        ta, tb = fr.along(oa, oa, axis), fr.along(fr.origin(fb), oa, axis)
-        sign = 1.0 if np.dot(axis, fr.z_axis(fb)) >= 0 else -1.0
-        span_a, span_b = (ta, ta + na["width"]), sorted((tb, tb + sign * nb["width"]))
-        overlap = min(span_a[1], span_b[1]) - max(span_a[0], span_b[0])
-        values = {"centre_distance_mm": actual, "expected_mm": expected, "axis_deg": tilt, "face_overlap_mm": overlap}
-        problems = []
-        if abs(actual - expected) > limit:
-            problems.append(f"centre distance {actual:.3f} mm, needs {expected:.3f} ± {limit:g}")
-        if tilt > tol.angle_deg:
-            problems.append(f"axes {tilt:.2f}° apart")
-        if overlap <= 0:
-            problems.append("face widths do not overlap")
-        detail = "; ".join(problems) or f"in mesh: centre distance {actual:.3f} mm (m{m:g}, {za:g}/{zb:g} teeth)"
-        return RelationCheck(passed=not problems, detail=detail, values=values)
-
-    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
-        """Both turns are about a's Z: an external mesh turns them opposite ways."""
-        return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("angle", fr.origin(fb), fr.z_axis(fa))
-
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        internal = bool(na.get("internal") or nb.get("internal"))
-        return (1.0 if internal else -1.0) * na["teeth"] / nb["teeth"]
-
-
-class RackRelation(_Relation):
-    """A pinion (a, gear) on a rack (b, frame on the pitch line, Z across the rack, X along it): the pitch
-    circle touches the pitch line. The rack moves π·m·z mm per pinion turn."""
-
-    type: Literal["rack"]
-    example = {"type": "rack", "a": "pinion.teeth", "b": "rack.pitch_line"}
-    joins = ("gear", "frame")
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
-        limit = self.tolerance or tol.position_mm
-        pitch_r = na["module"] * na["teeth"] / 2
-        actual = abs(fr.along(fr.origin(fa), fr.origin(fb), fr.z_axis(fb)))
-        perpendicular = abs(90 - fr.angle_deg(fr.z_axis(fa), fr.x_axis(fb)))
-        values = {"pitch_distance_mm": actual, "pitch_radius_mm": pitch_r, "axis_deg": perpendicular}
-        problems = []
-        if abs(actual - pitch_r) > limit:
-            problems.append(f"pinion axis {actual:.3f} mm from the pitch line, needs {pitch_r:.3f}")
-        if perpendicular > tol.angle_deg:
-            problems.append(f"pinion axis {perpendicular:.2f}° off square to the rack")
-        return RelationCheck(
-            passed=not problems, detail="; ".join(problems) or "pinion on the pitch line", values=values
-        )
-
-    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
-        """The rack travels along its X the way the pinion's pitch point moves."""
-        za, zb, xb = fr.z_axis(fa), fr.z_axis(fb), fr.x_axis(fb)
-        to_pitch_line = fr.along(fr.origin(fb), fr.origin(fa), zb) * zb
-        sign = float(np.sign(np.dot(np.cross(za, to_pitch_line), xb)))
-        return Axis("angle", fr.origin(fa), za), Axis("travel", fr.origin(fb), sign * xb)
-
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        return math.pi * na["module"] * na["teeth"] / 360.0
-
-
-class ScrewRelation(_Relation):
-    """A lead screw (a) and its nut (b) on one axis, right-hand thread: b travels `lead` mm per turn of a, back
-    along a's Z as a turns positively about it."""
-
-    type: Literal["screw"]
-    lead: float = Field(gt=0, description="mm per turn")
-    example = {"type": "screw", "a": "leadscrew.axis", "b": "nut.axis", "lead": 8}
-    joins = ("frame", "frame")
-
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
-        offset = fr.distance_to_line(fr.origin(fb), fr.origin(fa), fr.z_axis(fa))
-        tilt = min(fr.angle_deg(fr.z_axis(fa), fr.z_axis(fb)), fr.angle_deg(fr.z_axis(fa), -fr.z_axis(fb)))
-        values = {"axis_offset_mm": offset, "axis_deg": tilt}
-        ok = offset <= (self.tolerance or tol.position_mm) and tilt <= tol.angle_deg
-        return RelationCheck(passed=ok, detail="on one axis" if ok else f"axes {offset:.3f} mm, {tilt:.2f}° apart",
-                             values=values)  # fmt: skip
-
-    def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
-        return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("travel", fr.origin(fb), -fr.z_axis(fa))
-
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        return self.lead / 360.0
-
-
-RelationSpec = Annotated[GearRelation | RackRelation | ScrewRelation, Field(discriminator="type")]
-RELATION_TYPES: tuple[type[_Relation], ...] = members(RelationSpec)
+    @abstractmethod
+    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: fr.Frame, fb: fr.Frame) -> tuple[float, float]:
+        """How far a and b have moved along the coordinates the relation couples, from where the frames were
+        (fa0, fb0) to where they are (fa, fb), each measured against what holds the coupling (the line of the
+        gears' centres, the rack, the screw): b's = `ratio` × a's while the relation holds. A turn comes as
+        degrees in (-180, 180], a travel as mm; their kinds are those of `axes`."""
 
 
 # --------------------------------------------------------------------------- fastener sets

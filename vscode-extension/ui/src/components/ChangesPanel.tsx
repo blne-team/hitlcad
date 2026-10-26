@@ -1,12 +1,12 @@
-import type { ParamValue, Result, Revision } from "../api/types";
+import type { ParamValue, Result, Revision, RevisionInfo } from "../api/types";
 import { diffLines, hunks } from "../lib/diff";
 import { humanize } from "../lib/format";
 import { MARK } from "./ReportPanel";
 
 interface Props {
-  revisions: Revision[];
+  revisions: RevisionInfo[];
   current: Revision | null;
-  baseId: number | null;
+  base: Revision | null;
   setBaseId: (id: number) => void;
 }
 
@@ -15,13 +15,12 @@ const signed = (v: number, digits = 2) => `${v >= 0 ? "+" : "−"}${Math.abs(v).
 const key = (r: Result) => `${r.analysis}|${r.subject}|${r.about.join(",")}`;
 
 /** What changed between an earlier revision and the one on screen: parameters, size, results, code. */
-export function ChangesPanel({ revisions, current, baseId, setBaseId }: Props) {
-  const base = revisions.find((r) => r.id === baseId) ?? null;
+export function ChangesPanel({ revisions, current, base, setBaseId }: Props) {
   if (!current || revisions.length < 2) return <p className="muted pad">Changes appear once there are two revisions.</p>;
   const options = revisions.filter((r) => r.id !== current.id);
   if (!base) return <p className="muted pad">Choose a revision to compare with.</p>;
 
-  const specs = new Map([...base.spec.design.parameters, ...current.spec.design.parameters].map((p) => [p.name, p]));
+  const specs = new Map([base, current].flatMap((r) => r.spec?.design.parameters ?? []).map((p) => [p.name, p]));
   const [vb, vc] = [base.report.values, current.report.values];
   const params = [...new Set([...Object.keys(vb), ...Object.keys(vc)])]
     .filter((name) => vb[name] !== vc[name])
@@ -33,8 +32,9 @@ export function ChangesPanel({ revisions, current, baseId, setBaseId }: Props) {
   const moved = current.report.results.filter((r) => before.has(key(r)) && before.get(key(r))!.status !== r.status);
   const appeared = current.report.results.filter((r) => !before.has(key(r)) && r.status !== "pass");
 
-  const files = [...new Set([...Object.keys(base.spec.sources), ...Object.keys(current.spec.sources)])].sort();
-  const changed = files.filter((f) => base.spec.sources[f] !== current.spec.sources[f]);
+  const [sb, sc] = [base.spec?.sources ?? {}, current.spec?.sources ?? {}]; // none: design.json did not validate
+  const files = [...new Set([...Object.keys(sb), ...Object.keys(sc)])].sort();
+  const changed = files.filter((f) => sb[f] !== sc[f]);
 
   return (
     <div className="changes">
@@ -44,8 +44,8 @@ export function ChangesPanel({ revisions, current, baseId, setBaseId }: Props) {
           {options.map((r) => (
             <option key={r.id} value={r.id}>
               revision {r.id}
-              {r.spec.configuration ? ` (${r.spec.configuration})` : ""}
-              {r.report.status === "failed" ? " (failed)" : ""}
+              {r.configuration ? ` (${r.configuration})` : ""}
+              {r.status === "failed" ? " (failed)" : ""}
             </option>
           ))}
         </select>
@@ -127,7 +127,7 @@ export function ChangesPanel({ revisions, current, baseId, setBaseId }: Props) {
         Code <span className="muted">{changed.length ? `${changed.length} file${changed.length > 1 ? "s" : ""} changed` : "unchanged"}</span>
       </h3>
       {changed.map((f) => {
-        const diff = diffLines(base.spec.sources[f] ?? "", current.spec.sources[f] ?? "");
+        const diff = diffLines(sb[f] ?? "", sc[f] ?? "");
         const added = diff.filter((l) => l.kind === "+").length;
         const removed = diff.filter((l) => l.kind === "-").length;
         return (

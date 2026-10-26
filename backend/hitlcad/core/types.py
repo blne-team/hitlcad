@@ -1,23 +1,19 @@
 """Domain model shared by every layer: parameters, briefs, selection and pins.
 
-What design.json declares about a product's structure is in `core.structure`, requirement checks
-and manufacturing processes in `core.checks`, builds and their results in `core.report`.
+design.json itself is `core.design`; what its connector kinds, mate and relation types are is `core.structure`,
+what requirement checks and processes are `core.checks`, builds and their results `core.report`.
 All lengths are millimetres. Z is up.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal, get_args
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
-
-def members(union: Any) -> tuple[type, ...]:
-    """The types of an ``Annotated`` union (a single type is a union of one)."""
-    inner = get_args(union)[0]
-    return get_args(inner) or (inner,)
+from hitlcad.kernel.model import Model
 
 
 def new_id(prefix: str) -> str:
@@ -26,11 +22,6 @@ def new_id(prefix: str) -> str:
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
-
-
-class Model(BaseModel):
-    # Serialized, every field is present: response schemas (and the panel's generated types) say so.
-    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 Vec = tuple[float, float, float]
@@ -142,7 +133,7 @@ class ComponentRef(Model):
 class Pick(Model):
     """A click in a 3D view: the surface point, and on B-rep builds the component it hit."""
 
-    point: Vec = Field(description="Model-space point in mm, Z up")
+    point: Vec = Field(description="Model-space point in mm, Z up, where the part it is on was assembled")
     normal: Vec | None = None
     component: ComponentRef | None = None
 
@@ -162,6 +153,17 @@ class SelectionItem(Model):
     connector: str | None = Field(default=None, description="The connector whose feature was picked, e.g. 'lid.screws'")
 
 
+class PinMotion(Model):
+    """Where a range of motion was when a pin was placed: the pin is about the parts there, not as assembled."""
+
+    pair: str = Field(description="The mate moved, by its frames, e.g. 'base.a ↔ crank.a'")
+    kind: Literal["angle", "travel"]
+    at: float = Field(description="Degrees or mm, as the mate counts them")
+
+    def text(self) -> str:
+        return f"with {self.pair} at {self.at:.1f}{'°' if self.kind == 'angle' else ' mm'}"
+
+
 class Pin(Model):
     """A note the human pinned to the model surface. Open until the agent or the human resolves it."""
 
@@ -173,7 +175,18 @@ class Pin(Model):
     component: ComponentRef | None = Field(default=None, description="The instance's component it is on (B-rep)")
     connector: str | None = Field(default=None, description="The connector whose feature it is on")
     note: str = ""
+    motion: PinMotion | None = Field(default=None, description="Where a range of motion was; none: as assembled")
     label: str = Field(default="", description="What is under the pin")
     created_at: datetime = Field(default_factory=utcnow)
     resolved: bool = False
     reply: str = Field(default="", description="How the agent addressed it, set when resolving")
+
+
+class WatchedMotion(Model):
+    """A loop's motion the human watched move in the panel: its sweep (`MotionRange.key`), which the review is of,
+    so that any change to the loop or what it moves past leaves it unwatched."""
+
+    key: str
+    pair: str = Field(description="The mate that drives the loop, e.g. 'base.a ↔ crank.a'")
+    revision: int = Field(description="Revision it was watched on")
+    created_at: datetime = Field(default_factory=utcnow)

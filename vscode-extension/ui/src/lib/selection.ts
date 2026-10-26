@@ -11,7 +11,7 @@ export function selectionText(context: string, items: SelectionItem[]): string {
 /** How a selected item is drawn in the 3D view: a whole part as its bounding box, anything else as a ring. */
 export function selectionMarker(item: SelectionItem): CadMarker {
   const box = item.kind === "solid" ? (item.details.bbox as [Vec3, Vec3]) : undefined;
-  return { id: item.id, kind: "selection", point: item.point, normal: item.normal, label: item.label, box };
+  return { id: item.id, kind: "selection", point: item.point, instance: item.instance ?? null, normal: item.normal, label: item.label, box };
 }
 
 /** Give the extension a model file's selection text, which "Copy for chat" includes. */

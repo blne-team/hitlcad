@@ -99,6 +99,7 @@ test("parses only well-formed hitlcad page messages", () => {
   assert.deepEqual(parseUiMessage({ type: "hitlcad.selection", text: "In x I selected" }), { kind: "selection", text: "In x I selected" });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.copy" }), { kind: "copy" });
   assert.deepEqual(parseUiMessage({ type: "hitlcad.fullscreen" }), { kind: "fullscreen" });
+  assert.deepEqual(parseUiMessage({ type: "hitlcad.hideSelectionHint" }), { kind: "hideSelectionHint" });
   const file = { design: "dsg_a", revision: 3, path: "parts/lid.step", name: "lid.step" };
   assert.deepEqual(parseUiMessage({ type: "hitlcad.saveFile", ...file }), { kind: "save", file });
   for (const bad of [null, "hitlcad.ui", [], { type: "hitlcad.ui", patch: [1] }, { type: "hitlcad.ui", patch: null }, { type: "hitlcad.selection", text: 3 }, { type: "hitlcad.saveFile", ...file, revision: "3" }, { type: "other" }]) {
@@ -123,7 +124,7 @@ test("the panel page loads the bundled UI and may reach only the server", () => 
     cspSource: "https://*.vscode-cdn.net",
     nonce: "n0nce",
     title: "hitlcad: <Hook>",
-    config: { server: "http://127.0.0.1:8000/", view: { name: "file", path: '/tmp/a "b".step' } },
+    config: { server: "http://127.0.0.1:8000/", view: { name: "file", path: '/tmp/a "b".step' }, selectionHint: false },
   });
   const csp = /Content-Security-Policy" content="([^"]*)"/.exec(html)![1]!;
   assert.match(csp, /default-src 'none'/);
@@ -132,5 +133,5 @@ test("the panel page loads the bundled UI and may reach only the server", () => 
   assert.match(html, /<script type="module" nonce="n0nce" src="https:\/\/file\+\.vscode-resource\.vscode-cdn\.net\/ext\/out\/ui\/panel\.js">/);
   assert.match(html, /<title>hitlcad: &lt;Hook&gt;<\/title>/);
   const config = /data-config="([^"]*)"/.exec(html)![1]!.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-  assert.deepEqual(JSON.parse(config), { server: "http://127.0.0.1:8000/", view: { name: "file", path: '/tmp/a "b".step' } });
+  assert.deepEqual(JSON.parse(config), { server: "http://127.0.0.1:8000/", view: { name: "file", path: '/tmp/a "b".step' }, selectionHint: false });
 });

@@ -3,25 +3,31 @@ design graph, revision comparisons, the MCP tools and project setup."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
 from mcp.client import Client
 
-from hitlcad.analysis.selection import topology
-from hitlcad.api.mcp_server import build_mcp
+from hitlcad.api.mcp import build_mcp
 from hitlcad.app import HitlCad
+from hitlcad.core.report import Earlier
 from hitlcad.core.types import ComponentRef, Pick
-from hitlcad.designs import agents
-from hitlcad.designs.project import init_project
-from hitlcad.designs.watcher import _relevant
+from hitlcad.kernel.errors import HitlcadError
 from hitlcad.render.base import NullRenderer
+from hitlcad.review.selection import topology
+from hitlcad.services.watcher import _relevant
+from hitlcad.store.sqlite import SqliteStore
+from hitlcad.workspace import agents
+from hitlcad.workspace.project import init_project
 
-from .conftest import copy_design
+from .conftest import copy_design, write_design
 
 
 def face_index(shape, test) -> int:
@@ -32,8 +38,9 @@ async def test_a_new_design_is_scaffolded_and_waits_for_parts(core: HitlCad, tmp
     state, created = core.designs.open(tmp_path / "new", "build123d", "New")
     assert created == ["design.json", "interfaces.py", "assembly.py", "parts/.gitkeep"]
     assert json.loads((tmp_path / "new" / "design.json").read_text(encoding="utf-8"))["hitlcad"] == 2
-    with pytest.raises(ValueError, match="declares no parts yet"):
+    with pytest.raises(HitlcadError, match="declares no parts yet") as empty:
         await core.builds.build(state.id)
+    assert empty.value.owner == "request"
     assert await core.builds.rebuild(state.id) is None
 
 
@@ -62,6 +69,28 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
 
 
 @pytest.mark.geometry
+async def test_a_loop_the_human_watched_passes_until_it_changes(core: HitlCad, tmp_path: Path) -> None:
+    state, _ = core.designs.open(copy_design("linkage", tmp_path / "linkage"))
+    rev = await core.builds.build(state.id)
+
+    def crank(revision: Any) -> Any:
+        return next(r for r in revision.report.results if r.analysis == "motion" and r.subject == "base.a+crank.a")
+
+    assert crank(rev).code == "motion.sampled"
+    (loop,) = rev.report.motions
+    watched = await core.builds.watch_motion(state.id, rev.id, loop.key)
+    assert watched.origin == "review" and watched.summary == "Watched base.a ↔ crank.a"
+    assert (crank(watched).code, crank(watched).status) == ("motion.watched", "pass")
+    assert crank(watched).detail.endswith(f"watched in the panel on revision {rev.id}")
+    assert [w.key for w in core.designs.get(state.id).watched] == [loop.key]
+    longer = await core.builds.edit_parameters(state.id, {"coupler_l": 41})  # another loop: watched no more
+    assert crank(longer).code == "motion.sampled"
+    with pytest.raises(HitlcadError, match="has no loop motion"):
+        await core.builds.watch_motion(state.id, longer.id, loop.key)
+    again = await core.builds.watch_motion(state.id, rev.id, loop.key, watched=False)
+    assert again.summary == "Unwatched base.a ↔ crank.a" and core.designs.get(state.id).watched == []
+
+
 async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
@@ -142,7 +171,8 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
         assert "connector lid.screws[0]" in gap and "minimum distance" in gap
         assert "Revision 1 → 2" in await call("compare_revisions", path=path, base=1)
         missing = await client.call_tool("build_design", {"path": str(tmp_path / "nope")})
-        assert missing.is_error and "no design.json in" in missing.content[0].text
+        assert missing.is_error and ": [not_found.design] no design.json in" in missing.content[0].text
+        assert "\n→ Pass the absolute path of a folder holding design.json" in missing.content[0].text
         assert "Materials" in await call("list_backends") and "bom" in await call("list_backends")
 
 
@@ -160,6 +190,12 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
     ):
         assert generated in skill
     assert "$" not in skill.replace("$(", "")
+    playbook = (tmp_path / "project" / ".claude/skills/hitlcad/playbook.md").read_text(encoding="utf-8")
+    assert "- `mate.fit`: A mate's fit is not what it asks for. Size the hole and the shaft" in playbook
+    assert (
+        "- `manufacturing.fdm_overhangs`:" in playbook
+        and "- `requirement.size`: The extent along one axis, mm." in playbook
+    )
     guide = (tmp_path / "project" / ".claude/skills/hitlcad-build123d/SKILL.md").read_text(encoding="utf-8")
     assert "def build(p, i)" in guide and "frames(" in guide
 
@@ -216,16 +252,138 @@ async def test_a_history_another_version_wrote_is_set_aside_and_a_new_one_begins
     core: HitlCad, settings: Any, tmp_path: Path
 ) -> None:
     state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
-    log = settings.data_dir / "designs" / state.id / "events.jsonl"
-    with log.open("a", encoding="utf-8") as f:  # what a release whose events had another field wrote
-        f.write(json.dumps({"type": "design_updated", "seq": 9, "ts": "2026-01-01T00:00:00Z", "renamed": True}) + "\n")
-    written = log.read_text(encoding="utf-8")
+    await core.shutdown()
+    # what a build of hitlcad whose events had another field wrote
+    odd = json.dumps({"type": "design_updated", "seq": 9, "ts": "2026-01-01T00:00:00Z", "renamed": True})
+    with closing(sqlite3.connect(settings.data_dir / "hitlcad.db")) as db, db:
+        db.execute("INSERT INTO events VALUES (?, 9, 'design_updated', '2026-01-01', ?)", (state.id, odd))
+        written = [body for (body,) in db.execute("SELECT body FROM events WHERE design = ? ORDER BY seq", (state.id,))]
 
     later = HitlCad.create(settings, registry=core.registry, renderer=NullRenderer())  # a newer hitlcad, same data
     reopened = later.designs.get(state.id)
-    [aside] = log.parent.glob("unreadable-*")
-    assert (aside / "events.jsonl").read_text(encoding="utf-8") == written  # kept as it was
-    assert reopened.error and str(aside) in reopened.error and reopened.path == state.path
+    [aside] = (settings.data_dir / "designs" / state.id).glob("unreadable-*")
+    assert (aside / "events.jsonl").read_text(encoding="utf-8").splitlines() == written  # kept as it was
+    assert reopened.error and str(aside) in reopened.error.message and reopened.path == state.path
+    assert reopened.error.code == "store.unreadable"
     revision = await later.builds.build(state.id)
     assert revision.report.status == "succeeded" and later.designs.get(state.id).error is None
     await later.shutdown()
+
+
+async def test_a_design_json_that_does_not_validate_makes_a_revision_that_says_where(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    folder = write_design(tmp_path / "broken", {"design.json": {
+        "hitlcad": 2, "name": "broken", "backend": "build123d",
+        "parts": {"a": {"role": "a", "file": "parts/a.py", "colour": "red"}},
+        "mates": [{"type": "rigid", "a": "a.top"}],
+    }})  # fmt: skip
+    state, _ = core.designs.open(folder)  # opened all the same: its build says what is wrong
+    assert state.name == "broken"
+    rev = await core.builds.build(state.id)
+    assert rev.report.status == "failed" and rev.spec is None
+    assert [(r.analysis, r.code, r.subject) for r in rev.report.results] == [
+        ("build", "design.invalid", "parts.a.colour"),
+        ("build", "design.invalid", "mates.0.rigid.b"),
+    ]
+    assert await core.builds.rebuild(state.id) is not None  # the first time the watcher sees these files
+    assert await core.builds.rebuild(state.id) is None  # the same files, the same failure: not again
+    async with Client(build_mcp(core)) as client:
+        built = (await client.call_tool("build_design", {"path": str(folder)})).content[0].text
+        assert "✗ build parts.a.colour (design.json) [design.invalid]: Extra inputs are not permitted" in built
+        assert built.count("→ Fix each field") == 1  # the usual fix, once per code
+        assert "Same as revision 2: the change since did not reach it." in built
+        overview = (await client.call_tool("explore_design", {"path": str(folder)})).content[0].text
+        assert "design.json does not load" in overview
+
+
+async def test_a_bug_in_hitlcad_reads_as_one_and_not_as_the_agent_s_mistake(
+    core: HitlCad, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = write_design(tmp_path / "d", {"design.json": {"hitlcad": 2, "name": "d", "backend": "build123d"}})
+
+    def broken(*_: Any) -> Any:
+        return [][1]  # an IndexError: a LookupError, which the agent once read as its own
+
+    monkeypatch.setattr(core.explore, "graph", broken)
+    async with Client(build_mcp(core)) as client:
+        answer = await client.call_tool("explore_design", {"path": str(folder)})
+    assert answer.is_error
+    assert answer.content[0].text == (
+        "Error executing tool explore_design: [hitlcad.bug] IndexError: list index out of range\n"
+        "This is a bug in hitlcad, not in the design: do not change the design to avoid it. Tell the human."
+    )
+
+
+async def test_a_design_lists_its_revisions_and_reads_one_when_asked(
+    core: HitlCad, settings: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = write_design(tmp_path / "d", {"design.json": {"hitlcad": 2, "name": "d", "backend": "build123d",
+                                                           "parts": {"a": {"role": "a", "file": "parts/a.py"}}}})  # fmt: skip
+    state, _ = core.designs.open(folder)
+    built = await core.builds.build(state.id)  # fails: parts/a.py does not exist
+    await core.shutdown()
+
+    later = HitlCad.create(settings, registry=core.registry, renderer=NullRenderer())
+    reads: list[int] = []
+    read = later.designs.store.revision
+    monkeypatch.setattr(later.designs.store, "revision", lambda d, r: reads.append(r) or read(d, r))
+    (listed,) = later.designs.get(state.id).revisions
+    assert listed.status == "failed" and listed.failure and listed.failure.code == "build.part_file_missing"
+    assert reads == []  # opening a design reads no revision's spec or report
+    assert later.designs.revision(state.id, 1) == built and reads == [1]
+    assert later.designs.revision(state.id, 1) == built and reads == [1]  # kept, once read
+    assert later.designs.earlier(state.id, 2, None) == Earlier(
+        1, frozenset({("build.part_file_missing", "parts/a.py")})
+    )
+    with pytest.raises(HitlcadError, match="revision 7 not found"):
+        later.designs.revision(state.id, 7)
+    await later.shutdown()
+
+
+def test_a_database_of_another_layout_is_set_aside_whole(tmp_path: Path) -> None:
+    store = SqliteStore(tmp_path)
+    store.create("dsg_1")
+    store.bind("/work/fan", "dsg_1")
+    store.close()
+    same = SqliteStore(tmp_path)
+    assert same.folders() == {"/work/fan": "dsg_1"}  # the same layout, whatever version wrote it, stays
+    same.close()
+    with closing(sqlite3.connect(tmp_path / "hitlcad.db")) as db, db:
+        db.execute("UPDATE meta SET value = '0' WHERE key = 'schema'")
+    again = SqliteStore(tmp_path)
+    assert again.folders() == {} and again.set_aside_folders == {"/work/fan"}
+    (aside,) = tmp_path.glob("hitlcad.*.db")
+    with closing(sqlite3.connect(aside)) as db:  # kept as it was
+        assert db.execute("SELECT path, design FROM folders").fetchall() == [("/work/fan", "dsg_1")]
+    again.close()
+
+
+@pytest.mark.geometry
+async def test_a_server_keeps_a_build_process_started_for_each_backend(settings: Any, tmp_path: Path) -> None:
+    """So a save builds without waiting for build123d (or Blender) to load."""
+    core = HitlCad.create(settings.model_copy(update={"warm_builds": 1}), renderer=NullRenderer())
+    core.start()
+    backend = core.registry.get("build123d")
+    kept = backend.executor._ready  # type: ignore[attr-defined]
+    for _ in range(200):
+        if kept.get(tuple(backend.command())):  # type: ignore[attr-defined]
+            break
+        await asyncio.sleep(0.05)
+    (spare,) = kept[tuple(backend.command())]  # type: ignore[attr-defined]
+    state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
+    revision = await core.builds.build(state.id)
+    assert revision.report.status == "succeeded", revision.report.lead()
+    assert spare.proc.returncode is not None  # it took the build's first job, and ended with it
+    await core.shutdown()
+    assert kept == {}
+
+
+def test_one_server_keeps_a_data_folder(tmp_path: Path) -> None:
+    """Each server keeps its designs' state in memory: a second one on the same folder would part from it."""
+    first = SqliteStore(tmp_path)
+    with pytest.raises(HitlcadError, match="another hitlcad server keeps") as taken:
+        SqliteStore(tmp_path)
+    assert (taken.value.code, taken.value.owner) == ("store.in_use", "environment")
+    first.close()
+    SqliteStore(tmp_path).close()  # free once the first has closed

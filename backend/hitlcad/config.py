@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     verify_position_mm: float = Field(default=0.01, gt=0)
     verify_angle_deg: float = Field(default=0.05, gt=0)
     verify_motion_steps: int = Field(default=2000, ge=10)
+    solver: str = Field(default="least_squares", description="The loop solver (`hitlcad_solvers`) motion moves closed "
+                        "loops of mates with")  # fmt: skip
     overlap_mm3: float = Field(
         default=1e-3, gt=0, description="Bodies sharing less than this touch; they do not overlap"
     )
@@ -42,6 +44,9 @@ class Settings(BaseSettings):
     explore_limit: int = Field(default=25, ge=5, description="Results listed in full per answer; the rest are counted")
     section_size: int = Field(default=640, ge=200, description="Pixels of a section view")
     loaded_builds: int = Field(default=8, ge=1, description="Built revisions kept in memory for picks and pins")
+    loaded_revisions: int = Field(default=32, ge=1, description="Revisions (spec and report) kept in memory")
+    warm_builds: int = Field(default=1, ge=0, description="Build processes each backend keeps started, its libraries "
+                             "loaded, so a build does not wait for them: about 400 MB each for build123d; 0 for none")  # fmt: skip
 
     # Carrying picks and pins to a new build by geometry
     anchor_reach: float = Field(
@@ -87,14 +92,6 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
-
-    @property
-    def designs_dir(self) -> Path:
-        return self.data_dir / "designs"
-
-    @property
-    def folders_file(self) -> Path:
-        return self.data_dir / "folders.json"
 
 
 @lru_cache

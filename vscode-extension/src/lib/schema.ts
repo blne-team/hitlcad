@@ -127,6 +127,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/designs/{design_id}/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Revision
+         * @description A revision in full: what it built from and its report. The design's state lists them.
+         */
+        get: operations["get_revision_api_designs__design_id__revisions__revision_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/designs/{design_id}/revisions/{revision_id}/files/{path}": {
         parameters: {
             query?: never;
@@ -194,6 +214,43 @@ export interface paths {
         head?: never;
         /** Update Pin */
         patch: operations["update_pin_api_designs__design_id__pins__pin_id__patch"];
+        trace?: never;
+    };
+    "/api/designs/{design_id}/watched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Watch Motion
+         * @description The human watched a loop's motion move: its result passes, resting on that, from the build this starts.
+         */
+        post: operations["watch_motion_api_designs__design_id__watched_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/designs/{design_id}/watched/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unwatch Motion */
+        delete: operations["unwatch_motion_api_designs__design_id__watched__key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/context": {
@@ -320,7 +377,7 @@ export interface components {
         AddPin: {
             /**
              * Point
-             * @description Model-space point in mm, Z up
+             * @description Model-space point in mm, Z up, where the part it is on was assembled
              */
             point: [
                 number,
@@ -341,6 +398,8 @@ export interface components {
             note: string;
             /** Revision */
             revision?: number | null;
+            /** @description Where a range of motion was in the view */
+            motion?: components["schemas"]["PinMotion"] | null;
         };
         /**
          * AgentSetup
@@ -513,7 +572,11 @@ export interface components {
              */
             mpn: string;
         };
-        /** BuildReport */
+        /**
+         * BuildReport
+         * @description A build: what it built and what it found. A build that fails, fails because it cannot produce geometry, and
+         *     its results say why.
+         */
         BuildReport: {
             status: components["schemas"]["BuildStatus"];
             /** Configuration */
@@ -527,13 +590,6 @@ export interface components {
             };
             /** Duration S */
             duration_s: number;
-            /** Error */
-            error: string | null;
-            /**
-             * Log Tail
-             * @default
-             */
-            log_tail: string;
             /** @description The whole placed assembly */
             metrics: components["schemas"]["MeshMetrics"] | null;
             mass: components["schemas"]["MassProperties"] | null;
@@ -609,6 +665,13 @@ export interface components {
             components: {
                 [key: string]: components["schemas"]["BuildSpec"];
             };
+            /**
+             * Plugins
+             * @description The installed plugins it was built with, but hitlcad's own: distribution -> version
+             */
+            plugins: {
+                [key: string]: string;
+            };
         };
         /**
          * BuildStatus
@@ -619,6 +682,16 @@ export interface components {
         Capabilities: {
             /** Version */
             version: string;
+            /**
+             * Plugins
+             * @description Every plugin loaded, hitlcad's own among them
+             */
+            plugins: components["schemas"]["Plugin"][];
+            /**
+             * Plugin Problems
+             * @description Plugins that did not load, failed or clash
+             */
+            plugin_problems: components["schemas"]["Diagnostic"][];
             /** Backends */
             backends: components["schemas"]["BackendInfo"][];
             /**
@@ -626,6 +699,11 @@ export interface components {
              * @description In the order they run: cause before effect
              */
             analyses: components["schemas"]["AnalysisInfo"][];
+            /**
+             * Error Kinds
+             * @description Every result's and error's kind, by code: its title and usual fix
+             */
+            error_kinds: components["schemas"]["ErrorKind"][];
             /**
              * Python
              * @description The interpreter that builds models: part files resolve their imports in it
@@ -906,7 +984,7 @@ export interface components {
         DescribeFilePick: {
             /**
              * Point
-             * @description Model-space point in mm, Z up
+             * @description Model-space point in mm, Z up, where the part it is on was assembled
              */
             point: [
                 number,
@@ -954,6 +1032,13 @@ export interface components {
             hitlcad: 2;
             /** Name */
             name: string;
+            /**
+             * Plugins
+             * @description The plugins it needs beyond hitlcad's own: distribution -> version specifier, e.g. {'hitlcad-lasercut': '>=0.1'}
+             */
+            plugins: {
+                [key: string]: string;
+            };
             /**
              * Number
              * @description The user's own part number for the whole design
@@ -1008,7 +1093,7 @@ export interface components {
              * Manufacturing
              * @description Default process for made parts
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"] | components["schemas"]["LaserCutProcess"]) | null;
             verification: components["schemas"]["Verification"];
             /**
              * Outputs
@@ -1049,17 +1134,16 @@ export interface components {
              * @default false
              */
             building: boolean;
-            /**
-             * Error
-             * @description Latest problem with the folder; cleared by the next build
-             */
-            error: string | null;
+            /** @description The latest error; cleared by the next revision */
+            error: components["schemas"]["Diagnostic"] | null;
             /** Revisions */
-            revisions: components["schemas"]["Revision"][];
+            revisions: components["schemas"]["RevisionInfo"][];
             /** Selection */
             selection: components["schemas"]["SelectionItem"][];
             /** Pins */
             pins: components["schemas"]["Pin"][];
+            /** Watched */
+            watched: components["schemas"]["WatchedMotion"][];
             /**
              * Deliveries
              * @description What each agent session was last given, by session id
@@ -1084,8 +1168,21 @@ export interface components {
             open_pins: number;
             /** Building */
             building: boolean;
-            /** Error */
-            error: string | null;
+            /** @description What last stopped its work, when that was not the design's to fix */
+            error: components["schemas"]["Diagnostic"] | null;
+        };
+        /** Diagnostic */
+        Diagnostic: {
+            /** Code */
+            code: string;
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "design" | "request" | "environment" | "plugin" | "hitlcad";
+            /** Message */
+            message: string;
+            where: components["schemas"]["Location"] | null;
         };
         /** Dimension */
         Dimension: {
@@ -1110,6 +1207,28 @@ export interface components {
             values: {
                 [key: string]: unknown;
             };
+        };
+        /** ErrorKind */
+        ErrorKind: {
+            /** Code */
+            code: string;
+            /**
+             * Owner
+             * @enum {string}
+             */
+            owner: "design" | "request" | "environment" | "plugin" | "hitlcad";
+            /** Title */
+            title: string;
+            /**
+             * Hint
+             * @default
+             */
+            hint: string;
+            /**
+             * Skill
+             * @default
+             */
+            skill: string;
         };
         /**
          * FaceConnector
@@ -1600,6 +1719,28 @@ export interface components {
             value: unknown;
             reads: components["schemas"]["Reads"];
         };
+        /**
+         * LaserCutProcess
+         * @description Laser cutting from a sheet `thickness_mm` thick, lying flat in the part's own frame (Z through the sheet):
+         *     the part is a plate of that thickness, and no hole is narrower than the sheet is thick (a narrower one burns
+         *     out or closes up). Holes come out `kerf_mm` larger than drawn and outlines `kerf_mm` smaller, for fit
+         *     checks.
+         */
+        LaserCutProcess: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            process: "laser_cut";
+            /** Thickness Mm */
+            thickness_mm: number;
+            /**
+             * Kerf Mm
+             * @description Width of material the beam takes
+             * @default 0.15
+             */
+            kerf_mm: number;
+        };
         /** Limits */
         Limits: {
             /**
@@ -1618,6 +1759,15 @@ export interface components {
                 number,
                 number
             ] | null;
+        };
+        /** Location */
+        Location: {
+            /** File */
+            file: string | null;
+            /** Line */
+            line: number | null;
+            /** Address */
+            address: string | null;
         };
         /**
          * MassCheck
@@ -1725,8 +1875,51 @@ export interface components {
             winding_consistent: boolean;
         };
         /**
+         * MotionDrive
+         * @description Instances that move together through a range: `rate` times as far as the range moves, about or along
+         *     their own axis.
+         */
+        MotionDrive: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "angle" | "travel";
+            /** Origin */
+            origin: [
+                number,
+                number,
+                number
+            ];
+            /** Axis */
+            axis: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Rate
+             * @description Degrees or mm per unit of the range; negative: against the axis
+             */
+            rate: number;
+            /** Instances */
+            instances: string[];
+        };
+        /**
+         * MotionPose
+         * @description Instances that move together through a loop's positions: their motion from as assembled at each, 3 × 4 by
+         *     rows.
+         */
+        MotionPose: {
+            /** Instances */
+            instances: string[];
+            /** Frames */
+            frames: number[][];
+        };
+        /**
          * MotionRange
-         * @description A mate's range of motion, for the panel to move its moving side through.
+         * @description A mate's range of motion, for the panel to move what it moves through: about fixed axes (`drives`), or a
+         *     loop's solved positions (`values`, `poses`).
          */
         MotionRange: {
             /** Mate */
@@ -1752,28 +1945,27 @@ export interface components {
              * @description Where it sits as assembled
              */
             current: number;
-            /** Origin */
-            origin: [
-                number,
-                number,
-                number
-            ];
-            /** Axis */
-            axis: [
-                number,
-                number,
-                number
-            ];
             /**
-             * Sign
-             * @description +1: the moving side turns with the motion about the axis; -1: against it
+             * Drives
+             * @description What moves: the mate's moving side, then what relations drive from it (a gear on its own axis)
              */
-            sign: number;
+            drives: components["schemas"]["MotionDrive"][];
             /**
-             * Moving
-             * @description The instances that move
+             * Values
+             * @description A loop's: the driving mate at each solved position shown, ascending
              */
-            moving: string[];
+            values: number[];
+            /**
+             * Poses
+             * @description A loop's: what moves, at those positions
+             */
+            poses: components["schemas"]["MotionPose"][];
+            /**
+             * Key
+             * @description A loop's sweep: what a human's watch of it is of
+             * @default
+             */
+            key: string;
         };
         /** OpenDesign */
         OpenDesign: {
@@ -1798,8 +1990,8 @@ export interface components {
             open_pins: number;
             /** Building */
             building: boolean;
-            /** Error */
-            error: string | null;
+            /** @description What last stopped its work, when that was not the design's to fix */
+            error: components["schemas"]["Diagnostic"] | null;
             /** Created */
             created: boolean;
             /**
@@ -1907,7 +2099,7 @@ export interface components {
              * Manufacturing
              * @description Overrides the design's process for this made part
              */
-            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"]) | null;
+            manufacturing: (components["schemas"]["FdmProcess"] | components["schemas"]["ResinProcess"] | components["schemas"]["CncMillingProcess"] | components["schemas"]["SheetMetalProcess"] | components["schemas"]["InjectionMoldingProcess"] | components["schemas"]["LaserCutProcess"]) | null;
             /**
              * Backend
              * @description Overrides the design's backend
@@ -1916,7 +2108,7 @@ export interface components {
             catalog: components["schemas"]["Catalog"] | null;
             /** Connectors */
             connectors: {
-                [key: string]: components["schemas"]["FrameConnector"] | components["schemas"]["FaceConnector"] | components["schemas"]["HoleConnector"] | components["schemas"]["ShaftConnector"] | components["schemas"]["GearConnector"];
+                [key: string]: components["schemas"]["GearConnector"] | components["schemas"]["FrameConnector"] | components["schemas"]["FaceConnector"] | components["schemas"]["HoleConnector"] | components["schemas"]["ShaftConnector"];
             };
         };
         /**
@@ -1926,7 +2118,7 @@ export interface components {
         Pick: {
             /**
              * Point
-             * @description Model-space point in mm, Z up
+             * @description Model-space point in mm, Z up, where the part it is on was assembled
              */
             point: [
                 number,
@@ -1985,6 +2177,8 @@ export interface components {
              * @default
              */
             note: string;
+            /** @description Where a range of motion was; none: as assembled */
+            motion: components["schemas"]["PinMotion"] | null;
             /**
              * Label
              * @description What is under the pin
@@ -2007,6 +2201,27 @@ export interface components {
              * @default
              */
             reply: string;
+        };
+        /**
+         * PinMotion
+         * @description Where a range of motion was when a pin was placed: the pin is about the parts there, not as assembled.
+         */
+        PinMotion: {
+            /**
+             * Pair
+             * @description The mate moved, by its frames, e.g. 'base.a ↔ crank.a'
+             */
+            pair: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "angle" | "travel";
+            /**
+             * At
+             * @description Degrees or mm, as the mate counts them
+             */
+            at: number;
         };
         /**
          * PlanarMate
@@ -2043,6 +2258,25 @@ export interface components {
              * @default 0
              */
             offset: number;
+        };
+        /** Plugin */
+        Plugin: {
+            /**
+             * Name
+             * @description Its entry point's
+             */
+            name: string;
+            /** Module */
+            module: string;
+            /** Distribution */
+            distribution: string;
+            /** Version */
+            version: string;
+            /**
+             * Builtin
+             * @description One of hitlcad's own
+             */
+            builtin: boolean;
         };
         /**
          * Problem
@@ -2164,9 +2398,14 @@ export interface components {
         Result: {
             /**
              * Analysis
-             * @description The analysis that found it: structure, connector, mate, interference, …
+             * @description The analysis that found it: build, structure, connector, mate, …
              */
             analysis: string;
+            /**
+             * Code
+             * @description The kind of check, from the error catalog: 'mate.fit', 'model.exception'
+             */
+            code: string;
             /**
              * Subject
              * @description What it is about, in the address grammar
@@ -2186,6 +2425,8 @@ export interface components {
             severity: "error" | "warning" | "info";
             /** Detail */
             detail: string;
+            /** @description Where in the design's files, when it is the code's */
+            where: components["schemas"]["Location"] | null;
             /**
              * About
              * @description Addresses it concerns: instances, parts, connectors
@@ -2215,16 +2456,55 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit";
+            origin: "file" | "parameter_edit" | "review";
             /** Parent */
             parent: number | null;
-            spec: components["schemas"]["BuildSpec"];
+            /** Configuration */
+            configuration: string | null;
+            /** @description What it built from; none when design.json did not validate */
+            spec: components["schemas"]["BuildSpec"] | null;
             /**
              * Summary
              * @default
              */
             summary: string;
             report: components["schemas"]["BuildReport"];
+        };
+        /**
+         * RevisionInfo
+         * @description A revision as a design's state lists it: what it is and how it went. `Revision` is all of it.
+         */
+        RevisionInfo: {
+            /** Id */
+            id: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Origin
+             * @enum {string}
+             */
+            origin: "file" | "parameter_edit" | "review";
+            /**
+             * Parent
+             * @description The configuration's latest successful revision before it
+             */
+            parent: number | null;
+            /** Configuration */
+            configuration: string | null;
+            /** Summary */
+            summary: string;
+            status: components["schemas"]["BuildStatus"];
+            tally: components["schemas"]["Tally"];
+            /** @description What a failed build failed on: the result that leads its problems */
+            failure: components["schemas"]["Result"] | null;
+            /**
+             * Key
+             * @description Its build spec's key (`BuildSpec.key`); none when design.json did not validate
+             */
+            key: string | null;
         };
         /**
          * RevoluteMate
@@ -2668,6 +2948,43 @@ export interface components {
             /** Min */
             min: number | string;
         };
+        /** WatchMotion */
+        WatchMotion: {
+            /**
+             * Revision
+             * @description The revision whose motion was watched
+             */
+            revision: number;
+            /**
+             * Key
+             * @description Its loop sweep's (`MotionRange.key`)
+             */
+            key: string;
+        };
+        /**
+         * WatchedMotion
+         * @description A loop's motion the human watched move in the panel: its sweep (`MotionRange.key`), which the review is of,
+         *     so that any change to the loop or what it moves past leaves it unwatched.
+         */
+        WatchedMotion: {
+            /** Key */
+            key: string;
+            /**
+             * Pair
+             * @description The mate that drives the loop, e.g. 'base.a ↔ crank.a'
+             */
+            pair: string;
+            /**
+             * Revision
+             * @description Revision it was watched on
+             */
+            revision: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** BuildStarted */
         BuildStarted: {
             /**
@@ -2767,7 +3084,11 @@ export interface components {
             /** @default null */
             brief: components["schemas"]["DesignBrief"] | null;
         };
-        /** ErrorRaised */
+        /**
+         * ErrorRaised
+         * @description Something stopped the design's work that is not the design's to fix: a build the machine or a bug stopped,
+         *     a build/ folder that could not be written, a history that could not be read.
+         */
         ErrorRaised: {
             /**
              * Seq
@@ -2784,8 +3105,30 @@ export interface components {
              * @enum {string}
              */
             type: "error";
-            /** Message */
-            message: string;
+            diagnostic: components["schemas"]["Diagnostic"];
+        };
+        /**
+         * MotionsWatched
+         * @description The loop motions the human has watched move, all of them.
+         */
+        MotionsWatched: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "motions_watched";
+            /** Watched */
+            watched: components["schemas"]["WatchedMotion"][];
         };
         /** PinsChanged */
         PinsChanged: {
@@ -2824,7 +3167,7 @@ export interface components {
              * @enum {string}
              */
             type: "revision_created";
-            revision: components["schemas"]["Revision"];
+            revision: components["schemas"]["RevisionInfo"];
         };
         /** SelectionChanged */
         SelectionChanged: {
@@ -2846,7 +3189,7 @@ export interface components {
             /** Items */
             items: components["schemas"]["SelectionItem"][];
         };
-        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildStarted"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["FeedbackDelivered"];
+        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildStarted"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["FeedbackDelivered"];
         /**
          * BuildActivity
          * @description A build that finished, one message of the /api/activity WebSocket.
@@ -2866,11 +3209,8 @@ export interface components {
             open_pins: number;
             /** Building */
             building: boolean;
-            /**
-             * Error
-             * @description Why the build failed
-             */
-            error: string | null;
+            /** @description What last stopped its work, when that was not the design's to fix */
+            error: components["schemas"]["Diagnostic"] | null;
             /** Revision */
             revision: number;
             status: components["schemas"]["BuildStatus"];
@@ -2878,7 +3218,18 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit";
+            origin: "file" | "parameter_edit" | "review";
+            /** @description What a failed build failed on: the result that leads its first problem */
+            failure: components["schemas"]["Result"] | null;
+        };
+        /**
+         * ErrorBody
+         * @description Every error response: what it says, and the diagnostic it comes from.
+         */
+        ErrorBody: {
+            /** Detail */
+            detail: string;
+            diagnostic: components["schemas"]["Diagnostic"];
         };
     };
     responses: never;
@@ -3118,6 +3469,38 @@ export interface operations {
             };
         };
     };
+    get_revision_api_designs__design_id__revisions__revision_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+                revision_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     revision_file_api_designs__design_id__revisions__revision_id__files__path__get: {
         parameters: {
             query?: never;
@@ -3276,6 +3659,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Pin"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    watch_motion_api_designs__design_id__watched_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchMotion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unwatch_motion_api_designs__design_id__watched__key__delete: {
+        parameters: {
+            query: {
+                revision: number;
+            };
+            header?: never;
+            path: {
+                design_id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
                 };
             };
             /** @description Validation Error */

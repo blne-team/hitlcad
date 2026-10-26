@@ -4,7 +4,7 @@ face, under the screw heads, on the bed): every wall rises straight from it. Rep
 
 from build123d import Align, Box, BuildPart, Cylinder, Location, Locations, Mode, Pos, Rot
 
-from hitlcad.catalogs.bd_warehouse import ClearanceHole, frames, screw
+from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, frames, screw
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 

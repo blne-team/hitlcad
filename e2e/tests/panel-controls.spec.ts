@@ -169,6 +169,16 @@ test("the editor: revision arrows, selection copy and clear", async ({ page }) =
   await expect.poll(async () => (await state()).selection.length).toBe(0);
 });
 
+test("the hint on how to select closes, and asks the extension to keep it closed", async ({ page }) => {
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  const hint = page.locator(".select-hint");
+  await expect(hint).toContainText("Shift-click adds more.");
+  await hint.getByRole("button", { name: "Hide this hint" }).click();
+  await expect(hint).toHaveCount(0);
+  expect(await sentToExtension(page)).toContain("hitlcad.hideSelectionHint"); // hitlcad.selectionHint: false
+});
+
 test("the viewer's measure tools own their clicks; Place pins turns them off", async ({ page }) => {
   await api("PUT", `/api/designs/${id}/selection`, { items: [] });
   for (const pin of (await state()).pins) await api("DELETE", `/api/designs/${id}/pins/${pin.id}`);

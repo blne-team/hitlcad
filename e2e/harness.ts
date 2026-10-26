@@ -10,7 +10,7 @@ const TYPES: Record<string, string> = { ".js": "text/javascript", ".css": "text/
 
 /** The page a webview gets for `view` (see panelUrl): the extension's own panelHtml, served from loopback. */
 function page(view: PanelView): string {
-  return panelHtml({ assets: `${HARNESS_URL}/ui`, cspSource: HARNESS_URL, nonce: randomBytes(16).toString("base64"), title: "webview", config: { server: BASE_URL, view } });
+  return panelHtml({ assets: `${HARNESS_URL}/ui`, cspSource: HARNESS_URL, nonce: randomBytes(16).toString("base64"), title: "webview", config: { server: BASE_URL, view, selectionHint: true } });
 }
 
 /**

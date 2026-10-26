@@ -208,7 +208,8 @@
       "material": "PLA",
       "connectors": {
         "bore": {
-          "kind": "hole"
+          "kind": "hole",
+          "symmetry": 1
         },
         "axis": {
           "kind": "frame",
@@ -290,12 +291,28 @@
         "pilot": {
           "kind": "shaft"
         },
-        "shaft": {
-          "kind": "shaft"
+        "spindle": {
+          "kind": "frame",
+          "symmetry": "axial"
         },
         "screw_holes": {
           "kind": "hole",
           "count": 4
+        }
+      }
+    },
+    "rotor": {
+      "role": "the motor's D-shaft, turning in its body",
+      "file": "parts/motor.py",
+      "material": "steel",
+      "connectors": {
+        "axis": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "shaft": {
+          "kind": "shaft",
+          "symmetry": 1
         }
       }
     },
@@ -381,8 +398,13 @@
       }
     },
     {
-      "type": "cylindrical",
-      "a": "motor.shaft",
+      "type": "revolute",
+      "a": "motor.spindle",
+      "b": "rotor.axis"
+    },
+    {
+      "type": "slider",
+      "a": "rotor.shaft",
       "b": "sun.bore",
       "fit": {
         "clearance": [

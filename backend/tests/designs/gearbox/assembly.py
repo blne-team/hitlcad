@@ -2,7 +2,7 @@
 
 from build123d import Pos, Rot
 
-from hitlcad.catalogs.bd_warehouse import bearing, heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import bearing, heat_set_insert, screw
 
 
 def build(p, i):
@@ -14,6 +14,7 @@ def build(p, i):
     return {
         "housing": [Pos()],
         "motor": [Pos()],  # its face at Z=0, body below
+        "rotor": [Pos(0, 0, i.motor["boss_h"])],  # its shaft up from the boss
         "sun": [Pos(0, 0, i.z_gear)],
         "planet": [Pos(x, y, i.z_gear) * Rot(0, 0, turn) for x, y, turn in i.planet_poses],
         "carrier": [Pos(0, 0, i.z_carrier)],

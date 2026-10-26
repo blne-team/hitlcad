@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import type { DesignState, Revision } from "../api/types";
+import { useCapabilities } from "../hooks/useCapabilities";
 import { useDesign } from "../hooks/useDesign";
-import { baseRevision, currentRevision, type DesignUi, type InspectorTab, useDesignUi } from "../lib/designUi";
+import { useShown } from "../hooks/useRevision";
+import { type DesignUi, type InspectorTab, useDesignUi } from "../lib/designUi";
 import { BomPanel } from "./BomPanel";
 import { BriefPanel } from "./BriefPanel";
 import { ChangesPanel } from "./ChangesPanel";
@@ -11,11 +13,13 @@ import { PinsPanel } from "./PinsPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
 
-/** What a tab renders from: the design, the revision on screen and the shared UI state. */
+/** What a tab renders from: the design, the revision on screen (in full) and the one it is compared with, and the
+ * shared UI state. */
 export interface TabContext {
   id: string;
   state: DesignState;
   revision: Revision | null;
+  base: Revision | null;
   ui: DesignUi;
   setUi: ReturnType<typeof useDesignUi>[1];
   refresh: () => void;
@@ -40,7 +44,10 @@ export const TABS: Tab[] = [
         pins={state.pins}
         revision={revision?.id ?? null}
         activePin={ui.activePin}
-        setActivePin={(pin) => setUi({ activePin: pin })}
+        setActivePin={(pin) => {
+          const placed = state.pins.find((p) => p.id === pin);  // a pin placed at a motion's position shows it there
+          setUi({ activePin: pin, ...(placed?.motion && placed.revision !== null ? { motion: { ...placed.motion, revision: placed.revision } } : {}) });
+        }}
         onPinMode={() => setUi({ placing: true })}
         canPin={Boolean(revision?.report.artifacts.some((a) => a.role === "view"))}
         onChanged={refresh}
@@ -71,13 +78,8 @@ export const TABS: Tab[] = [
   {
     id: "changes",
     label: "Changes",
-    render: ({ state, revision, ui, setUi }) => (
-      <ChangesPanel
-        revisions={state.revisions}
-        current={revision}
-        baseId={baseRevision(state.revisions, revision, ui.base)?.id ?? null}
-        setBaseId={(rev) => setUi({ base: rev })}
-      />
+    render: ({ state, revision, base, setUi }) => (
+      <ChangesPanel revisions={state.revisions} current={revision} base={base} setBaseId={(rev) => setUi({ base: rev })} />
     ),
   },
   {
@@ -96,6 +98,8 @@ export function InspectorView({ id }: { id: string }) {
   const live = useDesign(id);
   const { state } = live;
   const [ui, setUi] = useDesignUi();
+  const { revision, base } = useShown(id, state?.revisions ?? [], ui);
+  const problems = useCapabilities()?.plugin_problems ?? [];
 
   if (!state) {
     return (
@@ -105,11 +109,16 @@ export function InspectorView({ id }: { id: string }) {
     );
   }
 
-  const ctx: TabContext = { id, state, revision: currentRevision(state.revisions, ui.revision, ui.configuration), ui, setUi, refresh: live.refresh };
+  const ctx: TabContext = { id, state, revision, base, ui, setUi, refresh: live.refresh };
   const active = TABS.find((t) => t.id === ui.tab) ?? TABS[0]!;
 
   return (
     <div className="inspector">
+      {problems.map((p, k) => (
+        <p key={k} className="notice fail" title={p.code}>
+          {p.message}
+        </p>
+      ))}
       <div className="tabs" role="tablist">
         {TABS.map((t) => {
           const count = t.badge?.(ctx) ?? 0;

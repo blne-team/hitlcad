@@ -11,10 +11,11 @@ import numpy as np
 
 from hitlcad.analysis.base import Context, label, result, structural
 from hitlcad.analysis.mates import allowance
-from hitlcad.analysis.model import BuiltDesign, Leaf, PlacedFrame, StructureError
+from hitlcad.analysis.model import BuiltDesign, Leaf, PlacedFrame
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import FastenerSet
+from hitlcad.kernel.errors import FASTENER_NO_DATA, FASTENER_STACK, StructureError
 
 #: What a fastener's catalog provider must give.
 FASTENER_DATA = ("thread", "thread_diameter", "thread_pitch", "length", "clearance_fine", "clearance_medium")
@@ -104,6 +105,7 @@ def free_depth(
 
 class Fasteners:
     name = "fastener"
+    stage = "joints"
     title = "Fastener sets"
     summary = "Each fastener seats, clears its holes, takes the thread and engages enough"
 
@@ -129,7 +131,7 @@ class Fasteners:
             problems.append(f"not seated on {label(through[0])} ({gap:.3f} mm, {tilt:.2f}° off)")
         meta = seat.part.catalog.metadata if seat.part.catalog else {}
         if missing := [k for k in FASTENER_DATA if k not in meta]:
-            return result(self.name, fs.address, None, f"{label(seat)}: its catalog provider gives no "
+            return result(self.name, FASTENER_NO_DATA, fs.address, None, f"{label(seat)}: its catalog provider gives no "
                           f"{', '.join(missing)}, so clearance, thread and engagement cannot be checked", about)  # fmt: skip
         thread, d = str(meta["thread"]), float(meta["thread_diameter"])
         pitch, length = float(meta["thread_pitch"]), float(meta["length"])
@@ -168,7 +170,7 @@ class Fasteners:
         status: bool | None = False if problems else (None if notes else True)
         head = f"{label(seat)} through {', '.join(label(h) for h in through)} into {label(into)}"
         detail = "; ".join(problems + notes) or f"seated, clears, engages {engagement:.2f} mm"
-        return result(self.name, fs.address, status, f"{head}: {detail}", about, values,
+        return result(self.name, FASTENER_STACK, fs.address, status, f"{head}: {detail}", about, values,
                       cause=cause if len(problems) == 1 else "")  # fmt: skip
 
     @staticmethod

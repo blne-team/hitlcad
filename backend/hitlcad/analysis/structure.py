@@ -15,6 +15,16 @@ from hitlcad.analysis.base import Context, result
 from hitlcad.core.address import End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.report import Result
+from hitlcad.kernel.errors import (
+    STRUCTURE_FASTENER,
+    STRUCTURE_GROUND,
+    STRUCTURE_MATERIAL,
+    STRUCTURE_MATERIAL_PROCESS,
+    STRUCTURE_NO_MATERIAL,
+    STRUCTURE_REFERENCE,
+    STRUCTURE_RELATION_KIND,
+    STRUCTURE_UNPLACED,
+)
 from hitlcad.materials import Material
 
 NAME = "structure"
@@ -51,55 +61,74 @@ def structure_results(design: DesignSpec, placed: Iterable[str], exports: dict[s
     placed = set(placed)
     for name in [*design.parts, *design.components]:
         if name not in placed:
-            out.append(result(NAME, name, False, f"{name} is declared but assembly.py does not place it", [name],
+            out.append(result(NAME, STRUCTURE_UNPLACED, name, False, f"{name} is declared but assembly.py does not place it", [name],
                               severity="warning"))  # fmt: skip
     if placed and design.ground is None:
         out.append(
-            result(NAME, "ground", False, "set `ground` in design.json: the instance every mate chain leads back to")
+            result(
+                NAME,
+                STRUCTURE_GROUND,
+                "ground",
+                False,
+                "set `ground` in design.json: the instance every mate chain leads back to",
+            )
         )
     elif design.ground and InstancePath.parse(design.ground).head.name not in placed:
-        out.append(result(NAME, "ground", False, f"ground {design.ground} is not placed by assembly.py"))
+        out.append(
+            result(NAME, STRUCTURE_GROUND, "ground", False, f"ground {design.ground} is not placed by assembly.py")
+        )
     for mate in design.mates:
         for text in (mate.a, mate.b):
             problem, _ = _end(design, exports, text)
             if problem:
-                out.append(result(NAME, mate.address, False, problem, [text]))
+                out.append(result(NAME, STRUCTURE_REFERENCE, mate.address, False, problem, [text]))
     for rel in design.relations:
         for text, kind in ((rel.a, rel.joins[0]), (rel.b, rel.joins[1])):
             problem, found = _end(design, exports, text)
-            if problem is None and found is not None and found != kind:
-                problem = f"a {rel.type} relation joins a {rel.joins[0]} and a {rel.joins[1]}; {text} is a {found}"
             if problem:
-                out.append(result(NAME, rel.address, False, problem, [text]))
+                out.append(result(NAME, STRUCTURE_REFERENCE, rel.address, False, problem, [text]))
+            elif found is not None and found != kind:
+                out.append(result(NAME, STRUCTURE_RELATION_KIND, rel.address, False, f"a {rel.type} relation joins a "
+                                  f"{rel.joins[0]} and a {rel.joins[1]}; {text} is a {found}", [text]))  # fmt: skip
     for fs in design.fasteners:
         for text in (fs.fastener, *fs.through, fs.into):
             problem, _ = _end(design, exports, text)
             if problem:
-                out.append(result(NAME, fs.address, False, problem, [text]))
+                out.append(result(NAME, STRUCTURE_REFERENCE, fs.address, False, problem, [text]))
         owner = End.parse(fs.fastener).owner.name
         if owner in design.parts and design.parts[owner].catalog is None:
-            out.append(result(NAME, fs.address, False, f"{owner} is not a catalog part; a fastener is bought", [owner]))
+            out.append(
+                result(
+                    NAME,
+                    STRUCTURE_FASTENER,
+                    fs.address,
+                    False,
+                    f"{owner} is not a catalog part; a fastener is bought",
+                    [owner],
+                )
+            )
     for text in design.exports.values():
         problem, _ = _end(design, exports, text)
         if problem:
-            out.append(result(NAME, f"exports: {text}", False, problem, [text]))
+            out.append(result(NAME, STRUCTURE_REFERENCE, f"exports: {text}", False, problem, [text]))
     for name, part in design.parts.items():
         if part.material and part.material not in materials:
-            out.append(result(NAME, name, False, f"material {part.material!r} is not in the material registry "
+            out.append(result(NAME, STRUCTURE_MATERIAL, name, False, f"material {part.material!r} is not in the material registry "
                               f"(add it to a materials.json)", [name]))  # fmt: skip
         process = design.process(name)
         if part.material in materials and process and process.process not in materials[part.material].processes:
             suits = ", ".join(materials[part.material].processes) or "no process"
-            out.append(result(NAME, name, False, f"{name} is {part.material}, which {process.process} cannot make "
+            out.append(result(NAME, STRUCTURE_MATERIAL_PROCESS, name, False, f"{name} is {part.material}, which {process.process} cannot make "
                               f"({part.material} suits {suits}): change its material or its process", [name]))  # fmt: skip
         if part.catalog is None and part.material is None:
-            out.append(result(NAME, name, False, f"{name} is made but has no material: mass and thread engagement "
+            out.append(result(NAME, STRUCTURE_NO_MATERIAL, name, False, f"{name} is made but has no material: mass and thread engagement "
                               "cannot be judged", [name], severity="warning"))  # fmt: skip
     return out
 
 
 class Structure:
     name = NAME
+    stage = "structure"
     title = "Structure"
     summary = "What design.json declares refers to what exists, and assembly.py places it"
 

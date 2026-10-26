@@ -1,9 +1,11 @@
 """Base class for backends that run a design's code in a child process via an entry script.
 
-Protocol between parent and entry script (cwd = the work directory):
+Protocol between parent and entry script: the entry, started before its job is known, reads the job's path on
+stdin; the job's folder is its work directory.
 
-    in:  job.json {"mode": "plan" | "parts", "src": <design sources>, "params": {...}, "files": {...}, ...}
-    out: result.json {"ok": bool, "error": str | None, ...the mode's fields}
+    in:  job.json {"mode": "plan" | "parts", "src": <design sources>, "params": {...}, "files": {...},
+                   "paths": [where the model packages import from], ...}
+    out: result.json {"ok": bool, "error": {"code", "message", "where"} | None, ...the mode's fields}
 """
 
 from __future__ import annotations
@@ -16,14 +18,12 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
 
-from hitlcad.backends import runtime
 from hitlcad.backends.base import CADBackend, PartsOutcome, PlanOutcome
-from hitlcad.backends.executor import Executor, LocalExecutor, last_lines
 from hitlcad.core.types import Value
-
-#: hitlcad's own code that model code runs with, besides an entry script and the model runtime: the SDK and the
-#: catalog providers, relative to the hitlcad package.
-MODEL_CODE = ("sdk/__init__.py", "catalogs/*.py")
+from hitlcad.execution import runtime
+from hitlcad.execution.executor import Executor, LocalExecutor, last_lines
+from hitlcad.kernel.errors import BUILD_CRASHED, BUILD_MEMORY, BUILD_TIME, reported
+from hitlcad.kernel.plugins import ModelPackage, registry
 
 
 class SubprocessBackend(CADBackend):
@@ -31,19 +31,23 @@ class SubprocessBackend(CADBackend):
 
     def __init__(
         self, *, executor: Executor | None = None, timeout_s: float, memory_mb: int,
-        mesh_tolerance_mm: float, mesh_angular_tolerance: float,
+        mesh_tolerance_mm: float, mesh_angular_tolerance: float, warm: int = 0,
     ) -> None:  # fmt: skip
-        self.executor = executor or LocalExecutor()
+        self.executor = executor or LocalExecutor(warm=warm)
         self.timeout_s = timeout_s
         self.memory_mb = memory_mb
         self.mesh_tolerance_mm = mesh_tolerance_mm
         self.mesh_angular_tolerance = mesh_angular_tolerance
 
+    def packages(self) -> list[ModelPackage]:
+        """The plugins' model packages its part files may import."""
+        return [p for p in registry().model_packages if self.name in p.backends]
+
     def code(self) -> list[Path]:
-        """The files of hitlcad's that its child processes run: its entry script, the model runtime, the SDK and the
-        catalog providers."""
-        root = Path(runtime.__file__).parents[1]
-        return [self.entry, Path(runtime.__file__), *sorted(p for pattern in MODEL_CODE for p in root.glob(pattern))]
+        """The code its child processes run besides the design's: its entry script, the model runtime, the SDK and
+        the model packages."""
+        sdk = Path(runtime.__file__).parents[1] / "sdk" / "__init__.py"
+        return [self.entry, Path(runtime.__file__), sdk, *(f for p in self.packages() for f in p.files())]
 
     def libraries(self) -> dict[str, str | None]:
         """The versions of the libraries its child processes build with."""
@@ -60,23 +64,40 @@ class SubprocessBackend(CADBackend):
         return self._fingerprint
 
     @abstractmethod
-    def command(self, job_file: Path) -> list[str]:
-        """argv that runs the entry script for ``job_file`` (cwd is the work directory)."""
+    def command(self) -> list[str]:
+        """argv that starts a build process: its entry script, which waits for its job's path on stdin."""
+
+    def warm(self) -> None:
+        """Start the build processes kept ready, once it is available."""
+        if self.availability()[0]:
+            self.executor.warm(self.command())
+
+    async def close(self) -> None:
+        await self.executor.close()
 
     async def _run(self, work: Path, job: dict[str, Any]) -> tuple[dict[str, Any], str]:
         # The child runs with cwd=work, so paths handed to it must not be relative to ours.
         work = work.resolve()
         work.mkdir(parents=True, exist_ok=True)
         job_file = work / "job.json"
-        job_file.write_text(json.dumps(job), encoding="utf-8")
+        paths = sorted({str(p.root) for p in self.packages()})  # where the model packages import from
+        job_file.write_text(json.dumps(job | {"paths": paths}), encoding="utf-8")
         result_file = work / "result.json"
         result_file.unlink(missing_ok=True)
-        run = await self.executor.run(self.command(job_file), work, timeout_s=self.timeout_s, memory_mb=self.memory_mb)
+        run = await self.executor.run_job(self.command(), job_file, timeout_s=self.timeout_s, memory_mb=self.memory_mb)
         if run.stopped:
-            return {"ok": False, "error": f"the build {run.stopped}"}, run.output
+            kind = BUILD_TIME if run.limit == "time" else BUILD_MEMORY
+            return {"ok": False, "error": kind.diagnostic(f"the build {run.stopped}")}, run.output
         if not result_file.is_file():
-            return {"ok": False, "error": f"{_ended(run.returncode)}:\n{last_lines(run.output)}"}, run.output
-        return json.loads(result_file.read_text(encoding="utf-8")), run.output
+            ended = BUILD_CRASHED.diagnostic(f"{_ended(run.returncode)}:\n{last_lines(run.output)}")
+            return {"ok": False, "error": ended}, run.output
+        result = json.loads(result_file.read_text(encoding="utf-8"))
+        if not result["ok"]:
+            result["error"] = reported(result["error"])
+        for file in result.get("files", []):
+            if file.get("error"):
+                file["error"] = reported(file["error"])
+        return result, run.output
 
     async def plan(self, src: Path, values: dict[str, Value], work: Path) -> PlanOutcome:
         result, log = await self._run(work, {"mode": "plan", "src": str(src.resolve()), "params": values})

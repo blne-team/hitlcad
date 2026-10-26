@@ -2,8 +2,8 @@ import type { PanelConfig } from "../../../src/lib/panelHtml";
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void };
 
-/** What the extension put in this webview's page: the server to talk to and what to show. */
-export const { server, view }: PanelConfig = JSON.parse(document.getElementById("root")!.dataset.config!);
+/** What the extension put in this webview's page: the server to talk to, what to show, and whether to say how to select. */
+export const { server, view, selectionHint }: PanelConfig = JSON.parse(document.getElementById("root")!.dataset.config!);
 
 const vscode = acquireVsCodeApi();
 

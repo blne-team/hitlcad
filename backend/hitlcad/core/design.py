@@ -1,5 +1,9 @@
 """design.json, format 2: a design is an assembly of instances of its parts and components.
 
+Its connector kinds, mate and relation types, requirement checks and processes are the members installed
+plugins give (hitlcad's own among them, `hitlcad.builtin`): the unions here are made of them, when this module
+is imported. A design names the plugins it needs beyond hitlcad's own in `plugins`.
+
 Names are checked here, when the file loads. How the names relate (mates between declared
 connectors, every instance mated to ground, components that exist) is checked by the structure
 analysis of each build, which reports problems with their addresses instead of refusing the file.
@@ -12,18 +16,61 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from hitlcad.core.address import End, InstancePath, check_name
-from hitlcad.core.checks import Manufacturing, Requirement
-from hitlcad.core.structure import (
-    ComponentSpec,
-    FastenerSet,
-    MateSpec,
-    PartSpec,
-    RelationSpec,
-    Verification,
-)
-from hitlcad.core.types import DesignBrief, Model, ParamSpec, Value
+from hitlcad.core.checks import Process
+from hitlcad.core.structure import Catalog, ComponentSpec, FastenerSet, Verification
+from hitlcad.core.types import DesignBrief, ParamSpec, Value
+from hitlcad.kernel.model import Model
+from hitlcad.kernel.plugins import registry
 
 FORMAT = 2
+DESIGN_FILE = "design.json"
+
+_installed = registry()
+ConnectorSpec = _installed.union(_installed.connectors, "kind")
+MateSpec = _installed.union(_installed.mates, "type")
+RelationSpec = _installed.union(_installed.relations, "type")
+RequirementCheck = _installed.union(_installed.checks, "kind")
+Manufacturing = _installed.union(_installed.processes, "process")
+
+
+class PartSpec(Model):
+    role: str = Field(description="One line: what the part does")
+    file: str = Field(description="The part file that builds it, e.g. parts/lid.py")
+    number: str = Field(default="", description="The user's own part number")
+    material: str | None = Field(default=None, description="A name in the material registry")
+    manufacturing: Manufacturing | None = Field(
+        default=None, description="Overrides the design's process for this made part"
+    )
+    backend: str | None = Field(default=None, description="Overrides the design's backend")
+    catalog: Catalog | None = None
+    connectors: dict[str, ConnectorSpec] = Field(default_factory=dict)
+
+    @field_validator("file")
+    @classmethod
+    def _in_parts(cls, v: str) -> str:
+        if not (v.startswith("parts/") and v.endswith(".py")) or ".." in v:
+            raise ValueError(f"part file {v!r} must be a .py file under parts/")
+        return v
+
+    @field_validator("connectors")
+    @classmethod
+    def _names(cls, v: dict[str, Any]) -> dict[str, Any]:
+        for name in v:
+            check_name(name, "connector")
+        return v
+
+    @model_validator(mode="after")
+    def _bought_or_made(self) -> PartSpec:
+        if self.catalog and self.manufacturing:
+            raise ValueError("a catalog part is bought, not manufactured: drop its manufacturing")
+        return self
+
+
+class Requirement(Model):
+    """Something the design must satisfy. With a `check`, every build verifies it; without one, the human judges."""
+
+    text: str
+    check: RequirementCheck | None = None
 
 
 class DesignSpec(Model):
@@ -42,6 +89,8 @@ class DesignSpec(Model):
         return data
 
     name: str
+    plugins: dict[str, str] = Field(default_factory=dict, description="The plugins it needs beyond hitlcad's own: "
+                                    "distribution -> version specifier, e.g. {'hitlcad-lasercut': '>=0.1'}")  # fmt: skip
     number: str = Field(default="", description="The user's own part number for the whole design")
     backend: str = Field(description="Backend for parts that do not set their own")
     parameters: list[ParamSpec] = Field(default_factory=list)
@@ -121,6 +170,6 @@ class DesignSpec(Model):
             out.setdefault(part.file, []).append(name)
         return out
 
-    def process(self, part: str) -> Manufacturing | None:
+    def process(self, part: str) -> Process | None:
         spec = self.parts[part]
         return None if spec.catalog else spec.manufacturing or self.manufacturing

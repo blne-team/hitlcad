@@ -5,7 +5,7 @@ from build123d import Location, Pos, Rot
 from lib import joints
 from lib.geometry import axial, frame, placement
 
-from hitlcad.catalogs.bd_warehouse import heat_set_insert
+from hitlcad.builtin.catalogs.bd_warehouse import heat_set_insert
 from hitlcad.sdk import mate_to
 
 PRINTED = [

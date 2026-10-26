@@ -14,6 +14,7 @@ See `.vscode/launch.json`. The devcontainer has everything a build needs (uv, No
 uv sync --extra dev
 uv run pytest                          # all tests, in parallel; -n0 in this process; -m "not geometry" skips builds
 uv run ruff check backend && uv run ruff format backend
+uv run lint-imports                    # hitlcad's own plugins (builtin/) and the rest import each other one way only
 (cd vscode-extension && npm test)      # extension unit tests
 (cd vscode-extension && npm run lint)  # ESLint: TypeScript's rules, React's rules of hooks
 (cd vscode-extension && npm run compile)  # extension and panel UI (ui/ → out/ui/)
@@ -90,7 +91,7 @@ What differs per platform is kept to the process boundaries, each with one rule:
   processes run in Python's UTF-8 mode (the extension starts the server with `PYTHONUTF8`, a
   build123d build runs `-X utf8`; Blender always does), and the `hitlcad` command, which an agent's
   hook or a terminal starts, sets its streams itself.
-- **Builds** (`backends/executor.py`) are limited the same way everywhere: a deadline, and memory
+- **Builds** (`execution/executor.py`) are limited the same way everywhere: a deadline, and memory
   measured with psutil. Only how a process tree is held differs: a process group on POSIX, a job
   object on Windows.
 - **Agent hooks** are started without a shell where the agent allows it (Claude Code's `args`), and

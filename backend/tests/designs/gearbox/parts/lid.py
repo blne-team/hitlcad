@@ -2,7 +2,7 @@
 
 from build123d import Align, BuildPart, Cylinder, Location, Locations, Mode, Pos
 
-from hitlcad.catalogs.bd_warehouse import ClearanceHole, bearing, frames, screw
+from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, bearing, frames, screw
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 UNDER = (Align.CENTER, Align.CENTER, Align.MAX)

@@ -24,11 +24,17 @@ import numpy as np
 
 from hitlcad.analysis.base import Context, ResultCache, result
 from hitlcad.analysis.coverage import Link, links, misplaced, top
-from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import Tolerances
+from hitlcad.kernel.errors import (
+    INTERFERENCE_CLEAR,
+    INTERFERENCE_EXPECTED,
+    INTERFERENCE_OVERLAP,
+    MEASURE_UNMEASURABLE,
+    Unmeasurable,
+)
 
 if TYPE_CHECKING:
     import manifold3d
@@ -55,7 +61,7 @@ def allowed(found: list[Link]) -> dict[frozenset[str], Allowance]:
         if getattr(link.source, "overlap", False):
             out[pair] = Allowance(f"the {link.source.address} mate declares it", link, "set")
         fit = getattr(link.source, "fit", None)
-        if fit is not None and {link.a.spec.kind, link.b.spec.kind} == {"hole", "shaft"}:
+        if fit is not None and {link.a.spec.round, link.b.spec.round} == {"hole", "shaft"}:
             measured = [f.measured.values.get("diameter") for f in (link.a, link.b)]
             if all(measured) and fit.allows_interference(sum(measured) / 2):  # type: ignore[arg-type]
                 out[pair] = Allowance(f"the {link.source.address} fit is an interference fit", link, "fit")
@@ -100,7 +106,7 @@ def _depth(piece: manifold3d.Manifold) -> float:
     closely, the median thickness straight through it."""
     import trimesh
 
-    from hitlcad.analysis.processes import wall_thickness
+    from hitlcad.geometry.walls import wall_thickness
 
     mesh = piece.to_mesh()
     solid = trimesh.Trimesh(mesh.vert_properties[:, :3], mesh.tri_verts)
@@ -114,6 +120,7 @@ def _depth(piece: manifold3d.Manifold) -> float:
 
 class Interference:
     name = "interference"
+    stage = "assembly"
     title = "Interference"
     summary = "No two parts overlap unless a joint says they should"
 
@@ -135,14 +142,23 @@ class Interference:
                 try:
                     shared = overlap(ctx.cache, a, fr.IDENTITY, b, fr.IDENTITY)
                 except Unmeasurable as e:  # an open mesh
-                    out.append(result(self.name, f"{a.path}+{b.path}", None, f"not measurable: {e}", [a.path, b.path]))
+                    out.append(
+                        result(
+                            self.name,
+                            MEASURE_UNMEASURABLE,
+                            f"{a.path}+{b.path}",
+                            None,
+                            f"not measurable: {e}",
+                            [a.path, b.path],
+                        )
+                    )
                     continue
                 if shared <= ctx.settings.overlap_mm3:
                     continue
                 allowance = ok_pairs.get(frozenset((a.path, b.path)))
                 excess = allowance and beyond(allowance, a, b, shared, ctx.settings, ctx.tol)
                 if allowance and not excess:
-                    out.append(result(self.name, f"{a.path}+{b.path}", True, f"overlap {shared:.2f} mm³, expected: "
+                    out.append(result(self.name, INTERFERENCE_EXPECTED, f"{a.path}+{b.path}", True, f"overlap {shared:.2f} mm³, expected: "
                                       f"{allowance.why}", [a.path, b.path], {"overlap_mm3": shared}, severity="info"))  # fmt: skip
                     continue
                 text, values = where(a.manifold ^ b.manifold)
@@ -150,7 +166,7 @@ class Interference:
                 if allowance and allowance.kind == "set":
                     unset[frozenset((a.path, b.path))] = cause
                 failed.append((len(out), a.path, b.path))
-                out.append(result(self.name, f"{a.path}+{b.path}", False, f"{a.path} and {b.path} overlap by "
+                out.append(result(self.name, INTERFERENCE_OVERLAP, f"{a.path}+{b.path}", False, f"{a.path} and {b.path} overlap by "
                                   f"{shared:.2f} mm³{text}" + (f"; {excess}" if excess else ""), [a.path, b.path],
                                   {"overlap_mm3": shared, **values}, cause=cause))  # fmt: skip
         # A fastener threaded into a part set where its hole is not cut overlaps the host for the same reason.
@@ -160,7 +176,7 @@ class Interference:
                 if cause := unset.get(frozenset((threaded.get(x, ""), y))):
                     out[n] = out[n].model_copy(update={"cause": cause})
         if not any(r.status == "fail" for r in out):
-            out.append(result(self.name, "interference", True, f"no unexpected overlaps among {len(leaves)} instances "
+            out.append(result(self.name, INTERFERENCE_CLEAR, "interference", True, f"no unexpected overlaps among {len(leaves)} instances "
                               f"({checked} pairs close enough to check)", [], {"pairs_checked": checked}))  # fmt: skip
         return out
 
@@ -169,7 +185,7 @@ def beyond(allowance: Allowance, a: Leaf, b: Leaf, shared: float, settings: Anal
     """How an expected overlap of two leaves goes beyond what declares it, or '' when it does not."""
     link = allowance.link
     if allowance.kind in ("fit", "touch"):
-        hole, shaft = (link.a, link.b) if link.a.spec.kind == "hole" else (link.b, link.a)
+        hole, shaft = (link.a, link.b) if link.a.spec.round == "hole" else (link.b, link.a)
         d, big = hole.measured.values["diameter"], shaft.measured.values["diameter"]
         length = min(hole.measured.values["length"], shaft.measured.values["length"])
         facets = hole.measured.uncertainty_mm + shaft.measured.uncertainty_mm + settings.mesh_tolerance_mm
@@ -188,7 +204,7 @@ def beyond(allowance: Allowance, a: Leaf, b: Leaf, shared: float, settings: Anal
         return ""
     host, inserted = (a, b) if a.path == link.a.instance else (b, a)
     radius = AXIS_MM
-    if link.a.spec.kind == "hole" and "diameter" in link.a.measured.values:
+    if link.a.spec.round == "hole" and "diameter" in link.a.measured.values:
         radius = max(link.a.measured.values["diameter"] / 2 - link.a.measured.uncertainty_mm - tol.position_mm, AXIS_MM)
     if (host.manifold ^ _axis_core(link.a.frame, inserted, radius)).volume() <= settings.overlap_mm3:
         return ""

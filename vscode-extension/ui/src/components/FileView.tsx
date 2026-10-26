@@ -7,6 +7,7 @@ import { type CadBounds, exactShapes } from "../lib/cadView";
 import { notifyHost, selectionMarker, selectionText } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { ExplodeSpread } from "./ExplodeSpread";
+import { SelectHint } from "./SelectHint";
 import { SelectionBox } from "./SelectionBox";
 
 /** Viewer for any model file on the server's machine, which the server converts for three-cad-viewer. */
@@ -64,9 +65,9 @@ export function FileView({ path }: { path: string }) {
         {loadError && <p className="viewport-message fail">Could not show {name}: {loadError}</p>}
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {data !== null && !loadError && !sel.items.length && (
-          <p className="viewport-hint select-hint">
+          <SelectHint>
             {exactShapes(data).size ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more.
-          </p>
+          </SelectHint>
         )}
         <div className="side">
           <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} />

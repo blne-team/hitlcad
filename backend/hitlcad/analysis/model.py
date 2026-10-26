@@ -8,6 +8,7 @@ so a component built earlier is loaded the same way as one built now.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -16,15 +17,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from hitlcad.analysis import cadview
-from hitlcad.analysis.features import BrepFeatures, Features, Hole, MeshFeatures, Unmeasurable
-from hitlcad.analysis.mesh import closed, load_mesh, measure, measure_union
 from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
-from hitlcad.core.design import DesignSpec
+from hitlcad.core.design import DesignSpec, PartSpec
 from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
-from hitlcad.core.structure import GearConnector, Measured, PartSpec, Tolerances, _Connector
+from hitlcad.core.structure import Connector, Measured, Tolerances
 from hitlcad.core.types import Value
+from hitlcad.geometry import cadview
+from hitlcad.geometry.features import BrepFeatures, Features, Hole, MeshFeatures
+from hitlcad.geometry.mesh import closed, load_mesh, measure, measure_union
+from hitlcad.kernel.errors import StructureError, Unmeasurable
 from hitlcad.materials import Material
 
 if TYPE_CHECKING:
@@ -32,7 +34,8 @@ if TYPE_CHECKING:
     import trimesh
 
     from hitlcad.analysis.base import ResultCache
-    from hitlcad.analysis.processes import Walls
+    from hitlcad.core.loops import Solver
+    from hitlcad.geometry.walls import Walls
 
 
 @dataclass(frozen=True)
@@ -40,10 +43,8 @@ class AnalysisSettings:
     overlap_mm3: float = field(metadata={"doc": "Bodies sharing less than this touch; they do not overlap"})
     mesh_tolerance_mm: float = field(metadata={"doc": "Chordal deviation of the meshes measured"})
     wall_samples: int = field(metadata={"doc": "Surface points probed for wall thickness"})
-
-
-class StructureError(LookupError):
-    """A name in design.json or assembly.py that does not resolve; reported by the structure analysis."""
+    solver: str = field(default="", metadata={"doc": "The loop solver's name (`Settings.solver`)"})
+    loop_solver: Solver | None = field(default=None, metadata={"doc": "That solver, None when no plugin gives it"})
 
 
 @dataclass
@@ -139,7 +140,7 @@ class PlacedFrame:
     part: PartGeometry
     owner: BuiltDesign
     connector: str
-    spec: _Connector
+    spec: Connector
     index: int
     frame: fr.Frame
     measured: Measured
@@ -176,7 +177,7 @@ class BuiltDesign:
             raise StructureError(f"no parameter {ref!r}")
         return self.values[ref]
 
-    def count(self, connector: _Connector) -> int:
+    def count(self, connector: Connector) -> int:
         value = connector.count if isinstance(connector.count, int) else self.nominal(connector.count)
         return int(value)
 
@@ -208,7 +209,10 @@ class BuiltDesign:
 
     def resolve(self, address: str) -> tuple[str, fr.Frame, str]:
         """One instance (possibly inside components): (canonical address, transform, part or component name)."""
-        path = InstancePath.parse(address)
+        try:
+            path = InstancePath.parse(address)
+        except ValueError as e:
+            raise StructureError(str(e)) from None
         design, transform, names = self, fr.IDENTITY, []
         for depth, segment in enumerate(path.segments):
             hits = design.select(segment)
@@ -282,7 +286,7 @@ class BuiltDesign:
     @cached_property
     def motion_plans(self) -> list[Any]:
         """The motion analysis's plans (`analysis.motion.plans`), shared by the analysis and the report."""
-        from hitlcad.analysis.motion import plans
+        from hitlcad.analysis.motion.plans import plans
 
         return plans(self)
 
@@ -290,7 +294,10 @@ class BuiltDesign:
 
     def frames(self, text: str) -> list[PlacedFrame]:
         """Every frame of a connector end, placed in this design's frame."""
-        end = End.parse(text)
+        try:
+            end = End.parse(text)
+        except ValueError as e:
+            raise StructureError(str(e)) from None
         name = end.owner.name
         if name in self.spec.components:
             if end.connector not in self.components[name].spec.exports:
@@ -329,14 +336,24 @@ class BuiltDesign:
                 except StructureError as e:
                     self.measured[(name, cname)] = [Measured(status="fail", detail=str(e)) for _ in frames]
                     continue
-                self.measured[(name, cname)] = [spec.measure(part.features, f, self.tolerances, nominals)
-                                                for f in frames]  # fmt: skip
+                self.measured[(name, cname)] = [self._measure(spec, part, f, nominals) for f in frames]
 
-    def nominals(self, spec: _Connector) -> dict[str, float]:
-        out: dict[str, float] = {k: float(self.nominal(ref)) for k, ref in spec.nominal_refs().items()}
-        if isinstance(spec, GearConnector):
-            out["internal"] = float(spec.internal)
-        return out
+    def _measure(self, spec: Connector, part: PartGeometry, frame: fr.Frame, nominals: dict[str, float]) -> Measured:
+        try:
+            return spec.measure(part.features, frame, self.tolerances, nominals)
+        except Unmeasurable as e:
+            return Measured(status="unverified", detail=str(e))
+        except Exception as e:  # the connector kind's own code: unmeasured, and the build goes on
+            from hitlcad.kernel.plugins import registry
+
+            logging.getLogger(__name__).exception("measuring %s failed", spec.kind)
+            found = registry()
+            return Measured(
+                status="unverified", detail=found.failed(found.origin(spec), "measuring it failed", e).message
+            )
+
+    def nominals(self, spec: Connector) -> dict[str, float]:
+        return {k: float(self.nominal(ref)) for k, ref in spec.nominal_refs().items()} | spec.fixed_nominals()
 
 
 # --------------------------------------------------------------------------- bodies for checks
@@ -387,7 +404,7 @@ class Body:
     def walls(self) -> Walls:
         """Its wall thickness; `Unmeasurable` where a part of it is not a closed mesh (`mesh.closed`): an open
         surface has no inside to measure across."""
-        from hitlcad.analysis.processes import wall_thickness
+        from hitlcad.geometry.walls import wall_thickness
 
         if not self.metrics.watertight:
             raise Unmeasurable(f"{self.name} is not a closed mesh: its walls cannot be measured")
@@ -468,18 +485,14 @@ class BuildBodies:
     def moved_gap(self, a: Body, b: Body) -> Moved | None:
         """The least gap between two bodies while a mate moves one against the other, as motion analysis
         sweeps it. None when no mate does."""
-        from hitlcad.analysis.motion import Plan, sweep
+        from hitlcad.analysis.motion import least_gaps
 
         pairs = {frozenset((p.path, q.path)) for p in a.leaves for q in b.leaves}
         found: Moved | None = None
-        for plan in self.built.motion_plans:
-            if not isinstance(plan, Plan):
+        for mate, least in least_gaps(self.built, self.settings, self.cache):
+            if frozenset((least.a, least.b)) not in pairs or found and found.gap_mm <= least.gap_mm:
                 continue
-            for least in sweep(plan, self.settings, self.cache).least:
-                if frozenset((least.a, least.b)) not in pairs or found and found.gap_mm <= least.gap_mm:
-                    continue
-                unit = "°" if least.kind == "angle" else " mm"
-                at = "in a full turn" if least.at is None else f"at {least.at:.1f}{unit}"
-                mate = plan.link.source.address
-                found = Moved(least.gap_mm, f"{at} of {mate}", least.complete, mate)
+            unit = "°" if least.kind == "angle" else " mm"
+            at = "in a full turn" if least.at is None else f"at {least.at:.1f}{unit}"
+            found = Moved(least.gap_mm, f"{at} of {mate}", least.complete, mate)
         return found

@@ -11,6 +11,7 @@ export type ParamSpec = Schemas["ParamSpec"];
 export type ParamValue = ParamSpec["value"];
 export type DesignBrief = Schemas["DesignBrief"];
 export type Revision = Schemas["Revision"];
+export type RevisionInfo = Schemas["RevisionInfo"];
 export type BuildReport = Schemas["BuildReport"];
 /** One finding of one analysis, naming the addresses it is about. */
 export type Result = Schemas["Result"];
@@ -20,10 +21,13 @@ export type Finding = Schemas["Finding"];
 export type Tally = Schemas["Tally"];
 export type Capabilities = Schemas["Capabilities"];
 export type AnalysisInfo = Schemas["AnalysisInfo"];
+export type ErrorKind = Schemas["ErrorKind"];
 /** A click in a 3D view: the surface point, and on B-rep builds the instance's face, edge or vertex it hit. */
 export type Pick = Schemas["Pick"];
 export type SelectionItem = Schemas["SelectionItem"];
 export type Pin = Schemas["Pin"];
+/** Where a range of motion was when a pin was placed. */
+export type PinMotion = Schemas["PinMotion"];
 export type DesignState = Schemas["DesignState"];
 
 /** One message of a design's event stream. */

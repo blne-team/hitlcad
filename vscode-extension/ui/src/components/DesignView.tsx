@@ -2,16 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, fileUrl } from "../api/client";
 import type { Pick, Revision } from "../api/types";
 import { useDesign } from "../hooks/useDesign";
+import { useShown } from "../hooks/useRevision";
 import { useSelection } from "../hooks/useSelection";
 import { useViewJson } from "../hooks/useViewJson";
-import { type CadMarker, type CadMotion, exactShapes } from "../lib/cadView";
-import { baseRevision, currentRevision, useDesignUi } from "../lib/designUi";
+import { type CadMarker, exactShapes } from "../lib/cadView";
+import { rangeAt, shown } from "../lib/motion";
+import { currentRevision, useDesignUi } from "../lib/designUi";
 import { deliveryStatus } from "../lib/delivery";
 import { toExtension } from "../lib/host";
 import { selectionMarker } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { ExplodeSpread } from "./ExplodeSpread";
 import { MotionControl } from "./MotionControl";
+import { SelectHint } from "./SelectHint";
 import { ReviewPanel } from "./ReviewPanel";
 import { SelectionBox } from "./SelectionBox";
 import { StatusLine } from "./StatusLine";
@@ -36,14 +39,13 @@ export function DesignView({ id }: { id: string }) {
   // A view error belongs to the view it came from: another revision's view starts without one
   const [viewError, setViewError] = useState<{ url: string | null; message: string } | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
-  const [motion, setMotion] = useState<CadMotion | null>(null);
   const [exploded, setExploded] = useState(false);
   const [spread, setSpread] = useState(1);
 
   const revisions = useMemo(() => state?.revisions ?? [], [state?.revisions]);
-  const revision = currentRevision(revisions, ui.revision, ui.configuration);
-  const revisionId = revision?.id ?? null;
-  const base = baseRevision(revisions, revision, ui.base);
+  const { info, revision, base } = useShown(id, revisions, ui);
+  const revisionId = info?.id ?? null;
+  const motion = useMemo(() => shown(revision, ui.motion), [revision, ui.motion]);
 
   const current = viewOf(id, revision);
   const { data, error: fetchError } = useViewJson(current.url);
@@ -58,7 +60,7 @@ export function DesignView({ id }: { id: string }) {
       // Pins move to each new build where their spot is found; a pin is drawn on the revision it is on.
       ...openPins
         .filter((p) => p.revision === revisionId)
-        .map((p) => ({ id: p.id, kind: "pin" as const, point: p.point, normal: p.normal, label: p.note, active: p.id === ui.activePin })),
+        .map((p) => ({ id: p.id, kind: "pin" as const, point: p.point, instance: p.instance ?? null, normal: p.normal, label: p.note, active: p.id === ui.activePin })),
       ...sel.items
         .filter((i) => i.revision === null || i.revision === revisionId)
         .map(selectionMarker),
@@ -73,7 +75,9 @@ export function DesignView({ id }: { id: string }) {
   const addPin = async (pick: Pick) => {
     setPinError(null);
     try {
-      const pin = await api.addPin(id, { ...pick, revision: revisionId });
+      const range = rangeAt(revision, ui.motion);  // the pick is as built; the pin says where the motion was
+      const motion = range && ui.motion && ui.motion.at !== range.current ? { pair: range.pair, kind: range.kind, at: ui.motion.at } : null;
+      const pin = await api.addPin(id, { ...pick, revision: revisionId, motion });
       setUi({ activePin: pin.id, tab: "pins" }, true); // the note is written in the Design view
       live.refresh();
     } catch (e) {
@@ -90,8 +94,8 @@ export function DesignView({ id }: { id: string }) {
     );
   }
 
-  const own = revisions.filter((r) => r.spec.configuration === ui.configuration);
-  const idx = revision ? own.findIndex((r) => r.id === revision.id) : -1;
+  const own = revisions.filter((r) => r.configuration === ui.configuration);
+  const idx = info ? own.findIndex((r) => r.id === info.id) : -1;
   const size = revision?.report.metrics?.size;
 
   return (
@@ -122,7 +126,7 @@ export function DesignView({ id }: { id: string }) {
             >
               ‹
             </button>
-            <span className="rev-label">{revision ? `Revision ${revision.id} of ${revisions.length}` : "No revisions yet"}</span>
+            <span className="rev-label">{info ? `Revision ${info.id} of ${revisions.length}` : "No revisions yet"}</span>
             <button
               type="button"
               className="icon-button"
@@ -170,8 +174,8 @@ export function DesignView({ id }: { id: string }) {
         )}
         {!current.url && (
           <div className="viewport-message">
-            {revision?.report.status === "failed" ? (
-              <p>Revision {revision.id} failed to build. The error is under Results.</p>
+            {info?.status === "failed" ? (
+              <p>Revision {info.id} failed to build. Results says why.</p>
             ) : state.building ? (
               <p>Building…</p>
             ) : (
@@ -183,18 +187,18 @@ export function DesignView({ id }: { id: string }) {
         {pinError && <p className="viewport-message fail">{pinError}</p>}
 
         {data !== null && !modelError && revision && revision.report.motions.length > 0 && (
-          <MotionControl key={revision.id} motions={revision.report.motions} onMotion={setMotion} />
+          <MotionControl key={revision.id} designId={id} revision={revision} watched={state.watched} at={ui.motion} onMove={(motion) => setUi({ motion })} />
         )}
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
         {!ui.placing && data !== null && !sel.items.length && (
-          <p className="viewport-hint select-hint">
+          <SelectHint>
             {exactShapes(data).size ? "Click a face, edge or vertex to select it; with the filter on Solid, a whole part." : "Click the model to select a point."} Shift-click adds more.
-          </p>
+          </SelectHint>
         )}
 
         <div className="side">
-          <ReviewPanel ctx={{ id, state, revision, ui, setUi, refresh: live.refresh }} />
+          <ReviewPanel ctx={{ id, state, revision, base, ui, setUi, refresh: live.refresh }} />
           <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null} />
         </div>
       </div>

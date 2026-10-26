@@ -1,41 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
-import type { BuildReport } from "../api/types";
-import type { CadMotion } from "../lib/cadView";
-
-type Range = BuildReport["motions"][number];
+import { useState } from "react";
+import { api } from "../api/client";
+import type { DesignState, Revision } from "../api/types";
+import type { MotionAt } from "../lib/designUi";
+import { extent, type MotionRange, rangeAt } from "../lib/motion";
 
 interface Props {
-  motions: Range[];
-  onMotion: (motion: CadMotion | null) => void;
+  designId: string;
+  revision: Revision;
+  watched: DesignState["watched"];
+  /** Where the slider is (`DesignUi.motion`): another revision's, or none, is as built. */
+  at: MotionAt | null;
+  onMove: (at: MotionAt | null) => void;
 }
 
-/** Move a mate's moving side through the range the build swept for collisions, in the 3D view. Keyed by the
- * revision: another revision's ranges start as built. */
-export function MotionControl({ motions, onMotion }: Props) {
-  const [chosen, setChosen] = useState(0);
-  const range = motions[Math.min(chosen, motions.length - 1)];
-  const [value, setValue] = useState(range?.current ?? 0);
-  const motion = useMemo<CadMotion | null>(
-    () =>
-      range && value !== range.current
-        ? { instances: range.moving, origin: range.origin, axis: range.axis, kind: range.kind, amount: range.sign * (value - range.current) }
-        : null,
-    [range, value],
-  );
-  useEffect(() => {
-    onMotion(motion);
-    return () => onMotion(null); // gone with its revision: the next one shows its parts as built
-  }, [motion, onMotion]);
+/** Move what a mate moves through the range the build swept for collisions, in the 3D view: gears it drives too, or
+ * the rest of its loop at the positions solved. */
+export function MotionControl({ designId, revision, watched, at, onMove }: Props) {
+  const motions = revision.report.motions;
+  const [picked, setPicked] = useState(0);
+  const moved = rangeAt(revision, at);
+  const range = moved ?? motions[Math.min(picked, motions.length - 1)];
   if (!range) return null;
+  const value = moved && at ? at.at : range.current;
   const unit = range.kind === "angle" ? "°" : " mm";
-  const [lo, hi] = range.continuous ? [range.current, range.current + 360] : [range.start, range.end];
+  const [lo, hi] = extent(range);
+  const move = (to: number) => onMove(to === range.current ? null : { revision: revision.id, pair: range.pair, kind: range.kind, at: to });
   return (
     <section className="motion-control" aria-label="Motion">
       {motions.length > 1 ? (
-        <select aria-label="Mate" value={chosen} onChange={(e) => {
-            const next = Number(e.target.value);
-            setChosen(next);
-            setValue(motions[next]?.current ?? 0);
+        <select aria-label="Mate" value={motions.indexOf(range)} onChange={(e) => {
+            setPicked(Number(e.target.value));
+            onMove(null);
           }}>
           {motions.map((m, i) => (
             <option key={`${m.pair}-${m.kind}`} value={i}>
@@ -47,14 +42,49 @@ export function MotionControl({ motions, onMotion }: Props) {
         <span className="muted tiny">{range.pair}</span>
       )}
       <input type="range" aria-label="Move along the mate" min={lo} max={hi} step={(hi - lo) / 200} value={value}
-        onChange={(e) => setValue(e.target.valueAsNumber)} />
+        onChange={(e) => move(e.target.valueAsNumber)} />
       <span className="tiny">
         {value.toFixed(1)}
         {unit}
       </span>
-      <button type="button" className="link-button" disabled={value === range.current} onClick={() => setValue(range.current)}>
+      <button type="button" className="link-button" disabled={value === range.current} onClick={() => onMove(null)}>
         As built
       </button>
+      {range.key && <LoopReview designId={designId} revision={revision} range={range} on={watched.find((w) => w.key === range.key)?.revision} />}
     </section>
+  );
+}
+
+/** A loop is checked only at the positions it was solved at: the human watches it move, and says so, to pass it
+ * (a new build, whose result rests on that); or takes it back. */
+function LoopReview({ designId, revision, range, on }: { designId: string; revision: Revision; range: MotionRange; on: number | undefined }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const result = revision.report.results.find((r) => r.analysis === "motion" && r.subject === range.mate);
+  const positions = result?.values.positions;
+  const review = (watch: boolean) => {
+    setBusy(true);
+    setError(null);
+    (watch ? api.watchMotion : api.unwatchMotion)(designId, revision.id, range.key)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+  return on !== undefined && result?.code === "motion.watched" ? (
+    <span className="tiny" title={result.detail}>
+      ✓ watched (rev {on}){" "}
+      <button type="button" className="link-button" disabled={busy} onClick={() => review(false)}>
+        Undo
+      </button>
+    </span>
+  ) : (
+    <span className="tiny" title={result?.detail}>
+      {result?.code === "motion.sampled" ? `clear at ${String(positions)} positions, not between them` : "checked at solved positions"}{" "}
+      {result?.code === "motion.sampled" && (
+        <button type="button" className="link-button" disabled={busy} onClick={() => review(true)}>
+          Watched it
+        </button>
+      )}
+      {error && <span className="fail"> {error}</span>}
+    </span>
   );
 }

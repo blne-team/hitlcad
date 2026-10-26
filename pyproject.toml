@@ -33,6 +33,9 @@ dependencies = [
   "py-lib3mf>=2.5.0; sys_platform == 'linux' and platform_machine == 'aarch64'",
   "psutil>=7",  # a build's memory, measured the same way on every platform
   "pywin32>=311; sys_platform == 'win32'",  # job objects: a build ends with everything it started
+  "pluggy>=1.5",  # plugins: hitlcad's own vocabulary, backends and outputs, and any installed
+  "packaging>=24",  # the version specifiers a design.json names its plugins with
+  "filelock>=3.16",  # one server to a data folder: it holds the folder's lock while it runs
 ]
 
 [project.optional-dependencies]
@@ -42,10 +45,27 @@ dev = [
     "httpx>=0.28",
     "ruff>=0.11",
     "pytest-xdist>=3",  # the tests in parallel: most of their time is builds and analyses of one design each
+    "hitlcad-lasercut",  # the example plugin (examples/plugins), installed so its tests run
+    "import-linter>=2.1",  # the layers: hitlcad's own plugins and the rest import each other only one way
 ]
 
 [project.scripts]
 hitlcad = "hitlcad.cli:run"
+
+# hitlcad's own plugins, registered as any other is: a design's vocabulary, the backends, catalogs, exporters
+# and materials (backend/hitlcad/kernel/plugins.py)
+[project.entry-points."hitlcad.plugins"]
+joints = "hitlcad.builtin.joints"
+gears = "hitlcad.builtin.gears"
+checks = "hitlcad.builtin.checks"
+processes = "hitlcad.builtin.processes"
+build123d = "hitlcad.builtin.build123d"
+blender = "hitlcad.builtin.blender"
+catalogs = "hitlcad.builtin.catalogs"
+exports = "hitlcad.builtin.exports"
+robot = "hitlcad.builtin.robot"
+solvers = "hitlcad.builtin.solvers"
+materials = "hitlcad.builtin.materials"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend/hitlcad"]
@@ -53,6 +73,13 @@ packages = ["backend/hitlcad"]
 [tool.uv]
 # Supply-chain cooldown: only resolve releases that have been public for two weeks.
 exclude-newer = "2026-10-08T00:00:00Z"
+
+[tool.uv.workspace]
+# A plugin outside hitlcad, as a worked example: the tests check it shows up without a change to hitlcad.
+members = ["examples/plugins/hitlcad-lasercut"]
+
+[tool.uv.sources]
+hitlcad-lasercut = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"
@@ -81,3 +108,48 @@ markers = [
 ]
 # A numeric warning (a division by zero, an invalid value) is a NaN on its way into a report: fail on it
 filterwarnings = ["error::RuntimeWarning"]
+
+# The layers, and hitlcad's own plugins apart from them: `uv run lint-imports` checks both. Each package imports only
+# those below it; packages on one line import neither each other.
+[tool.importlinter]
+root_packages = ["hitlcad"]
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Each layer imports only those below it"
+type = "layers"
+layers = [
+  "hitlcad.cli",
+  "hitlcad.api",
+  "hitlcad.app",
+  "hitlcad.services",
+  "hitlcad.workspace | hitlcad.store",
+  "hitlcad.build",
+  "hitlcad.agent | hitlcad.review | hitlcad.render",
+  "hitlcad.analysis",
+  "hitlcad.geometry | hitlcad.backends | hitlcad.exporters",
+  "hitlcad.execution",
+  "hitlcad.config",
+  "hitlcad.core | hitlcad.catalogs | hitlcad.materials",
+  "hitlcad.kernel | hitlcad.sdk",
+]
+
+[[tool.importlinter.contracts]]
+name = "hitlcad knows its own plugins only as it knows any: through the registry"
+type = "forbidden"
+source_modules = [
+  "hitlcad.kernel", "hitlcad.core", "hitlcad.config", "hitlcad.execution", "hitlcad.geometry", "hitlcad.backends",
+  "hitlcad.exporters", "hitlcad.catalogs", "hitlcad.materials", "hitlcad.analysis", "hitlcad.agent", "hitlcad.review",
+  "hitlcad.render", "hitlcad.build", "hitlcad.workspace", "hitlcad.store", "hitlcad.services", "hitlcad.app",
+  "hitlcad.api", "hitlcad.cli", "hitlcad.sdk",
+]
+forbidden_modules = ["hitlcad.builtin"]
+
+[[tool.importlinter.contracts]]
+name = "Plugins build on the domain and the measuring toolkit, not on the services and surfaces"
+type = "forbidden"
+source_modules = ["hitlcad.builtin"]
+forbidden_modules = [
+  "hitlcad.services", "hitlcad.api", "hitlcad.store", "hitlcad.workspace", "hitlcad.agent", "hitlcad.review",
+  "hitlcad.app", "hitlcad.cli", "hitlcad.build.pipeline",
+]

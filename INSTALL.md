@@ -108,6 +108,7 @@ prints the commands for both.
 | `hitlcad.serverCommand` | `["hitlcad","serve"]` | The command that starts it |
 | `hitlcad.serverCwd` | | Its working directory; a source checkout defaults to the workspace folder whose `pyproject.toml` is hitlcad |
 | `hitlcad.autoOpenPanel` | `open` | What to do when a design is rebuilt and its panel is not on screen |
+| `hitlcad.selectionHint` | `true` | Show the hint on how to select along the bottom of a 3D view; its × turns it off |
 
 ### Server environment
 
@@ -115,13 +116,14 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends (plugins via entry points) |
-| `HITLCAD_DATA_DIR` | `~/.hitlcad` | Design event logs and the full revision history |
+| `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends, of those plugins give |
+| `HITLCAD_DATA_DIR` | `~/.hitlcad` | The design histories (`hitlcad.db`) and every revision's files |
 | `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
 | `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
 | `HITLCAD_RENDER_TIMEOUT_S` | `120` | Deadline of each preview render (Blender) |
 | `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build process may use, with everything it starts |
 | `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
+| `HITLCAD_WARM_BUILDS` | `1` | Build processes each backend keeps started, its libraries loaded (about 400 MB each for build123d); `0` for none |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
 | `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
 | `HITLCAD_VERIFY_MOTION_STEPS` | `2000` | Most positions motion analysis checks per mate before it reports the motion unverified |

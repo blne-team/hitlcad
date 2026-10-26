@@ -1,6 +1,6 @@
 from build123d import Align, Box, BuildPart, Cylinder, Location, Locations, Mode, Pos
 
-from hitlcad.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, InsertHole, frames, heat_set_insert, screw
 
 MIN = (Align.CENTER, Align.CENTER, Align.MIN)
 

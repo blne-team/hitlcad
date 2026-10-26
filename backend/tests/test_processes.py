@@ -36,18 +36,19 @@ from build123d import (
     make_face,
 )
 
-from hitlcad.analysis.features import Unmeasurable
 from hitlcad.analysis.model import AnalysisSettings, Body, BuildBodies, Leaf, PartGeometry
-from hitlcad.core import frames as fr
-from hitlcad.core.checks import (
+from hitlcad.builtin.processes.processes import (
     CncMillingProcess,
     FdmProcess,
     InjectionMoldingProcess,
     ResinProcess,
     SheetMetalProcess,
 )
+from hitlcad.core import frames as fr
+from hitlcad.core.design import PartSpec
 from hitlcad.core.report import Reads
-from hitlcad.core.structure import PartSpec, Tolerances
+from hitlcad.core.structure import Tolerances
+from hitlcad.kernel.errors import Unmeasurable
 
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)

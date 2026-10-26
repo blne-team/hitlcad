@@ -13,12 +13,12 @@ from typing import Any
 import psutil
 import pytest
 
-from hitlcad.backends import runtime
-from hitlcad.backends.executor import LocalExecutor, _memory_exceeds
-from hitlcad.backends.runtime import ModelError, Runtime, plan
 from hitlcad.backends.subprocess_backend import _ended
 from hitlcad.build.cache import Inputs, PartCache
 from hitlcad.core.report import Reads
+from hitlcad.execution import runtime
+from hitlcad.execution.executor import LocalExecutor, _memory_exceeds
+from hitlcad.execution.runtime import ModelError, Runtime, plan
 
 from .conftest import write_design
 
@@ -69,8 +69,9 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
         },
     )
     rt = Runtime(bad, {"w": 1})
-    with pytest.raises(ModelError, match="cycle: a -> b -> a"):
+    with pytest.raises(ModelError, match="cycle: a -> b -> a") as cycle:
         rt.interface("a")
+    assert cycle.value.as_json()["code"] == "model.interface_cycle"
     with pytest.raises(ModelError, match="numbers, strings, booleans"):
         rt.interface("obj")
     assert [type(v) for v in rt.interface("counts")] == [int, float]  # numpy's numbers, as plain ones
@@ -81,10 +82,11 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
     try:
         rt.call_build("parts/y.py", "py")
     except ZeroDivisionError as e:
-        assert rt.describe(e).splitlines() == [
-            "  parts/y.py line 2, in build: return 1 / 0",
-            "ZeroDivisionError: division by zero",
-        ]
+        assert rt.failure(e, "parts/y.py") == {
+            "code": "model.exception",
+            "message": "  parts/y.py line 2, in build: return 1 / 0\nZeroDivisionError: division by zero",
+            "where": {"file": "parts/y.py", "line": 2},
+        }
     sys.path.remove(str(bad.resolve()))
 
 
@@ -128,7 +130,7 @@ async def gone(pid: int) -> bool:
 
 async def test_a_build_process_past_its_deadline_ends_with_what_it_started(tmp_path: Path) -> None:
     run = await LocalExecutor().run([sys.executable, "-c", GRANDCHILD + "; child.wait()"], tmp_path, timeout_s=1)
-    assert run.stopped == "exceeded the 1s time limit"
+    assert (run.stopped, run.limit) == ("exceeded the 1s time limit", "time")
     assert await gone(int(run.output.split()[0]))
 
 
@@ -173,7 +175,7 @@ async def test_the_memory_limit_is_reached_only_by_using_memory() -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows ends a build with its server through a job object")
 async def test_a_build_ends_itself_when_its_server_is_killed(tmp_path: Path) -> None:
     """A server killed outright cannot hold its builds' limits: each build ends itself once its server is gone."""
-    build = "import time; from hitlcad.backends import runtime; runtime.exit_with_parent(); time.sleep(30)"
+    build = "import time; from hitlcad.execution import runtime; runtime.exit_with_parent(); time.sleep(30)"
     server = (f"import os, subprocess, sys, time; build = subprocess.Popen([sys.executable, '-c', {build!r}], "
               "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(build.pid, flush=True); time.sleep(1); os._exit(0)")  # fmt: skip
     pid = int(subprocess.run([sys.executable, "-c", server], capture_output=True, text=True, check=True).stdout)
@@ -183,14 +185,19 @@ async def test_a_build_ends_itself_when_its_server_is_killed(tmp_path: Path) -> 
 def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Path, monkeypatch: Any) -> None:
     from importlib.metadata import version
 
-    from hitlcad.backends.build123d.backend import Build123dBackend
+    from hitlcad.builtin.build123d.backend import Build123dBackend
 
     def backend() -> Build123dBackend:
         return Build123dBackend(timeout_s=1, memory_mb=1, mesh_tolerance_mm=0.01, mesh_angular_tolerance=0.1)
 
     root = Path(runtime.__file__).parents[1]
     code = {p.relative_to(root).as_posix() for p in backend().code()}
-    assert {"backends/build123d/entry.py", "backends/runtime.py", "sdk/__init__.py", "catalogs/bd_warehouse.py"} <= code
+    assert {
+        "builtin/build123d/entry.py",
+        "execution/runtime.py",
+        "sdk/__init__.py",
+        "builtin/catalogs/bd_warehouse.py",
+    } <= code
     assert backend().libraries() == {"build123d": version("build123d"), "bd_warehouse": version("bd_warehouse")}
     catalog = tmp_path / "catalog.py"
     monkeypatch.setattr(Build123dBackend, "code", lambda self: [catalog])
@@ -198,3 +205,50 @@ def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Pat
     before = backend().fingerprint()
     catalog.write_text("A = 2", encoding="utf-8")
     assert backend().fingerprint() != before
+
+
+def test_every_code_the_build_process_writes_has_a_kind() -> None:
+    """The child process is standard library only, so it names its codes as strings: each one is in the catalog,
+    with the owner it says."""
+    from hitlcad.kernel.errors import catalog
+
+    kinds = catalog()
+    assert set(runtime.CODES) <= set(kinds)
+    assert {kinds[c].owner for c in runtime.CODES} == {"design", "hitlcad"}
+
+
+#: A build process as the entry scripts are: it waits for its job's path on stdin, then works in the job's folder.
+WAITING = ("import os, pathlib, sys, time; job = pathlib.Path(sys.stdin.readline().strip()); os.chdir(job.parent); "
+           "time.sleep(0.2); pathlib.Path('done').write_text(f'{os.getpid()} {os.environ[\"TMPDIR\"]}')")  # fmt: skip
+
+
+async def test_a_build_process_kept_started_takes_the_next_job_and_its_limits_count_from_it(tmp_path: Path) -> None:
+    executor, argv = LocalExecutor(warm=1), [sys.executable, "-c", WAITING]
+    executor.warm(argv)
+    for _ in range(100):
+        if executor._ready.get(tuple(argv)):
+            break
+        await asyncio.sleep(0.05)
+    (spare,) = executor._ready[tuple(argv)]
+    await asyncio.sleep(1.2)  # waiting longer than the job's deadline
+    job = tmp_path / "work" / "job.json"
+    job.parent.mkdir()
+    run = await executor.run_job(argv, job, timeout_s=1)
+    assert (run.returncode, run.stopped) == (0, None)
+    pid, tmp = (job.parent / "done").read_text(encoding="utf-8").split(" ")
+    assert int(pid) == spare.proc.pid and tmp == str(spare.folder)  # it ran in the job's folder, started elsewhere
+    assert not spare.folder.exists()  # the folder it started in is gone with it
+    for _ in range(100):  # the next one is already starting
+        if executor._ready.get(tuple(argv)):
+            break
+        await asyncio.sleep(0.05)
+    (following,) = executor._ready[tuple(argv)]
+    assert following.proc.pid != spare.proc.pid
+    await executor.close()
+    assert await gone(following.proc.pid) and executor._ready == {}
+
+
+async def test_a_build_process_not_kept_started_starts_with_its_job(tmp_path: Path) -> None:
+    executor, argv = LocalExecutor(warm=1), [sys.executable, "-c", WAITING]  # warm() never asked: the CLI's
+    run = await executor.run_job(argv, tmp_path / "job.json", timeout_s=30)
+    assert run.returncode == 0 and (tmp_path / "done").is_file() and executor._ready == {}

@@ -1,0 +1,158 @@
+{
+  "hitlcad": 2,
+  "name": "Four-bar linkage",
+  "backend": "build123d",
+  "parameters": [
+    {
+      "name": "crank_l",
+      "value": 15,
+      "min": 5,
+      "max": 40
+    },
+    {
+      "name": "coupler_l",
+      "value": 40,
+      "min": 10,
+      "max": 80
+    },
+    {
+      "name": "rocker_l",
+      "value": 30,
+      "min": 10,
+      "max": 60
+    },
+    {
+      "name": "ground_l",
+      "value": 40,
+      "min": 10,
+      "max": 80
+    },
+    {
+      "name": "crank_angle",
+      "value": 90,
+      "min": -180,
+      "max": 180,
+      "description": "the crank as assembled"
+    },
+    {
+      "name": "width",
+      "value": 6,
+      "min": 2,
+      "max": 12
+    },
+    {
+      "name": "thickness",
+      "value": 3,
+      "min": 1,
+      "max": 6
+    },
+    {
+      "name": "gap",
+      "value": 0.5,
+      "min": 0.1,
+      "max": 2,
+      "description": "between the links' layers"
+    },
+    {
+      "name": "post_h",
+      "value": 0,
+      "min": 0,
+      "max": 10,
+      "description": "a post the rocker swings into; 0: none"
+    },
+    {
+      "name": "post_angle",
+      "value": 30,
+      "min": -90,
+      "max": 90,
+      "description": "where the post stands, past the rocker as assembled"
+    }
+  ],
+  "ground": "base",
+  "parts": {
+    "base": {
+      "role": "the two pivots the linkage hangs from",
+      "file": "parts/links.py",
+      "material": "PLA",
+      "connectors": {
+        "a": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "d": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "crank": {
+      "role": "turns about A",
+      "file": "parts/links.py",
+      "material": "PLA",
+      "connectors": {
+        "a": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "b": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "coupler": {
+      "role": "joins the crank to the rocker",
+      "file": "parts/links.py",
+      "material": "PLA",
+      "connectors": {
+        "b": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "c": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    },
+    "rocker": {
+      "role": "swings about D",
+      "file": "parts/links.py",
+      "material": "PLA",
+      "connectors": {
+        "c": {
+          "kind": "frame",
+          "symmetry": "axial"
+        },
+        "d": {
+          "kind": "frame",
+          "symmetry": "axial"
+        }
+      }
+    }
+  },
+  "mates": [
+    {
+      "type": "revolute",
+      "a": "base.a",
+      "b": "crank.a"
+    },
+    {
+      "type": "revolute",
+      "a": "crank.b",
+      "b": "coupler.b",
+      "offset": 0.5
+    },
+    {
+      "type": "revolute",
+      "a": "coupler.c",
+      "b": "rocker.c",
+      "offset": 0.5
+    },
+    {
+      "type": "revolute",
+      "a": "base.d",
+      "b": "rocker.d"
+    }
+  ]
+}

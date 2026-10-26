@@ -10,10 +10,10 @@ import pytest
 import trimesh
 from build123d import Align, Box, BuildPart, Cone, Cylinder, Locations, Mode, PolarLocations, export_stl
 
-from hitlcad.analysis.features import BrepFeatures, MeshFeatures
-from hitlcad.analysis.mesh import load_mesh
 from hitlcad.core import frames as fr
 from hitlcad.core.structure import Tolerances
+from hitlcad.geometry.features import BrepFeatures, MeshFeatures
+from hitlcad.geometry.mesh import load_mesh
 
 pytestmark = pytest.mark.geometry
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
@@ -178,7 +178,7 @@ def test_a_hole_split_into_half_faces_is_one_hole() -> None:
     from build123d import Shape
     from OCP.ShapeUpgrade import ShapeUpgrade_ShapeDivideClosed
 
-    from hitlcad.analysis.geometry import face_text
+    from hitlcad.geometry.brep import face_text
 
     divide = ShapeUpgrade_ShapeDivideClosed((Box(30, 30, 10, align=ON) - Cylinder(1.5, 10, align=ON)).wrapped)
     divide.SetNbSplitPoints(1)

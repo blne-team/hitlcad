@@ -195,7 +195,7 @@ fails and names the nearest one found and what keeps it from being the frame's (
 hole on the frame's axis below its origin; nearest: Ø5.000 hole, axis 0.020 mm off (allowed 0.01),
 0.00° tilt"), so a frame cannot drift from its geometry.
 
-Every part is measured, whatever it is made of (`analysis/features.py`). Analyses ask a part's
+Every part is measured, whatever it is made of (`geometry/features.py`). Analyses ask a part's
 `Features`, and one of two adapters answers: on a B-rep part, its faces; on a mesh part, its
 triangles. Round features are probed in sections across the frame's axis, at stations along it: a
 hole with rays from the axis outwards, which land on its wall facing the axis, a shaft with rays
@@ -360,9 +360,9 @@ loads it: `mate_to(frame_on_part, frame_on_target)` returns the placement that m
 face a target frame (build123d Locations, Blender Matrices or 4 × 4 lists in, the same out), and
 `CatalogPart` is what providers return.
 
-**Catalog providers** (entry points `hitlcad.catalogs`; `search_catalog` searches them all):
+**Catalog providers** (plugins' `hitlcad_catalogs`; `search_catalog` searches them all; hitlcad's own):
 
-- `hitlcad.catalogs.bd_warehouse`, over [bd_warehouse](https://bd-warehouse.readthedocs.io/):
+- `hitlcad.builtin.catalogs.bd_warehouse`, over [bd_warehouse](https://bd-warehouse.readthedocs.io/):
   `screw(kind, size, length, standard)`, `nut(kind, size, standard)`, `washer(kind, size,
   standard)`, `heat_set_insert(size, standard)`, `bearing(kind, size, standard)`, and
   bd_warehouse's hole operations (`ClearanceHole`, `TapHole`, `InsertHole`, `ThreadedHole`,
@@ -372,7 +372,7 @@ face a target frame (build123d Locations, Blender Matrices or 4 × 4 lists in, t
   Screws also have `seat`, `shank`, `tip`; nuts and washers `bottom`, `top`, and `thread` or `bore`;
   inserts and bearings `bottom`, `top`, `outer` and `thread` or `bore`. `ClearanceHole`
   counterbores a screw's head unless `counter_sunk=False`, so its frames sit on the seat.
-- `hitlcad.catalogs.step`: `part(path, sha256=…, designation=…, material=…, connectors={…})`
+- `hitlcad.builtin.catalogs.step`: `part(path, sha256=…, designation=…, material=…, connectors={…})`
   loads a vendor STEP and fails when its checksum differs; its connectors are the part file's.
 
 The backend's guide (the `hitlcad-<backend>` skill) shows each in code.
@@ -414,18 +414,50 @@ motions it depends on. A `clearance` requirement on a pair that moves takes the 
 sweep, and says where.
 
 Rigid mates, fastener sets and rigid components join instances into rigid clusters; the other
-mates join clusters. Relations carry the motion on: a gear driven by a moving gear turns about its
-own mate's axis by the relation's ratio. Because hitlcad checks rather than solves:
+mates and the relations join clusters. A mate whose two ends are held rigidly anyway does not move
+(an informational pass). Relations carry a motion on: a gear driven by a moving gear turns about its
+own axis at the rate its relation holds (`Relation.coordinates`: each gear's turn against the line
+of their centres, so a gear on a moving arm turns by Willis's relation).
 
-- a mate whose two ends are held rigidly anyway does not move (an informational pass);
-- a mate inside a closed loop of mates moves only together with the rest of the loop, and is
-  reported `unverified`;
-- a motion coupled by a relation to parts that cannot move with it (a planet meshing with a fixed
-  ring) is reported `unverified`.
+### Loops
 
-A planetary gearbox is therefore not swept, and says so; a hinge, a slide or a gear train that is a
-tree is. The report lists each sweepable range (axis, range, moving instances), which the panel's
-motion slider moves.
+A block of mates and relations that moves only together is a loop: a closed loop of mates (a
+four-bar, a slider-crank), or a relation no turn about a fixed axis can hold (a planet on a moving
+carrier meshing with a fixed ring). A loop is swept once, by a loop solver (`hitlcad_solvers`;
+`HITLCAD_SOLVER`, hitlcad's own `least_squares` by default), driven by one of its mates: the first
+with `limits`, through them; else the first whose full turn the solver completes; else the first.
+The solver proposes positions; hitlcad checks every one: each mate still holds what its type
+`holds` of b's frame in a's, each relation its coupling from as assembled, within the verification
+tolerances, and no point has moved more than 0.5 mm since the position before, so the positions show
+the motion and a jump to the loop's other way of closing is refused. A part that only slides along
+or turns about its own axis without moving anything else (a gear sliding on its shaft) is held
+where it sits, and not counted as a freedom.
+
+At each position every pair the loop moves is measured as the exact sweep measures it, round parts
+about a mate's axis left out where one of the pair turns against the other on it. Every position is
+shown clear, but what happens between two of them is not:
+
+- a pair that overlaps at a position is a collision (`motion.collision`), at that position;
+- a loop that goes no further than a mate's `limits` (it locks at a dead point), or takes a mate
+  past its own, fails (`motion.locked`): "the loop goes no further than 124.5° on the way to 180°:
+  limits.angle [0, 180] run past it; make them [0, 124.4]". Without limits a lock is just how far
+  the loop goes;
+- a loop clear at every position is `motion.sampled` (unverified): "base.a ↔ crank.a moves a full
+  turn: clear at 243 solved positions, no point moving more than 0.51 mm between them; between them
+  unchecked". The human watches it move in the panel and says so; the build that follows passes it
+  (`motion.watched`, "watched in the panel on revision 3"). The watch is of the sweep: any change to
+  the loop, or to what it moves past, leaves it unwatched;
+- a loop the solver cannot move from where it sits, or a solver that cannot take it (no solver
+  installed, a relation type it does not know), is `motion.loop` (unverified), saying why.
+
+Every mate of a loop takes its result from the one sweep, with the range it moves through
+("moves 77.4 … 141.4° with its loop, driven by base.a ↔ crank.a"), and shares the loop's cause, so a
+loop is one problem.
+
+The report lists each range and what it moves, each set of instances about or along its own axis at
+its own rate, or a loop's positions (at most 400 of those solved), which the panel's motion slider
+moves. A pin placed with the slider moved records where it was (`Pin.motion`), and selecting the pin
+shows it there again.
 
 ## Analyses on every build
 
@@ -439,7 +471,7 @@ motion slider moves.
 | Fastener sets | each stack | coaxial, seated, ISO 273 clearance, thread size, engagement, free space past the tip |
 | Coverage | the instances | floating instances |
 | Interference | each pair of placed instances | overlap volume, and where it is (pieces, box, depth), except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it, and within what the mate allows; pairs inside a component are its own build's |
-| Motion | each mate with a range | the first contact each way and the limit to change, or why it is not analysed |
+| Motion | each mate with a range | the first contact each way and the limit to change; a loop's at the positions solved, which the human watches; or why it is not analysed |
 | Manufacturing | each made part, in its own frame | the process's checks: FDM (walls; overhangs, each region bridged between two supports up to `max_bridge_mm` or held at its edge, reported, not failed, with `supports`; bed contact, the base's outline against the part's seen from above and its height against the base's narrowest width, unless `brim`), resin (walls, hollows without a drain at least `min_drain_mm` across), CNC milling (inside corners against the tool, pocket depth against the cutter that finishes each corner, faces with no clear path up), sheet metal (thickness, the inside radius of each bend), injection molding (draft, undercuts along the pull, thick sections against the median wall); each failure lists where |
 | Requirements | as declared | pass, fail or unverified |
 
@@ -474,7 +506,7 @@ about, and the report (`BuildReport.problems`) groups the results that do not pa
 | `overlap:A\|B` | instances A and B share volume where they sit | interference (an overlap nothing expects, or more than a joint allows); motion (a range left unchecked only because of it); a `clearance` requirement between A and B; a mate whose fit measures the shaft larger than its hole; a fastener that bottoms out against B |
 | `contact:M:A\|B` | moving mate M brings A against B | motion (its first contacts, when all are A and B); a `clearance` requirement that comes to no gap through M |
 | `mate:M:A\|B` | mate M's frames on A and B disagree | mates; interference, for an overlap of the one M puts elsewhere (the end further from ground) |
-| `loop:M1,M2,…` | the mates close a loop of motion, not analysed without a solver | motion, for each mate in the loop |
+| `loop:L1,L2,…` | those mates (by their frames) close a loop of motion, swept as one | motion, for each mate in the loop |
 
 Instances are named by their top-level instance, so a component's leaves meet the requirements
 that name the component. An overlap of a fastener in the host of the insert it is threaded into,
@@ -563,7 +595,7 @@ agent's own tools (reviewed as diffs); no tool edits them.
 | `measure_geometry(path, a, b, revision)` | distance, angle and parallel gap between two addresses |
 | `resolve_pins(path, pin_ids, reply)` | mark pins addressed |
 
-**The design graph** (`graph.py`) is a projection of design.json, the latest build report of the
+**The design graph** (`agent/graph.py`) is a projection of design.json, the latest build report of the
 configuration explored and the event log. Without a focus, `explore_design` gives the overview:
 counts, components used and designs using this one, configurations, staleness (files changed since
 the build), its problems, open pins, the selection, the tally, the
@@ -576,7 +608,8 @@ reads were recorded as the code ran. Answers are bounded by `explore_limit`, the
 ## The panel
 
 - **3D editor**: the assembly, instances named in the tree; picks and pins by instance and
-  connector; the configuration on screen; a motion slider per range of motion.
+  connector; the configuration on screen; a motion slider per range of motion, which for a loop
+  says what was checked and takes the human's watch.
 - **Structure**: parts and components as nodes, mates, relations and fastener sets as edges,
   coloured by their results (laid out with dagre); a click selects the part's instance.
 - **Parameters** with configurations; **Changes**; **Results**: the problems and the tally the agent
@@ -589,9 +622,10 @@ change is measured on:
 
 | Design | Exercises | What its build reports |
 | --- | --- | --- |
-| [gearbox](../backend/tests/designs/gearbox/) | gears in a set file, a ring gear, shaft fits, a bearing seat, catalog bearing, inserts and screws, a simplified vendor motor, a stack requirement, a configuration | one failing mate: `motor.shaft+sun.bore`, fit 0.200 mm on a 0 … 0.1 fit, because `shaft_clearance` is added to the bore's radius; FDM warnings on the housing's pilot recess and the carrier; motion not analysed (a planetary is a closed loop); the 4:1 and 5:1 configurations both mesh |
+| [gearbox](../backend/tests/designs/gearbox/) | gears in a set file, a ring gear, shaft fits, a bearing seat, catalog bearing, inserts and screws, a simplified vendor motor whose rotor turns in it, the sun keyed to its D-shaft, a stack requirement, a configuration | one failing mate: `rotor.shaft+sun.bore`, fit 0.200 mm on a 0 … 0.1 fit, because `shaft_clearance` is added to the bore's radius; FDM warnings on the housing's pilot recess and the carrier; the planetary solved as a loop, its carrier turning a quarter of the rotor's turn, clear at every position solved; the 4:1 and 5:1 configurations both mesh |
 | [enclosure](../backend/tests/designs/enclosure/) | face mates, heat-set inserts by `InsertHole` (`overlap`), fastener sets, BOM, 3MF, URDF and SDF | everything verifies; the `wide` configuration misses the 50 mm envelope requirement |
 | [hinge](../backend/tests/designs/hinge/) | a cylindrical mate with angle limits, motion | the lid hits the stop post at −99.0°, short of its −100° limit; without the post it sweeps clear |
+| [linkage](../backend/tests/designs/linkage/) | a four-bar: a closed loop of revolute mates | the crank turns a full turn and the rocker swings 64.0°, clear at every position solved; a post in the rocker's way is hit; a shorter coupler locks the crank at 124.5°, past its exact 124.2° by what the joints' position tolerance lets it stretch |
 | [shelf](../backend/tests/designs/shelf/) | a component placed twice, bindings, exports, a flexible component's motion at the parent's level, an indented BOM | each box's hinge collision found at the shelf's level |
 
 Seeded faults in `backend/tests/test_build.py` (a screw too long, a lid placed 0.2 mm off, an
@@ -600,19 +634,23 @@ caught by the analysis that owns them.
 
 ## Extension points
 
+Every member below is a plugin's contribution (hitlcad's own are in `hitlcad.builtin`); a design
+names the plugins it needs beyond hitlcad's own in `plugins`. How to write one: [plugins.md](plugins.md).
+
 | Extension point | Kind | A member provides |
 | --- | --- | --- |
-| CAD backend | `CADBackend` / `SubprocessBackend`, entry points `hitlcad.backends` | plan and part builds through the model runtime, an authoring guide, `brep` |
-| Connector kind | `ConnectorSpec` union | its fields and `measure(shape, frame, tol, nominals)` |
-| Mate type | `MateSpec` union | its free motion and `verify(fa, fb, symmetry, tol)` |
-| Relation type | `RelationSpec` union | the kinds it joins, `verify`, `ratio` |
-| Requirement check | `RequirementCheck` union | `verify(build)`, and `cause(build)` when another analysis sees its failure too |
-| Manufacturing process | `Manufacturing` union | `checks(body)`, `allowance(feature)` |
-| Analysis | `Analysis` protocol, `analysis.base.default_analyses` | `title`, `summary`, `run(ctx) -> [Result]` |
-| Catalog provider | `CatalogProvider`, entry points `hitlcad.catalogs` | helpers returning `CatalogPart`s, `search` |
-| Exporter | `Exporter`, entry points `hitlcad.exporters` | `title`, `summary`, `export(built, report, out_dir)` |
-| Material | `materials.json` in a project | density, processes, minimum thread engagement |
-| Executor, renderer, store | protocols | as before |
+| CAD backend | `CADBackend` / `SubprocessBackend`, hook `hitlcad_backends` | plan and part builds through the model runtime, an authoring guide, `brep` |
+| Connector kind | `Connector`, hook `hitlcad_connectors` | its fields, `measure(features, frame, tol, nominals)`, `round` and `owns` where they apply |
+| Mate type | `Mate`, hook `hitlcad_mates` | its free motion, what it `holds`, and `verify(fa, fb, symmetry, tol)` |
+| Relation type | `Relation`, hook `hitlcad_relations` | the kinds it joins, `verify`, `ratio`, `coordinates` |
+| Requirement check | `Check`, hook `hitlcad_checks` | `verify(build)`, its `hint`, and `cause(build)` when another analysis sees its failure too |
+| Manufacturing process | `Process`, hook `hitlcad_processes` | `checks(body)`, `allowance(feature)`, its `findings` |
+| Analysis | `Analysis`, hook `hitlcad_analyses` | `stage`, `title`, `summary`, `run(ctx) -> [Result]` |
+| Catalog provider | `CatalogProvider`, hooks `hitlcad_catalogs` and `hitlcad_model_packages` | helpers returning `CatalogPart`s, `search` |
+| Exporter | `Exporter`, hook `hitlcad_exporters` | `title`, `summary`, `export(built, report, out_dir)` |
+| Loop solver | `Solver`, hook `hitlcad_solvers` | `supports(problem)`, `trace(problem, start, end, budget)`: positions, which hitlcad checks |
+| Material | `materials.json`, hook `hitlcad_materials`, or in a project | density, processes, minimum thread engagement |
+| Executor, renderer, store | protocols | one implementation each |
 
 ## What's next
 

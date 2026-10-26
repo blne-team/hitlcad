@@ -12,12 +12,13 @@ from typing import Any
 from hitlcad.analysis.base import Context, pair, result, structural
 from hitlcad.analysis.fasteners import stacks
 from hitlcad.analysis.mates import agree
-from hitlcad.analysis.model import BuiltDesign, PlacedFrame, StructureError
+from hitlcad.analysis.model import BuiltDesign, PlacedFrame
 from hitlcad.analysis.relations import relation_pairs
 from hitlcad.core import frames as fr
 from hitlcad.core.address import InstancePath
 from hitlcad.core.report import Cause, Result
-from hitlcad.core.structure import _Mate
+from hitlcad.core.structure import Mate
+from hitlcad.kernel.errors import COVERAGE_FLOATING, COVERAGE_GROUNDED, StructureError
 
 
 @dataclass
@@ -122,7 +123,7 @@ def misplaced(built: BuiltDesign, found: list[Link]) -> dict[str, str]:
     out: dict[str, str] = {}
     for link in found:
         mate = link.source
-        if not isinstance(mate, _Mate) or agree(mate, link.a, link.b, built.tolerances).passed:
+        if not isinstance(mate, Mate) or agree(mate, link.a, link.b, built.tolerances).passed:
             continue
         a, b = top(link.a.instance), top(link.b.instance)
         da, db = far.get(a, len(far)), far.get(b, len(far))
@@ -134,6 +135,7 @@ def misplaced(built: BuiltDesign, found: list[Link]) -> dict[str, str]:
 
 class Coverage:
     name = "coverage"
+    stage = "assembly"
     title = "Coverage"
     summary = "Nothing floats: mates, relations and fastener sets connect every instance to ground"
 
@@ -148,9 +150,9 @@ class Coverage:
         except StructureError:
             return out
         floating = [a for a in instances if a not in reached]
-        out += [result(self.name, a, False, f"{a} is floating: no mate, relation or fastener set connects it to "
+        out += [result(self.name, COVERAGE_FLOATING, a, False, f"{a} is floating: no mate, relation or fastener set connects it to "
                        f"{built.spec.ground}", [a]) for a in floating]  # fmt: skip
         if not floating:
-            out.append(result(self.name, "ground", True, f"all {len(instances)} instances connect to {built.spec.ground}",
+            out.append(result(self.name, COVERAGE_GROUNDED, "ground", True, f"all {len(instances)} instances connect to {built.spec.ground}",
                               instances))  # fmt: skip
         return out

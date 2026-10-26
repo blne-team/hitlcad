@@ -13,8 +13,8 @@ interface Props {
 /** The configurations of the design on screen, and its parameters (the default configuration) to tune. Keyed by
  * the revision: what was typed is a draft over the revision on screen, kept while the design's state refreshes. */
 export function ParametersPanel({ design, revision, configuration, setConfiguration }: Props) {
-  const specs = revision?.spec.design.parameters ?? [];
-  const configurations = revision?.spec.design.configurations ?? {};
+  const specs = revision?.spec?.design.parameters ?? [];
+  const configurations = revision?.spec?.design.configurations ?? {};
   const original = Object.fromEntries(specs.map((p) => [p.name, p.value]));
   // null: a number field left empty, which holds back rebuilding until it has a value again
   const [values, setValues] = useState<Record<string, ParamValue | null>>(original);
@@ -44,7 +44,7 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
 
   const show = async (name: string | null) => {
     setConfiguration(name);
-    if (design.revisions.some((r) => r.spec.configuration === name)) return;
+    if (design.revisions.some((r) => r.configuration === name)) return;
     try {
       await api.build(design.id, name); // a configuration never built: build it
     } catch (e) {

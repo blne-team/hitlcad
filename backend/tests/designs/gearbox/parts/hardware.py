@@ -1,6 +1,6 @@
 """Bought parts: the output bearing, the lid inserts, the screws."""
 
-from hitlcad.catalogs.bd_warehouse import bearing, heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import bearing, heat_set_insert, screw
 
 
 def build(p, i):

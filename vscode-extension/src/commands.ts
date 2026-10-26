@@ -224,8 +224,10 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
       vscode.window.setStatusBarMessage(`hitlcad: revision ${rev.id} built in ${rev.report.duration_s.toFixed(1)} s`, 5000);
       return;
     }
-    const first = (rev.report.error ?? "unknown error").split("\n").slice(-1)[0];
-    const choice = await vscode.window.showErrorMessage(`hitlcad: revision ${rev.id} failed: ${first}`, "Show Panel");
+    const problem = rev.report.problems[0];
+    const lead = problem ? rev.report.results[problem.findings[0]!.results[0]!] : undefined;
+    const why = lead ? `${lead.subject}: ${lead.detail.split("\n").slice(-1)[0]}` : "no result says why";
+    const choice = await vscode.window.showErrorMessage(`hitlcad: revision ${rev.id} failed: ${why}`, "Show Panel");
     if (choice) await panels.show(design);
   });
 

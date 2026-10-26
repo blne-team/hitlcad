@@ -6,20 +6,20 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from hitlcad.analysis.anchors import AnchorSettings
 from hitlcad.analysis.base import Analysis, default_analyses
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.build.pipeline import BuildPipeline
 from hitlcad.config import Settings, get_settings
-from hitlcad.designs.watcher import FolderWatcher
 from hitlcad.exporters import Exporter, discover
 from hitlcad.render.base import Renderer, preview_renderer
-from hitlcad.service.builds import BuildService
-from hitlcad.service.context import ContextFeed
-from hitlcad.service.designs import DesignService
-from hitlcad.service.explore import ExploreService
-from hitlcad.service.feedback import FeedbackService
-from hitlcad.store.fs import FileDesignStore
+from hitlcad.review.anchors import AnchorSettings
+from hitlcad.services.builds import BuildService
+from hitlcad.services.context import ContextFeed
+from hitlcad.services.designs import DesignService
+from hitlcad.services.explore import ExploreService
+from hitlcad.services.feedback import FeedbackService
+from hitlcad.services.watcher import FolderWatcher
+from hitlcad.store.sqlite import SqliteStore
 
 
 def build_pipeline(
@@ -62,7 +62,7 @@ class HitlCad:
         settings = settings or get_settings()
         pipeline = build_pipeline(settings, registry=registry, renderer=renderer, analyses=analyses,
                                   exporters=exporters)  # fmt: skip
-        designs = DesignService(FileDesignStore(settings.designs_dir), pipeline.registry, settings.folders_file)
+        designs = DesignService(SqliteStore(settings.data_dir), pipeline.registry, settings.loaded_revisions)
         feedback = FeedbackService(designs, AnchorSettings(reach=settings.anchor_reach, tie=settings.anchor_tie,
                                                            aligned_deg=settings.anchor_aligned_deg),
                                    settings.loaded_builds)  # fmt: skip
@@ -71,8 +71,13 @@ class HitlCad:
                    ContextFeed(designs), FolderWatcher(designs, builds))  # fmt: skip
 
     def start(self) -> None:
+        for backend in self.registry.all():
+            backend.warm()
         self.watcher.start()
 
     async def shutdown(self) -> None:
         await self.watcher.stop()
         await self.builds.stop()
+        for backend in self.registry.all():
+            await backend.close()
+        self.designs.store.close()

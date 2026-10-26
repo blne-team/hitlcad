@@ -5,6 +5,8 @@ export type PanelView = { name: "design"; id: string } | { name: "inspector"; id
 export interface PanelConfig {
   server: string;
   view: PanelView;
+  /** Whether to show the hint on how to select (`hitlcad.selectionHint`). */
+  selectionHint: boolean;
 }
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

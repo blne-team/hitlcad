@@ -9,9 +9,9 @@ from typing import Protocol
 
 from PIL import Image, ImageDraw, ImageFont
 
-from hitlcad.backends.executor import Executor, LocalExecutor
 from hitlcad.config import Settings
 from hitlcad.core.report import MeshMetrics
+from hitlcad.execution.executor import Executor, LocalExecutor
 
 ENTRY = Path(__file__).with_name("blender_entry.py")
 PREVIEW_FILE = "preview.png"

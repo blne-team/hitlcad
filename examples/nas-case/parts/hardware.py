@@ -1,7 +1,7 @@
 """Screws and heat-set inserts from bd_warehouse. Each fastener set has its own screw and insert parts, as a set's
 screws and inserts are all the instances of its parts."""
 
-from hitlcad.catalogs.bd_warehouse import heat_set_insert, screw
+from hitlcad.builtin.catalogs.bd_warehouse import heat_set_insert, screw
 
 SETS = {  # joint -> the screw that closes it
     "seam": "seam",

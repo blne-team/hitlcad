@@ -20,6 +20,8 @@ type UiMessage =
   | { kind: "copy" }
   /** Toggle VS Code's Zen mode: the model on the whole screen. */
   | { kind: "fullscreen" }
+  /** The human closed the hint on how to select: stop showing it. */
+  | { kind: "hideSelectionHint" }
   /** Save a copy of a revision's file where the human chooses. */
   | { kind: "save"; file: RevisionFile };
 
@@ -33,6 +35,7 @@ export function parseUiMessage(m: unknown): UiMessage | null {
   if (m.type === "hitlcad.selection" && typeof m.text === "string") return { kind: "selection", text: m.text };
   if (m.type === "hitlcad.copy") return { kind: "copy" };
   if (m.type === "hitlcad.fullscreen") return { kind: "fullscreen" };
+  if (m.type === "hitlcad.hideSelectionHint") return { kind: "hideSelectionHint" };
   if (m.type === "hitlcad.saveFile" && typeof m.design === "string" && typeof m.revision === "number" && typeof m.path === "string" && typeof m.name === "string") {
     return { kind: "save", file: { design: m.design, revision: m.revision, path: m.path, name: m.name } };
   }
