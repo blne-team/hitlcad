@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hitlcad"
-version = "0.1.0"
+version = "0.1.1"
 description = "Parametric CAD for coding agents: build123d and Blender designs reviewed in VS Code"
 requires-python = ">=3.11,<3.14"
 dependencies = [

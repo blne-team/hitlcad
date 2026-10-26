@@ -2,7 +2,7 @@
   "name": "hitlcad",
   "displayName": "hitlcad",
   "description": "Human-in-the-loop CAD: design folders that Claude Code and Codex edit, with a live 3D review panel.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "hitlcad-local",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -138,11 +138,11 @@
           "description": "Working directory for the server command. Optional for the installed tool; for a source checkout it defaults to the workspace folder whose pyproject.toml is named hitlcad."
         },
         "hitlcad.selectionHint": {
-        "type": "boolean",
-        "default": true,
-        "description": "Show the hint along the bottom of a 3D view on how to select; its × turns it off."
-      },
-      "hitlcad.autoOpenPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the hint along the bottom of a 3D view on how to select; its × turns it off."
+        },
+        "hitlcad.autoOpenPanel": {
           "type": "string",
           "enum": [
             "open",
