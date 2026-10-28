@@ -35,6 +35,7 @@ from hitlcad.core.structure import Axis, Mate, Relation, Tolerances, symmetry_of
 from hitlcad.kernel.errors import MOTION_HELD, StructureError
 
 if TYPE_CHECKING:
+    from hitlcad.analysis.motion.path import Traced
     from hitlcad.analysis.motion.sweep import Swept
 
 NAME = "motion"
@@ -105,6 +106,7 @@ class Plan:
     driven: list[FreeMotion]
     world: World
     swept: Swept | None = None  # once `sweep` has run
+    traced: Traced | None = None  # once `path.positions` has run
 
     @property
     def link(self) -> Link:
@@ -272,7 +274,7 @@ def _inputs(world: World) -> tuple[list[FreeMotion], set[FreeMotion], dict[FreeM
     motions = [FreeMotion(k, kind) for k in world.moving_links for kind in k.source.free_motion]
     if not motions:
         return [], set(), {}, []
-    block = mechanism(world)
+    block = mechanism(world, generic=True)
     jac, rates = block.jacobians()
     _, s, vt = np.linalg.svd(jac)
     free = vt[int((s > 1e-7 * max(float(s[0]), 1.0)).sum()) :].T  # what the mates and relations leave free
@@ -317,9 +319,11 @@ def _inputs(world: World) -> tuple[list[FreeMotion], set[FreeMotion], dict[FreeM
 
 
 def mechanism(world: World, clusters: list[str] | None = None, given: list[str] | None = None,
-              driver: FreeMotion | None = None) -> Block:  # fmt: skip
+              driver: FreeMotion | None = None, generic: bool = False) -> Block:  # fmt: skip
     """A block of `clusters` (every moving one when None) with the mates and relations that touch them, `given` the
-    poses of those, and the input's mate as its driver where it is one of them."""
+    poses of those, and the input's mate as its driver where it is one of them. `generic`: each relation's law a
+    straight line at its steepest slope, so what the block couples does not hang on where it sits (a cam on its
+    base circle, which as assembled does not lift its follower, still drives it)."""
     find, tol = world.clusters.find, world.tolerances
     if clusters is None:
         clusters = sorted({find(e.instance) for k in [*world.moving_links, *world.relations] for e in (k.a, k.b)}
@@ -341,7 +345,8 @@ def mechanism(world: World, clusters: list[str] | None = None, given: list[str] 
         rel: Relation = k.source
         axes = rel.axes(k.a.frame, k.b.frame)
         relations.append(BlockRelation(link_label(k), rel, find(k.a.instance), find(k.b.instance), k.a.frame,
-                                       k.b.frame, world.laws[id(k)], (axes[0].kind, axes[1].kind),
+                                       k.b.frame, _generic(world.laws[id(k)]) if generic else world.laws[id(k)],
+                                       (axes[0].kind, axes[1].kind),
                                        rel.tolerance or tol.position_mm))  # fmt: skip
     at = next((i for i, k in enumerate(links) if driver is not None and k is driver.link), None)
     return Block(clusters, given or [], mates, relations, at, driver.kind if driver else "angle",
@@ -431,12 +436,11 @@ def _place(
             known, c = (ca, cb) if from_a else (cb, ca)
             if c in forced or not isinstance(placed[known], Drive) or (not from_a and world.laws[id(r)].one_way):
                 continue
-            along = r.source.axes(r.a.frame, r.b.frame)[1 if from_a else 0].kind
+            axis = r.source.axes(r.a.frame, r.b.frame)[1 if from_a else 0]
             anchors = [k for k in world.moving_links if c in (find(k.a.instance), find(k.b.instance))
-                       and (find(k.a.instance) if find(k.b.instance) == c else find(k.b.instance)) in placed]  # fmt: skip
-            if len(anchors) != 1 or placed[_other(anchors[0], c, find)] is not _STAYS:
-                continue
-            if any(FreeMotion(anchors[0], kind) not in held for kind in anchors[0].source.free_motion if kind != along):
+                       and _other(k, c, find) in placed]  # fmt: skip
+            if not anchors or not all(placed[_other(k, c, find)] is _STAYS and _allows(world, k, axis, held)
+                                      for k in anchors):  # fmt: skip
                 continue
             drive = _carried(world, r, {known: placed[known]}, from_a)  # type: ignore[dict-item]
             if drive is None:
@@ -454,6 +458,23 @@ def _place(
         stage = Stage(members, block=mechanism(world, members, given, input))
         stages.append(stage)
         placed.update(dict.fromkeys(members, stage))
+
+
+def _allows(world: World, k: Link, axis: Axis, held: set[FreeMotion]) -> bool:
+    """Whether the mate lets its moving end move about or along `axis`, and only so: its free motion of that kind on
+    that axis, its others held (a shaft in two coaxial bearings, a tappet in its bore)."""
+    tol, z, o = world.tolerances, fr.z_axis(k.a.frame), fr.origin(k.a.frame)
+    if axis.kind not in k.source.free_motion or fr.angle_deg(z, axis.direction) > tol.angle_deg and \
+            fr.angle_deg(z, -axis.direction) > tol.angle_deg:  # fmt: skip
+        return False
+    if axis.kind == "angle" and fr.distance_to_line(axis.origin, o, z) > tol.position_mm:
+        return False
+    return all(FreeMotion(k, kind) in held for kind in k.source.free_motion if kind != axis.kind)
+
+
+def _generic(law: Law) -> Law:
+    """A law as a straight line at its steepest slope over a turn: what it couples, wherever it sits."""
+    return law if isinstance(law, Linear) else Linear(law.steepest(-180.0, 180.0))
 
 
 def _other(k: Link, c: str, find: Callable[[str], str]) -> str:

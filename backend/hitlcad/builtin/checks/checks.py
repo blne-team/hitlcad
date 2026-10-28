@@ -248,7 +248,7 @@ class SpanCheck(Bounded, Check):
             )
         sitting, moved = build.lengths(a[0], b[0])
         least, most = build.number(self.min), build.number(self.max)
-        lo, hi = min([(sitting, ""), *moved]), max([(sitting, ""), *moved])
-        ok = (least is None or lo[0] >= least) and (most is None or hi[0] <= most)
-        through = f", {lo[0]:.2f} … {hi[0]:.2f} mm through {', '.join(sorted({m for _, m in moved}))}" if moved else ""
+        lo, hi = min([sitting, *(m[0] for m in moved)]), max([sitting, *(m[1] for m in moved)])
+        ok = (least is None or lo >= least) and (most is None or hi <= most)
+        through = f", {lo:.2f} … {hi:.2f} mm through {', '.join(sorted({m for *_, m in moved}))}" if moved else ""
         return ok, f"{sitting:.2f} mm where they sit{through} (needs {need(least, most)})"

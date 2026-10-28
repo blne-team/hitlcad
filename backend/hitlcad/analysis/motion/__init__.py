@@ -6,7 +6,7 @@ the way.
 laws, or traced through its blocks); `sweep` checks them for collisions, exactly where every stage moves by a law,
 else at the positions traced, which the human watches. Here each input gets its result, and each motion it drives
 one; the rest of hitlcad gets the least gaps the sweeps found (`least_gaps`, for clearance requirements), the
-positions (`positions`, for span requirements) and the ranges a report carries (`reported`, for the panel).
+positions (`motions`, for span requirements) and the ranges a report carries (`reported`, for the panel).
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from hitlcad.kernel.errors import (
     MOTION_WATCHED,
 )
 
-__all__ = ["Motion", "least_gaps", "plans", "positions", "reported"]
+__all__ = ["Motion", "least_gaps", "motions", "plans", "reported"]
 
 REPORTED = 400  # the most positions of a traced motion a report carries, for the panel
 
@@ -236,19 +236,22 @@ def least_gaps(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCach
                 yield plan.link.source.address, least
 
 
-def positions(
-    built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache
-) -> Iterator[tuple[str, dict[str, fr.Frame]]]:
-    """Every position the motion moves through, as the input that moves it and the motion of each leaf it moves from
-    where it sits: exact ones a degree (or half a millimetre) apart, traced ones as traced."""
+def motions(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache,
+            instances: set[str]) -> Iterator[tuple[str, dict[str, np.ndarray]]]:  # fmt: skip
+    """For each input that moves any of `instances` (leaves), the input and each of those it moves, its motion from
+    where it sits at every position (a stack of frames): exact ones a degree (or half a millimetre) apart, traced
+    ones as traced."""
     for plan in built.motion_plans:
         if not isinstance(plan, Plan):
             continue
+        find = plan.world.clusters.find
+        moving = {leaf: find(leaf) for leaf in instances if find(leaf) in plan.moving}
+        if not moving:
+            continue
         traced = path.positions(plan, settings, cache)
-        carried = {c: plan.world.leaves_of({c}) for c in traced.clusters}
-        stacked = traced.stacked() if traced.values else {}
-        for i in range(len(traced.values)):
-            yield plan.link.source.address, {leaf: stacked[c][i] for c in traced.clusters for leaf in carried[c]}
+        if len(traced.values) > 1:
+            stacked = traced.stacked()
+            yield plan.link.source.address, {leaf: stacked[c] for leaf, c in moving.items()}
 
 
 def reported(built: BuiltDesign) -> list[MotionRange]:

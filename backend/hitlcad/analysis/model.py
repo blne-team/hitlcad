@@ -539,17 +539,20 @@ class BuildBodies:
     def placed(self, address: str) -> Body:
         return self._body("placed", address, lambda: self.built.leaves_of(address))
 
-    def lengths(self, a: PlacedFrame, b: PlacedFrame) -> tuple[float, list[tuple[float, str]]]:
-        """How far apart two frames' origins are where they sit, and at every position motion moves either
-        through, with the mate that moves it there."""
-        from hitlcad.analysis.motion import positions
+    def lengths(self, a: PlacedFrame, b: PlacedFrame) -> tuple[float, list[tuple[float, float, str]]]:
+        """How far apart two frames' origins are where they sit, and the least and most they come to through each
+        input that moves either, with that input's mate."""
+        from hitlcad.analysis.motion import motions
 
-        def apart(motions: dict[str, fr.Frame]) -> float:
-            ends = (fr.origin(motions.get(f.instance, fr.IDENTITY) @ f.frame) for f in (a, b))
-            return float(np.linalg.norm(next(ends) - next(ends)))
+        def origins(f: PlacedFrame, moved: dict[str, np.ndarray]) -> np.ndarray:
+            frames = moved.get(f.instance)
+            return f.frame[:3, 3][None] if frames is None else (frames @ f.frame)[:, :3, 3]
 
-        return apart({}), [(apart(m), mate) for mate, m in positions(self.built, self.settings, self.cache)
-                           if a.instance in m or b.instance in m]  # fmt: skip
+        out = []
+        for mate, moved in motions(self.built, self.settings, self.cache, {a.instance, b.instance}):
+            apart = np.linalg.norm(origins(a, moved) - origins(b, moved), axis=1)
+            out.append((float(apart.min()), float(apart.max()), mate))
+        return float(np.linalg.norm(fr.origin(a.frame) - fr.origin(b.frame))), out
 
     def moved_gap(self, a: Body, b: Body) -> Moved | None:
         """The least gap between two bodies while a mate moves one against the other, as motion analysis

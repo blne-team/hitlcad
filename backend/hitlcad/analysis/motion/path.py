@@ -63,9 +63,13 @@ class Traced(Model):
 
 
 def positions(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Traced:
-    """The plan's positions: exact ones a degree (or half a millimetre) apart, or traced (`trace`)."""
-    if not plan.exact:
-        return trace(plan, settings, cache)
+    """The plan's positions, once per plan: exact ones a degree (or half a millimetre) apart, or traced (`trace`)."""
+    if plan.traced is None:
+        plan.traced = trace(plan, settings, cache) if not plan.exact else _exact(plan)
+    return plan.traced
+
+
+def _exact(plan: Plan) -> Traced:
     rest = plan.rest
     lo, hi = (rest - 180.0, rest + 180.0) if plan.continuous else (min(plan.start, rest), max(plan.end, rest))
     n = max(math.ceil((hi - lo) / (1.0 if plan.kind == "angle" else 0.5)), 1)
