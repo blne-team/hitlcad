@@ -55,6 +55,15 @@ class Check(Model):
         """Why it failed, where another analysis reports that too (`report.Cause`); empty when it is its own."""
         return ""
 
+    def files(self) -> list[str]:
+        """The design's files it reads besides its code (a reference picture), relative to its folder: checksummed
+        into the build (`BuildSpec.checked`), so changing one builds again."""
+        return []
+
+    def figure(self, build: BuildBodies) -> bytes | None:
+        """A picture of what it measured (PNG), shown to the agent with a failing result."""
+        return None
+
     def keeps_apart(self) -> tuple[tuple[str, str], Number] | None:
         """The two placed things it keeps at least a gap apart, and that gap: what motion analysis watches as it
         sweeps."""

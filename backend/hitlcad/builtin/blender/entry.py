@@ -1,7 +1,7 @@
-"""Blender entry point. Runs inside Blender's bundled Python, which cannot import hitlcad: it loads the
-model runtime from hitlcad's execution folder.
+"""Blender's build worker. Runs inside Blender's bundled Python, which cannot import hitlcad: it loads the
+model runtime from hitlcad's execution folder, and serves jobs (`runtime.serve`) with the adapter below.
 
-Usage: blender -b --factory-startup -P entry.py   (it waits for its job's path on stdin: `runtime.run`)
+Usage: blender -b --factory-startup -P entry.py   (it reads its jobs' paths on stdin)
 
 Scene convention: 1 Blender unit = 1 mm, Z up. Each part file runs in a fresh, empty scene; the assembly
 (`model.blend`) is put together in one more, from the built parts' files.
@@ -110,48 +110,36 @@ def _export_objects(objs, path):
             o.name = name
 
 
-def _part(file, name, value, declared, out):
-    what = f"{file}: part {name!r}"
-    if not (isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], dict)):
-        raise ModelError(runtime.RETURN, f"{what}: return (object or [objects], {{connector: Matrix or [Matrices]}})")
-    objs = _objects(value[0], what)
-    connectors = value[1]
-    missing = [c for c in declared if c not in connectors]
-    if missing:
-        raise ModelError(
-            runtime.CONNECTORS, f"{what} declares connectors it does not return: {', '.join(missing)}", file
-        )
-    frames = {c: [matrix(v) for v in runtime.as_list(connectors[c])] for c in declared}
-    (out / "parts").mkdir(exist_ok=True)
-    stl = f"parts/{name}.stl"
-    _select_only(objs)
-    bpy.ops.wm.stl_export(filepath=str(out / stl), export_selected_objects=True, apply_modifiers=True)
-    glb = f"parts/{name}.glb"
-    _export_objects(objs, str(out / glb))
-    return {"name": name, "mesh": stl, "objects": glb, "connectors": frames}
+class Blender:
+    """Parts are mesh or curve objects, exported as an STL and a glTF of their objects; hitlcad tessellates their
+    view from the glTF (`BlenderBackend.complete_parts`). Nothing is reused by content: a part's objects are
+    rebuilt in an empty scene by every file that makes them."""
 
+    def __init__(self):
+        self.modes = {"assembly": assembly}
 
-def parts(rt, job):
-    files = []
-    for n, (file, expected) in enumerate(job["files"].items()):
-        try:
-            _reset_scene()
-            result, reads = rt.call_build(file, f"hitlcad_part_{n}")
-            if not isinstance(result, dict):
-                raise ModelError(
-                    runtime.RETURN,
-                    f"{file}: build(p, i) returned {type(result).__name__}; return {{part name: …}}",
-                    file,
-                )
-            if set(result) != set(expected):
-                raise ModelError(runtime.PARTS, f"{file} returned parts {', '.join(map(str, result)) or 'none'}; design.json "
-                                 f"declares {', '.join(expected)} in it")  # fmt: skip
-            out = Path(job["out"])
-            built = [_part(file, name, result[name], expected[name], out) for name in expected]
-            files.append({"file": file, "reads": reads.as_json(), "parts": built})
-        except Exception as e:
-            files.append({"file": file, "error": rt.failure(e, file)})
-    return {"files": files}
+    def placement(self, value):
+        return matrix(value)
+
+    def begin(self):
+        _reset_scene()
+
+    def unpack(self, what, value):
+        if not (isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], dict)):
+            raise ModelError(
+                runtime.RETURN, f"{what}: return (object or [objects], {{connector: Matrix or [Matrices]}})"
+            )
+        return _objects(value[0], what), value[1], None
+
+    def digest(self, objs):
+        return None
+
+    def export(self, objs, name, out, tolerance):
+        stl, glb = f"parts/{name}.stl", f"parts/{name}.glb"
+        _select_only(objs)
+        bpy.ops.wm.stl_export(filepath=str(out / stl), export_selected_objects=True, apply_modifiers=True)
+        _export_objects(objs, str(out / glb))
+        return {"mesh": stl, "objects": glb}
 
 
 def _collection(name, parent):
@@ -194,7 +182,7 @@ def _merge_materials():
             bpy.data.materials.remove(material)
 
 
-def assembly(rt, job):
+def assembly(job):
     """The built assembly as one scene (`model.blend`). Each part's objects sit in a collection of their own
     (`lid`, `box/lid` in component box) under `<design> parts`, which the view layer excludes; each instance
     is a collection instance at its placement named by its path from the design (`<design>/box[1]`), so it
@@ -227,4 +215,4 @@ def assembly(rt, job):
     return {}
 
 
-runtime.run({"plan": lambda rt, job: runtime.plan(rt, job, matrix), "parts": parts, "assembly": assembly})
+runtime.serve(Blender())

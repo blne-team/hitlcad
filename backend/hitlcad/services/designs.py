@@ -46,6 +46,10 @@ class DesignService:
         self.registry = registry
         self.bus = EventBus()
         self.folders_changed = asyncio.Event()
+        # designs a panel or an agent opened since the server started, each queued once for the watcher to bring
+        # up to date: the others wait until they are opened, however many are registered
+        self._used: set[str] = set()
+        self.first_used: asyncio.Queue[str] = asyncio.Queue()
         self._folders = store.folders()
         self._cache: dict[str, DesignState] = {}
         self.loaded = loaded  # revisions kept in memory: the panel and the tools read the same few
@@ -131,6 +135,11 @@ class DesignService:
         self.bus.publish(design_id, stored)
         return stored
 
+    def announce(self, design_id: str, event: Event) -> None:
+        """A live event: applied and published, not kept (its seq stays 0)."""
+        self.get(design_id).apply(event)
+        self.bus.publish(design_id, event)
+
     # ------------------------------------------------------------------ folders
 
     def folders(self) -> dict[str, str]:
@@ -148,8 +157,8 @@ class DesignService:
     ) -> tuple[DesignState, list[str]]:
         """Bind the folder at ``path`` to its design. With ``backend``, a folder that is not a design yet
         is scaffolded first. Returns the design and the files that were created. The folder watcher
-        builds it once its model exists; a design.json that does not validate is opened all the same, and its
-        build says why."""
+        builds it once its model exists, and when first opened since the server started, if its files changed;
+        a design.json that does not validate is opened all the same, and its build says why."""
         folder = _absolute(path)
         created = []
         if not folder.exists():
@@ -173,12 +182,21 @@ class DesignService:
                     "This design's history was written by another version of hitlcad: it was set aside with the "
                     "database it was in. Its revisions start again.")))  # fmt: skip
         self.sync(design_id, design)
+        self._use(design_id)
         return self.get(design_id), created
 
     def ensure(self, path: str | Path) -> DesignState:
         """The design for ``path``, opening the folder if it is not registered yet."""
         design_id = self.id_for(_absolute(path).path)
-        return self.get(design_id) if design_id else self.open(path)[0]
+        if design_id is None:
+            return self.open(path)[0]
+        self._use(design_id)
+        return self.get(design_id)
+
+    def _use(self, design_id: str) -> None:
+        if design_id not in self._used:
+            self._used.add(design_id)
+            self.first_used.put_nowait(design_id)
 
     def where_used(self, design_id: str) -> list[str]:
         """Registered designs that use this one as a component, directly."""

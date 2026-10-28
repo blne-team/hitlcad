@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 
 import numpy as np
@@ -23,6 +25,7 @@ from hitlcad.core.address import End
 from hitlcad.kernel.model import Model
 
 if TYPE_CHECKING:
+    from hitlcad.core.laws import Law
     from hitlcad.geometry.features import Features
 
 Ref = str  # a parameter name, or "interfaces.<name>" for an interface value
@@ -266,8 +269,20 @@ class Axis(NamedTuple):
         return float(np.dot(motion[:3, :3] @ self.origin + motion[:3, 3] - self.origin, self.direction))
 
 
+@dataclass(frozen=True)
+class Ends:
+    """A relation's two ends as assembled: their placed frames, their connectors' nominal values, and what its design
+    names (`value`: a parameter or interface value by reference, e.g. 'interfaces.cam_lift')."""
+
+    fa: fr.Frame
+    fb: fr.Frame
+    na: dict[str, float]
+    nb: dict[str, float]
+    value: Callable[[str], Any]
+
+
 class Relation(Model):
-    """A relation type: motion coupled between two connectors (gears, a rack, a lead screw)."""
+    """A relation type: motion coupled between two connectors (gears, a rack, a lead screw, a cam)."""
 
     a: str
     b: str
@@ -275,6 +290,9 @@ class Relation(Model):
 
     example: ClassVar[dict[str, Any]]
     joins: ClassVar[tuple[str, str]]  # connector kinds of a and b
+    #: Its ends' parts stay in contact as they move (a cam and its follower): motion checks, at each position it
+    #: checks, that they neither part nor overlap, within the relation's tolerance and the meshes'.
+    touching: ClassVar[bool] = False
 
     @field_validator("a", "b")
     @classmethod
@@ -287,23 +305,25 @@ class Relation(Model):
         return f"{self.a}~{self.b}"
 
     @abstractmethod
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float],
-               tol: Any) -> RelationCheck: ...  # fmt: skip
+    def verify(self, ends: Ends, tol: Any) -> RelationCheck: ...
 
     @abstractmethod
     def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
         """The coordinates of a and b the relation couples, from the placed frames."""
 
     @abstractmethod
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        """How far b moves along its axis per unit a moves along its own (degrees per degree, mm per degree)."""
+    def law(self, ends: Ends) -> Law:
+        """How far b moves along its axis as a moves along its own, both from as assembled (degrees or mm). A law
+        that is `one_way` drives b from a only."""
 
     @abstractmethod
-    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: fr.Frame, fb: fr.Frame) -> tuple[float, float]:
+    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: Any, fb: Any) -> tuple[Any, Any]:
         """How far a and b have moved along the coordinates the relation couples, from where the frames were
         (fa0, fb0) to where they are (fa, fb), each measured against what holds the coupling (the line of the
-        gears' centres, the rack, the screw): b's = `ratio` × a's while the relation holds. A turn comes as
-        degrees in (-180, 180], a travel as mm; their kinds are those of `axes`."""
+        gears' centres, the rack, the screw, the follower's line): b's = `law`(a's) while the relation holds. A turn
+        comes as degrees in (-180, 180], a travel as mm; their kinds are those of `axes`. fa0 and fb0 are numbers;
+        fa and fb numbers, or a loop solver's symbols: measure them with `frames.heading`, `frames.coordinate` and
+        `frames.wrapped`, slicing and arithmetic, so the solver compiles them."""
 
 
 # --------------------------------------------------------------------------- fastener sets

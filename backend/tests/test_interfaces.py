@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.request
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -22,6 +23,7 @@ from hitlcad.api.rest import _until_gone, create_app
 from hitlcad.app import HitlCad
 from hitlcad.config import Settings
 from hitlcad.core.events import SelectionChanged
+from hitlcad.geometry import cadview
 from hitlcad.render.base import NullRenderer
 from hitlcad.services.bus import MAX_QUEUE, EventBus
 
@@ -50,15 +52,19 @@ async def test_rest_design_lifecycle(api: httpx.AsyncClient, tmp_path: Path) -> 
     step = await api.get(f"/api/designs/{design_id}/revisions/1/files/parts/lid.step")
     assert step.status_code == 200 and step.content.startswith(b"ISO-10303-21")
     assert (await api.get(f"/api/designs/{design_id}/revisions/1/files/../../etc/passwd")).status_code == 404
-    view = (await api.get(f"/api/designs/{design_id}/revisions/1/files/view.json")).json()
-    assert view["shapes"]["parts"][0]["id"] == "/Enclosure/base"
+    scene = (await api.get(f"/api/designs/{design_id}/revisions/1/files/scene.json")).json()
+    assert scene["shapes"]["parts"][0]["id"] == "/Enclosure/base"
+    part_view = await api.get(f"/api/designs/{design_id}/revisions/1/files/{scene['instances'][0]['path']}")
+    assert part_view.status_code == 200 and cadview.PartView.header(part_view.content)["templates"]
     assert (await api.post(f"/api/designs/{design_id}/build", json={"configuration": "nope"})).status_code == 422
 
     structure = (await api.get(f"/api/designs/{design_id}/structure")).json()
     assert {n["id"] for n in structure["graph"]["nodes"]} == {"base", "lid", "insert", "screw"}
     assert any(e["kind"] == "fastener" for e in structure["graph"]["edges"]) and "10 instances" in structure["overview"]
 
-    too_wide = await api.post(f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}})
+    too_wide = await api.post(
+        f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}, "expected": {"width": 40}}
+    )
     assert too_wide.status_code == 422 and too_wide.json()["diagnostic"]["code"] == "parameter.invalid"
     pin = (await api.post(f"/api/designs/{design_id}/pins", json={
         "point": [0, 0, 24], "note": "here", "component": {"instance": "lid", "topo": "solid"}})).json()  # fmt: skip
@@ -72,11 +78,62 @@ async def test_rest_design_lifecycle(api: httpx.AsyncClient, tmp_path: Path) -> 
 
 
 @pytest.mark.geometry
+async def test_a_build_s_parts_are_seen_before_they_are_checked(
+    core: HitlCad, api: httpx.AsyncClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once its parts are placed, the build running serves its scene and part views (nothing else of it) while its
+    analyses run, and says how far it has got: live, never kept in the log, and gone with its revision."""
+    state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
+    checking, go_on = threading.Event(), threading.Event()
+    first = core.builds.pipeline.analyses[0]
+    run = first.run
+
+    def held(ctx: Any) -> Any:
+        checking.set()
+        go_on.wait(60)
+        return run(ctx)
+
+    monkeypatch.setattr(first, "run", held)
+    queue = core.designs.bus.subscribe(state.id)
+    build = asyncio.create_task(core.builds.build(state.id))
+    try:
+        await asyncio.to_thread(checking.wait, 60)
+        progress = core.designs.get(state.id).building
+        assert progress is not None and progress.revision == 1 and progress.scene == cadview.SCENE_FILE
+        assert progress.doing == f"checking {first.name} (1 of {len(core.builds.pipeline.analyses)})"
+        files = f"/api/designs/{state.id}/revisions/1/files"
+        scene = (await api.get(f"{files}/{progress.scene}")).json()
+        part_view = await api.get(f"{files}/{scene['instances'][0]['path']}")
+        assert part_view.status_code == 200 and cadview.PartView.header(part_view.content)["templates"]
+        assert (await api.get(f"{files}/parts/box.step")).status_code == 404
+    finally:
+        go_on.set()
+    revision = await build
+    live = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if event is not None and event.type == "build_progress":
+            live.append(event)
+    shown = next(n for n, e in enumerate(live) if e.scene)
+    assert [e.doing for e in live[: shown + 1]] == ["building its parts"] * (shown + 1)  # seen before anything checked
+    assert live[-1].doing == "writing outputs" and all(e.seq == 0 and e.revision == revision.id for e in live)
+    assert not {"build_progress", "build_stopped"} & {e.type for e in core.designs.store.events(state.id)}
+    assert core.designs.get(state.id).building is None
+    assert (await api.get(f"/api/designs/{state.id}/revisions/1/files/parts/box.step")).status_code == 200
+
+
+@pytest.mark.geometry
 async def test_model_files_for_the_file_viewer(api: httpx.AsyncClient, tmp_path: Path) -> None:
     stl = tmp_path / "cube.stl"
     trimesh.creation.box((10, 20, 30)).export(stl)
-    view = await api.get("/api/files/cad", params={"path": str(stl)})
-    assert view.status_code == 200 and view.json()["shapes"]["bb"]["zmax"] == pytest.approx(15)
+    scene = await api.get("/api/files/cad", params={"path": str(stl)}, follow_redirects=True)
+    assert scene.status_code == 200 and scene.json()["shapes"]["bb"]["zmax"] == pytest.approx(15)
+    (instance,) = scene.json()["instances"]
+    part_view = await api.get(str(scene.url.join(instance["path"])))
+    assert part_view.status_code == 200 and cadview.PartView.header(part_view.content)["bounds"][1][2] == pytest.approx(
+        15
+    )
+    assert (await api.get(str(scene.url.join("../nope/scene.json")))).status_code == 404
     picked = await api.post("/api/files/describe", json={"path": str(stl), "point": [5, 0, 0]})
     assert picked.json()["label"].startswith("Point on cube at")
     assert (await api.get("/api/files/cad", params={"path": str(tmp_path / "a.txt")})).status_code == 404

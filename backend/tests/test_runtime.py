@@ -4,6 +4,7 @@ process that runs it."""
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import subprocess
 import sys
@@ -13,12 +14,14 @@ from typing import Any
 import psutil
 import pytest
 
-from hitlcad.backends.subprocess_backend import _ended
+from hitlcad.backends.base import _ended
+from hitlcad.backends.workers import Ticket, Workers
 from hitlcad.build.cache import Inputs, PartCache
+from hitlcad.config import Settings
 from hitlcad.core.report import Reads
 from hitlcad.execution import runtime
 from hitlcad.execution.executor import LocalExecutor, _memory_exceeds
-from hitlcad.execution.runtime import ModelError, Runtime, plan
+from hitlcad.execution.runtime import Exports, ModelError, Runtime, plan
 
 from .conftest import write_design
 
@@ -52,7 +55,7 @@ def test_each_file_records_what_it_read(src: Path) -> None:
 
 def test_plan_places_instances_before_any_geometry(src: Path) -> None:
     rt = Runtime(src, {"od": 40, "t": 3})
-    out = plan(rt, {}, lambda v: [[float(v)] * 4] * 4)
+    out = plan(rt, lambda v: [[float(v)] * 4] * 4)
     assert set(out["placements"]) == {"a", "b"} and len(out["placements"]["b"]) == 2
     assert out["assembly_reads"]["interfaces"] == ["bolt_r"] and set(out["interfaces"]) == {"bolt_r", "holes"}
 
@@ -88,6 +91,16 @@ def test_model_errors_are_told_in_the_design_s_own_terms(tmp_path: Path) -> None
             "where": {"file": "parts/y.py", "line": 2},
         }
     sys.path.remove(str(bad.resolve()))
+
+
+def test_sys_exit_in_the_design_s_code_is_its_error_not_the_worker_s_end(tmp_path: Path) -> None:
+    src = write_design(tmp_path / "exits", {"assembly.py": "import sys\n\n\ndef build(p, i):\n    sys.exit(3)\n"})
+    rt = Runtime(src, {})
+    with pytest.raises(ModelError) as stopped:
+        plan(rt, lambda v: v)
+    assert stopped.value.as_json()["code"] == "model.exception" and "SystemExit: 3" in str(stopped.value)
+    assert stopped.value.as_json()["where"] == {"file": "assembly.py", "line": 5}
+    rt.close()
 
 
 def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None:
@@ -128,26 +141,19 @@ async def gone(pid: int) -> bool:
     return False
 
 
-async def test_a_build_process_past_its_deadline_ends_with_what_it_started(tmp_path: Path) -> None:
+async def test_a_process_run_past_its_deadline_ends_with_what_it_started(tmp_path: Path) -> None:
     run = await LocalExecutor().run([sys.executable, "-c", GRANDCHILD + "; child.wait()"], tmp_path, timeout_s=1)
     assert (run.stopped, run.limit) == ("exceeded the 1s time limit", "time")
     assert await gone(int(run.output.split()[0]))
 
 
-async def test_a_build_process_that_finishes_leaves_nothing_it_started_behind(tmp_path: Path) -> None:
+async def test_a_process_run_to_its_end_leaves_nothing_it_started_behind(tmp_path: Path) -> None:
     run = await LocalExecutor().run([sys.executable, "-c", GRANDCHILD], tmp_path, timeout_s=30)
     assert (run.returncode, run.stopped) == (0, None)
     assert await gone(int(run.output.split()[0]))
 
 
-async def test_a_build_process_over_its_memory_is_stopped(tmp_path: Path) -> None:
-    hog = "import time; held = b'x' * (400 << 20); time.sleep(30)"
-    run = await LocalExecutor().run([sys.executable, "-c", hog], tmp_path, timeout_s=60, memory_mb=200)
-    assert run.stopped == "used more than 200 MB of memory"
-    assert run.duration_s < 20
-
-
-async def test_a_build_process_inherits_the_environment(tmp_path: Path, monkeypatch: Any) -> None:
+async def test_a_process_inherits_the_environment(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("SOME_TOOL_SETTING", "kept")
     monkeypatch.setenv("HITLCAD_PORT", "1234")
     probe = "import os, tempfile; print(os.environ.get('SOME_TOOL_SETTING'), os.environ.get('HITLCAD_PORT'), tempfile.gettempdir())"
@@ -156,7 +162,7 @@ async def test_a_build_process_inherits_the_environment(tmp_path: Path, monkeypa
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-async def test_a_build_process_ended_by_a_signal_says_which_and_why(tmp_path: Path) -> None:
+async def test_a_process_ended_by_a_signal_says_which_and_why(tmp_path: Path) -> None:
     kill = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
     run = await LocalExecutor().run([sys.executable, "-c", kill], tmp_path, timeout_s=30)
     assert _ended(run.returncode) == "the build process was killed by the system, most often for running out of memory"
@@ -188,7 +194,7 @@ def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Pat
     from hitlcad.builtin.build123d.backend import Build123dBackend
 
     def backend() -> Build123dBackend:
-        return Build123dBackend(timeout_s=1, memory_mb=1, mesh_tolerance_mm=0.01, mesh_angular_tolerance=0.1)
+        return Build123dBackend(Settings())
 
     root = Path(runtime.__file__).parents[1]
     code = {p.relative_to(root).as_posix() for p in backend().code()}
@@ -198,7 +204,7 @@ def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Pat
         "sdk/__init__.py",
         "builtin/catalogs/bd_warehouse.py",
     } <= code
-    assert backend().libraries() == {"build123d": version("build123d"), "bd_warehouse": version("bd_warehouse")}
+    assert backend().libraries() == {name: version(name) for name in ("build123d", "bd_warehouse")}
     catalog = tmp_path / "catalog.py"
     monkeypatch.setattr(Build123dBackend, "code", lambda self: [catalog])
     catalog.write_text("A = 1", encoding="utf-8")
@@ -217,39 +223,152 @@ def test_every_code_the_build_process_writes_has_a_kind() -> None:
     assert {kinds[c].owner for c in runtime.CODES} == {"design", "hitlcad"}
 
 
-#: A build process as the entry scripts are: it waits for its job's path on stdin, then works in the job's folder.
-WAITING = ("import os, pathlib, sys, time; job = pathlib.Path(sys.stdin.readline().strip()); os.chdir(job.parent); "
-           "time.sleep(0.2); pathlib.Path('done').write_text(f'{os.getpid()} {os.getppid()} {os.environ[\"TMPDIR\"]}')")  # fmt: skip
+def test_a_design_s_modules_are_forgotten_after_its_job(src: Path) -> None:
+    """A worker runs one build after another: the next imports the design's files as they are then."""
+    rt = Runtime(src, {"od": 40, "t": 3})
+    rt.call_build("parts/a.py", "pa")
+    rt.all_interfaces()
+    rt.close()
+    assert str(rt.src) not in sys.path
+    assert not [m for m in sys.modules.values() if str(getattr(m, "__file__", None) or "").startswith(str(rt.src))]
 
 
-async def test_a_build_process_kept_started_takes_the_next_job_and_its_limits_count_from_it(tmp_path: Path) -> None:
-    executor, argv = LocalExecutor(warm=1), [sys.executable, "-c", WAITING]
-    executor.warm(argv)
-    for _ in range(100):
-        if executor._ready.get(tuple(argv)):
+class Counting:
+    """An adapter whose shapes are strings, their own digest, exported as one file of their text."""
+
+    modes: dict[str, Any] = {}
+
+    def __init__(self) -> None:
+        self.exported: list[str] = []
+
+    def digest(self, shape: str) -> str:
+        return shape
+
+    def export(self, shape: str, name: str, out: Path, tolerance: dict[str, float]) -> dict[str, Any]:
+        self.exported.append(shape)
+        (out / f"{name}.stl").write_text(shape * 100, encoding="utf-8")
+        return {"mesh": f"{name}.stl", "objects": f"{name}.stl"}
+
+
+def test_a_worker_exports_a_shape_once_while_it_keeps_it(tmp_path: Path) -> None:
+    adapter, exports, tolerance = Counting(), Exports(), {"linear": 0.01, "angular": 0.1}
+    exports.budget = 250  # two of the 100-byte files below, not three
+    for shape in ("a", "b", "a"):
+        exports.export(adapter, shape, "p", tmp_path, tolerance)  # type: ignore[arg-type]
+    assert adapter.exported == ["a", "b"]  # the second "a" written from what was kept
+    assert (tmp_path / "p.stl").read_text(encoding="utf-8") == "a" * 100
+    exports.export(adapter, "a", "q", tmp_path, tolerance)  # type: ignore[arg-type]  # another part's name: its own files
+    exports.export(adapter, "b", "p", tmp_path, tolerance)  # type: ignore[arg-type]  # let go for the q's
+    assert adapter.exported == ["a", "b", "a", "b"] and exports.bytes <= exports.budget
+
+
+#: A build worker as the entry scripts are: `runtime.serve` with an adapter of its own modes only.
+WORKER = """
+import os, sys, tempfile, time
+from hitlcad.execution import runtime
+seen = []
+def note(job):
+    seen.append(job["n"])
+    print("job", job["n"])
+    return {"pid": os.getpid(), "seen": seen, "tmp": tempfile.gettempdir(), "cwd": os.getcwd()}
+def stall(job):
+    time.sleep(30)
+def end(job):
+    print("ending", flush=True)
+    os._exit(3)
+class Modes:
+    modes = {"note": note, "stall": stall, "end": end}
+print("loaded")
+runtime.serve(Modes())
+"""
+
+
+def job(tmp_path: Path, name: str, mode: str, **fields: Any) -> Path:
+    folder = tmp_path / name
+    folder.mkdir()
+    (folder / "job.json").write_text(json.dumps({"mode": mode, **fields}), encoding="utf-8")
+    return folder / "job.json"
+
+
+async def test_a_worker_runs_job_after_job_in_each_job_s_folder_keeping_what_it_holds(tmp_path: Path) -> None:
+    worker = await LocalExecutor().worker([sys.executable, "-c", WORKER])
+    try:
+        first = await worker.job(job(tmp_path, "one", "note", n=1), timeout_s=30, memory_mb=4096)
+        second = await worker.job(job(tmp_path, "two", "note", n=2), timeout_s=30, memory_mb=4096)
+        assert (first.returncode, first.stopped, first.output.strip(), second.output.strip()) == (
+            0,
+            None,
+            "job 1",
+            "job 2",
+        )
+        result = json.loads((tmp_path / "two" / "result.json").read_text(encoding="utf-8"))
+        assert result["seen"] == [1, 2] and result["pid"] in (
+            worker.pid,
+            *(c.pid for c in psutil.Process(worker.pid).children()),
+        )
+        assert result["tmp"] == result["cwd"] == str((tmp_path / "two").resolve())
+        assert "loaded" in worker.started.log.read_text(encoding="utf-8")  # what it said before any job: its own log
+    finally:
+        await worker.stop()
+    assert not worker.alive and not worker.started.folder.exists()
+
+
+async def test_a_worker_past_a_job_s_deadline_or_ended_by_one_is_gone_and_says_why(tmp_path: Path) -> None:
+    stalled = await LocalExecutor().worker([sys.executable, "-c", WORKER])
+    run = await stalled.job(job(tmp_path, "stall", "stall"), timeout_s=1, memory_mb=4096)
+    assert (run.stopped, run.limit, stalled.alive) == ("exceeded the 1s time limit", "time", False)
+    ended = await LocalExecutor().worker([sys.executable, "-c", WORKER])
+    run = await ended.job(job(tmp_path, "end", "end"), timeout_s=30, memory_mb=4096)
+    assert (run.returncode, run.stopped, ended.alive) == (3, None, False) and "ending" in run.output
+    held = await LocalExecutor().worker([sys.executable, "-c", WORKER])
+    run = await held.job(job(tmp_path, "held", "stall"), timeout_s=30, memory_mb=1)  # what it holds as it waits counts
+    assert (run.stopped, run.limit, held.alive) == ("used more than 1 MB of memory", "memory", False)
+    for worker in (stalled, ended, held):
+        await worker.stop()
+
+
+async def test_a_backend_keeps_a_worker_per_design_and_replaces_one_it_needs_for_another(tmp_path: Path) -> None:
+    workers, argv = Workers(LocalExecutor(), size=1), [sys.executable, "-c", WORKER]
+
+    async def pid(design: str, name: str) -> int:
+        await workers.run(Ticket(), argv, design, None, job(tmp_path, name, "note", n=0), timeout_s=30, memory_mb=4096)
+        return json.loads((tmp_path / name / "result.json").read_text(encoding="utf-8"))["pid"]
+
+    a = await pid("/a", "a1")
+    assert await pid("/a", "a2") == a  # its own worker, kept
+    b = await pid("/b", "b1")
+    assert b != a and await gone(a)  # one worker at most: the other design's, idle, replaced
+    assert await pid("/a", "a3") not in (a, b)  # nothing of /b's carries back to /a
+    await workers.close()
+
+    workers = Workers(LocalExecutor(), size=2)
+    a = await pid("/a", "a4")
+    for _ in range(100):  # the spare, started as /a started its own
+        if spare := next((h.worker.pid for h in workers._idle if h.design is None), None):
             break
         await asyncio.sleep(0.05)
-    (spare,) = executor._ready[tuple(argv)]
-    await asyncio.sleep(1.2)  # waiting longer than the job's deadline
-    job = tmp_path / "work" / "job.json"
-    job.parent.mkdir()
-    run = await executor.run_job(argv, job, timeout_s=1)
-    assert (run.returncode, run.stopped) == (0, None)
-    pid, parent, tmp = (job.parent / "done").read_text(encoding="utf-8").split(" ", 2)
-    # it ran in the job's folder, started elsewhere; on Windows a venv's python.exe starts the interpreter as its child
-    assert spare.proc.pid in (int(pid), int(parent)) and tmp == str(spare.folder)
-    assert not spare.folder.exists()  # the folder it started in is gone with it
-    for _ in range(100):  # the next one is already starting
-        if executor._ready.get(tuple(argv)):
-            break
-        await asyncio.sleep(0.05)
-    (following,) = executor._ready[tuple(argv)]
-    assert following.proc.pid != spare.proc.pid
-    await executor.close()
-    assert await gone(following.proc.pid) and executor._ready == {}
+    assert await pid("/b", "b2") == spare  # the next design takes it, its libraries loaded
+    assert psutil.pid_exists(a) and await pid("/a", "a5") == a  # no design's worker is replaced for a spare
+    await workers.close()
 
 
-async def test_a_build_process_not_kept_started_starts_with_its_job(tmp_path: Path) -> None:
-    executor, argv = LocalExecutor(warm=1), [sys.executable, "-c", WAITING]  # warm() never asked: the CLI's
-    run = await executor.run_job(argv, tmp_path / "job.json", timeout_s=30)
-    assert run.returncode == 0 and (tmp_path / "done").is_file() and executor._ready == {}
+async def test_a_job_stopped_while_it_replaces_a_worker_gives_its_place_back(tmp_path: Path) -> None:
+    workers, argv = Workers(LocalExecutor(), size=1), [sys.executable, "-c", WORKER]
+    run = {"timeout_s": 30, "memory_mb": 4096}
+    await workers.run(Ticket(), argv, "/a", None, job(tmp_path, "a", "note", n=0), **run)
+    (idle,) = workers._idle
+    stopping, stop = asyncio.Event(), idle.worker.stop
+
+    async def stuck() -> None:
+        stopping.set()
+        await asyncio.Event().wait()
+
+    idle.worker.stop = stuck  # type: ignore[method-assign]
+    replacing = asyncio.create_task(workers.run(Ticket(), argv, "/b", None, job(tmp_path, "b", "note", n=0), **run))
+    await stopping.wait()
+    replacing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await replacing
+    await stop()
+    await asyncio.wait_for(workers.run(Ticket(), argv, "/c", None, job(tmp_path, "c", "note", n=0), **run), 60)
+    await workers.close()

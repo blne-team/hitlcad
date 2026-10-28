@@ -37,7 +37,7 @@ test("a selection and a pin reach the server with their exact component", async 
 
 test("compare loads the earlier revision as a ghost", async ({ page }) => {
   const revisions = (await state()).revisions.map((r) => r.id);
-  const ghost = page.waitForRequest((r) => /\/revisions\/\d+\/files\/view\.json$/.test(r.url()) && !r.url().includes(`/revisions/${revisions.at(-1)}/`));
+  const ghost = page.waitForRequest((r) => /\/revisions\/\d+\/files\/scene\.json$/.test(r.url()) && !r.url().includes(`/revisions/${revisions.at(-1)}/`));
   await page.locator(".compare-toggle").click();
   await ghost;
   await expect(page.locator(".compare-toggle")).toHaveAttribute("aria-pressed", "true");

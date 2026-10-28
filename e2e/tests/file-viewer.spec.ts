@@ -32,6 +32,15 @@ test("STL picks are points on the mesh, with no pick filter to offer", async ({ 
   await expect(items(page).first()).toContainText("Point on mesh at");
 });
 
+test("Inspect restores file selection after measuring", async ({ page }) => {
+  await view(page, fixtures().step);
+  await viewerReady(page);
+  await page.locator(".tcv_button_distance").click();
+  await page.getByRole("button", { name: "Inspect model", exact: true }).click();
+  await clickModel(page, 0.5, 0.42);
+  await expect(items(page)).toHaveCount(1);
+});
+
 test("the viewer and its menus fit the panel at any width", async ({ page }) => {
   for (const width of [1100, 640, 480]) {
     await page.setViewportSize({ width, height: 600 });

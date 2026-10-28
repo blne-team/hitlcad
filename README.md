@@ -174,7 +174,7 @@ assembly as a graph, the BOM and the brief.
 
 ## Get started
 
-1. Download a [release](https://github.com/blne-team/solidwork/releases), unpack it and run
+1. Download a [release](https://github.com/blne-team/hitlcad/releases), unpack it and run
    `./install.sh`. [INSTALL.md](INSTALL.md) has the details: requirements, Windows, remote
    workspaces, settings.
 2. In VS Code, run **hitlcad: New Design Project** and open the folder it creates.

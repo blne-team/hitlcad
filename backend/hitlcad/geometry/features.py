@@ -64,15 +64,6 @@ class InsideCorner:
     at: tuple[float, float, float]
 
 
-@dataclass(frozen=True)
-class Piece:
-    """What of a part has one colour: one shape in the view, one object in 3MF."""
-
-    name: str
-    color: str | None
-    mesh: trimesh.Trimesh
-
-
 class Features(ABC):
     """A part's geometry, in its own frame. `mesh` and `objects` load what it is measured on and what it
     shows, when first asked."""
@@ -98,16 +89,9 @@ class Features(ABC):
         return self._load_objects()
 
     @cached_property
-    def pieces(self) -> list[Piece]:
+    def pieces(self) -> list[cadview.Piece]:
         """The part by colour, each piece named by its materials."""
-        by_color: dict[str | None, list[ObjectMesh]] = {}
-        for o in self.objects:
-            by_color.setdefault(o.color, []).append(o)
-        names = {
-            color: "+".join(dict.fromkeys(o.material for o in meshes if o.material))
-            for color, meshes in by_color.items()
-        }
-        return [Piece(names[color] or self.name, color, cadview.geometry(meshes)) for color, meshes in by_color.items()]
+        return cadview.pieces(self.name, self.objects)
 
     def named_at(self, point: Any) -> str | None:
         """The object nearest a point in the part's frame, where the part has more than one."""
@@ -118,9 +102,8 @@ class Features(ABC):
         return self.objects[int(np.argmin(gaps))].name
 
     @abstractmethod
-    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        """Tessellated for the 3D view: a shape and its entry template per thing the view draws, each entry's
-        `loc` placing its shape in the part's frame."""
+    def view(self) -> cadview.PartView:
+        """Tessellated for the 3D view."""
 
     @abstractmethod
     def bounds(self) -> np.ndarray:
@@ -212,15 +195,6 @@ def _vec(v: Any) -> list[float]:
     return [v.X, v.Y, v.Z]
 
 
-def flat(shape: Any) -> Any:
-    """A shape as one object: a compound of its solids with no children, so viewers and face numbering
-    treat it as one part."""
-    from build123d import Compound
-
-    solids = shape.solids()
-    return Compound(list(solids)) if len(solids) != 1 else solids[0]
-
-
 class BrepFeatures(Features):
     representation = "B-rep"
 
@@ -230,18 +204,8 @@ class BrepFeatures(Features):
         super().__init__(name, mesh, objects)
         self.shape = shape
 
-    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        """One shape with every face, edge and vertex as picks number them, marked `exact` so the panel's
-        clicks name them. A viewer shape has one colour: a part made in several shows the colour of most of it."""
-        from ocp_tessellate.convert import tessellate_group, to_ocpgroup
-
-        group, instances = to_ocpgroup(flat(self.shape), names=[self.name])
-        meshed, shapes, _ = tessellate_group(group, instances)
-        (leaf,) = cadview.leaves(shapes)
-        colored = [p for p in self.pieces if p.color]
-        if colored:
-            leaf["color"] = max(colored, key=lambda p: p.mesh.area).color
-        return [(meshed[0], {**leaf, "exact": True})]
+    def view(self) -> cadview.PartView:
+        return cadview.brep_view(self.shape, self.name, self.objects)
 
     def bounds(self) -> np.ndarray:
         box = self.shape.bounding_box()
@@ -505,9 +469,8 @@ class MeshFeatures(Features):
 
     representation = "mesh"
 
-    def view(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        """One shape per colour, each with its crease and boundary lines as edges."""
-        return [cadview.mesh_entry(p.mesh, p.name.replace("/", "_"), p.color) for p in self.pieces]
+    def view(self) -> cadview.PartView:
+        return cadview.mesh_view(self.pieces)
 
     def bounds(self) -> np.ndarray:
         return self.mesh.bounds

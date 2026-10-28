@@ -20,6 +20,7 @@ from hitlcad import catalogs, materials
 from hitlcad.agent import describe
 from hitlcad.agent.graph import MARK, revision_summary
 from hitlcad.agent.sections import joint_frames, section_png
+from hitlcad.analysis.model import BuildBodies
 from hitlcad.app import HitlCad
 from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.report import Revision
@@ -29,31 +30,20 @@ from hitlcad.review import measure
 
 log = logging.getLogger(__name__)
 
-INSTRUCTIONS = f"""\
-hitlcad builds, verifies and renders parametric CAD assemblies. A design is a folder: design.json \
-declares its parts (made or catalog), their connectors, the mates, relations and fastener sets \
-between them, parameters, configurations and requirements; interfaces.py computes mating values \
-once; parts/*.py build parts in their own frames; assembly.py places instances. The human reviews \
-every build in the hitlcad panel in VS Code and talks to you in your own chat.
+INSTRUCTIONS = """\
+hitlcad builds, verifies and renders parametric CAD assemblies; the human reviews them in VS Code.
+Tools addressing a design take its folder's absolute path.
 
-Work like this (the hitlcad skill has the details):
-- create_design(path, name, backend) scaffolds a design. Declare the structure in design.json first, \
-then build_design(path, scope="structure") checks it before any geometry exists.
-- search_catalog(query) before modelling a screw, nut, insert or bearing.
-- Write interfaces.py, the part files and assembly.py with your own file tools; saving rebuilds.
-- build_design(path) verifies every connector, mate, relation, fastener set and requirement \
-({describe.CHECK_KINDS}); it answers one line per problem (the checks one mistake fails, together), \
-each with its code ([mate.fit]) and the usual fix, with section views through failing joints. \
-scope="<part or instance>" answers about one part of a large product.
-- explore_design(path, focus) answers about the design or one part, instance, connector, mate, \
-parameter (with its impact), interfaces.<name>, configuration or 'rev N'. It also tells you what the \
-human selected and pinned.
-- list_geometry and measure_geometry measure exactly; compare_revisions shows what changed.
-- Resolve pins you addressed with resolve_pins.
-- A loop of mates is checked only at the positions it is solved at ([motion.sampled]): the human watches \
-it move in the panel to pass it; ask them to rather than calling it clear.
-
-All tools take the design folder's absolute path."""
+- Read the hitlcad skill for the design workflow and hitlcad-<backend> before editing model code;
+  load their references when needed. Edit source files with your own file tools; never edit build/.
+- Declare structure in design.json, then build_design(path, scope="structure") before geometry.
+  Search the catalog before modelling standard hardware; compute shared values in interfaces.py.
+- build_design returns a compact problem summary. Use explore_design(path, focus) for details;
+  include_images=True on either tool adds views for geometry diagnosis or appearance review.
+- Use list_geometry and measure_geometry for measurements, compare_revisions for changes, and
+  explore_design(path, focus="review") for human selections and pins. Resolve addressed pins.
+- Claim only what checks verify. For [motion.sampled], ask the human to watch the loop in the panel.
+"""
 
 
 def build_mcp(core: HitlCad) -> MCPServer:
@@ -98,6 +88,14 @@ def build_mcp(core: HitlCad) -> MCPServer:
                         f"Section through {result.subject} (the plane holding its axis):",
                         Image(data=png, format="png"),
                     ]
+        checks = {req.text: req.check for req in rev.spec.design.requirements if req.check} if rev.spec else {}
+        pictured = [(r, checks[r.subject]) for r in leads if r.analysis == "requirement" and r.subject in checks]
+        if pictured and rev.report.status == "succeeded":
+            bodies = BuildBodies(feedback.built(design_id, rev), core.pipeline.analysis_settings,
+                                 core.pipeline.results_cache)  # fmt: skip
+            for result, check in pictured:
+                if png := check.figure(bodies):
+                    out += [f"{MARK['fail']} requirement {result.subject!r}:", Image(data=png, format="png")]
         return out
 
     @mcp.tool(structured_output=False)
@@ -110,6 +108,10 @@ def build_mcp(core: HitlCad) -> MCPServer:
         lines.append("Catalog providers: " + "; ".join(f"{p.name} ({p.usage})" for p in catalogs.providers().values()))
         lines.append("Exporters (design.json outputs): " + "; ".join(f"{e.name}: {e.summary}"
                                                                      for e in core.pipeline.exporters.values()))  # fmt: skip
+        lines += [
+            "Model packages (import from part files; see the backend skill for recipes):",
+            *describe.model_package_lines(),
+        ]
         found = plugins.registry()
         others = [f"{p.distribution} {p.version}" for p in found.plugins.values() if not p.builtin]
         lines.append("Plugins beyond hitlcad's own: " + (", ".join(others) or "none"))
@@ -148,11 +150,12 @@ def build_mcp(core: HitlCad) -> MCPServer:
     @mcp.tool(structured_output=False)
     @guard
     async def build_design(path: str, scope: str | None = None, configuration: str | None = None,
-                           summary: str = "") -> list[str | Image]:  # fmt: skip
+                           summary: str = "", include_images: bool = False) -> list[str | Image]:  # fmt: skip
         """Build and verify the design. scope="structure" checks design.json, interfaces.py and assembly.py
         without building geometry (seconds). scope="<part or instance>" builds (unchanged parts come from the
         cache) and answers about that part. configuration="<name>" builds one configuration, "all" every one.
-        One line per problem, the checks one mistake fails named together; section views through failing joints."""
+        Returns up to five grouped problems; a part scope gives more detail. include_images=True adds the
+        preview, failing joint sections and requirement figures. explore_design can request views without rebuilding."""
         state = designs.ensure(path)
         if scope == "structure":
             results, plan = await builds.check_structure(state.id)
@@ -165,29 +168,46 @@ def build_mcp(core: HitlCad) -> MCPServer:
             return ["\n".join(lines)]
         if configuration == "all":
             revisions = await builds.build_all(state.id, summary)
-            out: list[str | Image] = [revision_summary(r, limit=core.settings.explore_limit,
-                                                       previous=designs.earlier(state.id, r.id, r.configuration))
-                                      for r in revisions]  # fmt: skip
-            return out + images(state.id, revisions[0])
+            out: list[str | Image] = []
+            for rev in revisions:
+                out.append(revision_summary(rev, limit=5,
+                                            previous=designs.earlier(state.id, rev.id, rev.configuration)))  # fmt: skip
+                if include_images:
+                    out += images(state.id, rev)
+            return out
         rev = await builds.build(state.id, summary, configuration=configuration)
-        text = revision_summary(rev, [scope] if scope else None, limit=core.settings.explore_limit,
+        text = revision_summary(rev, [scope] if scope else None, limit=core.settings.explore_limit if scope else 5,
                                 previous=designs.earlier(state.id, rev.id, rev.configuration))  # fmt: skip
         if rev.report.status == "succeeded" and configuration is None:
             text += f"\nOutputs in {designs.folder(state.id).build_dir}/ (the human can open them there)."
         if pins := len(designs.get(state.id).open_pins):
-            text += f"\n{pins} open pin(s) from the human: explore_design(path) lists them."
+            text += f"\n{pins} open pin(s) from the human: explore_design(path, focus='review') lists them."
         if loops := len({r.cause for r in rev.report.results if r.code == MOTION_SAMPLED.code}):
             text += f"\n{loops} loop motion(s) checked only at solved positions: ask the human to watch them move."
-        return [text, *images(state.id, rev)]
+        return [text, *images(state.id, rev)] if include_images else [text]
 
     @mcp.tool(structured_output=False)
     @guard
-    async def explore_design(path: str, focus: str | None = None, configuration: str | None = None) -> str:
-        """The design graph. Without focus: the overview (failures, open pins, selection, parts, staleness).
+    async def explore_design(path: str, focus: str | None = None, configuration: str | None = None,
+                             include_images: bool = False) -> list[str | Image]:  # fmt: skip
+        """The design graph. Without focus: a compact overview (failures, review, parts, staleness).
         focus = a part, instance (planet[2], tilt/planet[2]), component, connector (lid.screws), mate (a+b),
-        relation (a~b), fastener set, parameter (with what it affects), interfaces.<name>, configuration or 'rev N'."""
+        relation (a~b), fastener set, parameter (with what it affects), interfaces.<name>, configuration, 'rev N'
+        or 'review' (all selections and open pins). include_images=True adds views from that revision or the
+        latest successful build of the configuration, without rebuilding."""
         state = designs.ensure(path)
-        return await asyncio.to_thread(lambda: explore.graph(state.id, configuration).explore(focus))
+        focus = focus.strip() if focus else None
+        graph = await asyncio.to_thread(explore.graph, state.id, configuration)
+        out: list[str | Image] = [await asyncio.to_thread(graph.explore, focus)]
+        if include_images:
+            rev = (
+                designs.revision(state.id, int(focus.split()[1]))
+                if focus and focus.startswith("rev ")
+                else graph.ctx.revision
+            )
+            if rev:
+                out += images(state.id, rev)
+        return out
 
     @mcp.tool(structured_output=False)
     @guard

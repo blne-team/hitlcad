@@ -12,26 +12,53 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 from mcp.client import Client
 
 from hitlcad.api.mcp import build_mcp
 from hitlcad.app import HitlCad
+from hitlcad.backends.workers import Superseded
+from hitlcad.core.events import PinsChanged, SelectionChanged
 from hitlcad.core.report import Earlier
-from hitlcad.core.types import ComponentRef, Pick
-from hitlcad.kernel.errors import HitlcadError
+from hitlcad.core.types import ComponentRef, Pick, Pin, SelectionItem
+from hitlcad.kernel.errors import HitlcadError, http_status
 from hitlcad.render.base import NullRenderer
 from hitlcad.review.selection import topology
 from hitlcad.services.watcher import _relevant
 from hitlcad.store.sqlite import SqliteStore
 from hitlcad.workspace import agents
+from hitlcad.workspace.folder import DesignFolder
 from hitlcad.workspace.project import init_project
 
-from .conftest import copy_design, write_design
+from .conftest import copy_design, edit_json, write_design
 
 
 def face_index(shape, test) -> int:
     return next(k for k, f in enumerate(shape.faces()) if test(f))
+
+
+@pytest.mark.geometry
+async def test_review_measures_selected_faces_and_points_on_the_named_revision(core: HitlCad, tmp_path: Path) -> None:
+    state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
+    rev = await core.builds.build(state.id)
+    box = core.feedback.built(state.id, rev).parts["box"].features.exact()
+    top = face_index(box, lambda f: f.normal_at().Z > 0.99)
+    bottom = face_index(box, lambda f: f.normal_at().Z < -0.99)
+    picks = tuple(
+        Pick(point=(0, 0, 0), component=ComponentRef(instance="box", topo="face", index=k)) for k in (top, bottom)
+    )
+    text = await core.feedback.measure(state.id, rev.id, picks)
+    assert "minimum distance 5.000 mm" in text
+    assert "gap between their planes is 5.000 mm" in text
+    points = (Pick(point=(0, 0, 0)), Pick(point=(3, 4, 0)))
+    assert "minimum distance 5.000 mm" in await core.feedback.measure(state.id, rev.id, points)
+    await core.builds.edit_parameters(state.id, {"width": 20}, {"width": 10})
+    sides = tuple(
+        Pick(point=(0, 0, 0), component=ComponentRef(instance="box", topo="face", index=k))
+        for k in (face_index(box, lambda f: f.normal_at().X > 0.99), face_index(box, lambda f: f.normal_at().X < -0.99))
+    )
+    assert "minimum distance 10.000 mm" in await core.feedback.measure(state.id, rev.id, sides)
 
 
 async def test_a_new_design_is_scaffolded_and_waits_for_parts(core: HitlCad, tmp_path: Path) -> None:
@@ -59,7 +86,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     pin = await core.feedback.add_pin(state.id, Pick(point=(0, 0, 24), component=ComponentRef(
         instance="lid", topo="face", index=top)), "make it thicker")  # fmt: skip
     assert pin.instance == "lid" and "face" in pin.label
-    rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6})
+    rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6}, {"lid_t": 4})
     (carried,) = core.designs.get(state.id).open_pins
     assert carried.revision == rebuilt.id and carried.point[2] == pytest.approx(26)
     new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].features, carried.component)
@@ -83,7 +110,9 @@ async def test_a_loop_the_human_watched_passes_until_it_changes(core: HitlCad, t
     assert (crank(watched).code, crank(watched).status) == ("motion.watched", "pass")
     assert crank(watched).detail.endswith(f"watched in the panel on revision {rev.id}")
     assert [w.key for w in core.designs.get(state.id).watched] == [loop.key]
-    longer = await core.builds.edit_parameters(state.id, {"coupler_l": 41})  # another loop: watched no more
+    longer = await core.builds.edit_parameters(
+        state.id, {"coupler_l": 41}, {"coupler_l": 40}
+    )  # another loop: watched no more
     assert crank(longer).code == "motion.sampled"
     with pytest.raises(HitlcadError, match="has no loop motion"):
         await core.builds.watch_motion(state.id, longer.id, loop.key)
@@ -91,6 +120,7 @@ async def test_a_loop_the_human_watched_passes_until_it_changes(core: HitlCad, t
     assert again.summary == "Unwatched base.a ↔ crank.a" and core.designs.get(state.id).watched == []
 
 
+@pytest.mark.geometry
 async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
@@ -127,6 +157,23 @@ async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad,
     }
 
 
+async def test_the_overview_bounds_lists_and_review_keeps_all_feedback(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("tiny", tmp_path / "tiny")
+    names = [f"box_{letter}" for letter in "abcdefghijkl"]
+    edit_json(folder / "design.json", lambda d: d["parts"].update({n: d["parts"]["box"] for n in names}))
+    state, _ = core.designs.open(folder)
+    core.designs.emit(state.id, PinsChanged(pins=[Pin(point=(0, 0, 0), note=n, label=n) for n in names]))
+    core.designs.emit(state.id, SelectionChanged(items=[SelectionItem(point=(0, 0, 0), label="selected box")]))
+    async with Client(build_mcp(core)) as client:
+        overview = (await client.call_tool("explore_design", {"path": str(folder)})).content[0].text
+        assert "… 8 more" in overview and "… 8 more review items" in overview
+        assert "box_l" not in overview and "focus='review'" in overview
+        detail = (await client.call_tool("explore_design", {"path": str(folder), "focus": "box_l"})).content[0].text
+        assert "box_l: a box" in detail
+        review = (await client.call_tool("explore_design", {"path": str(folder), "focus": "review"})).content[0].text
+        assert all(n in review for n in names) and "selected box" in review
+
+
 @pytest.mark.geometry
 @pytest.mark.cold_cache  # says which parts were rebuilt
 async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCad, tmp_path: Path) -> None:
@@ -136,7 +183,7 @@ async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCa
     shelf, _ = core.designs.open(tmp_path / "shelf")
     assert core.designs.where_used(hinge.id) == [shelf.id]
     first = await core.builds.build(hinge.id)
-    second = await core.builds.edit_parameters(hinge.id, {"stop_h": 0})
+    second = await core.builds.edit_parameters(hinge.id, {"stop_h": 0}, {"stop_h": 30})
     text = core.explore.compare(hinge.id, first.id, second.id)
     assert "stop_h: 30.0 → 0.0" in text and "motion base.hinge+lid.pin: fail → pass" in text
     assert "Parts rebuilt in 2: base, lid" in text
@@ -156,8 +203,8 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
             assert not result.is_error, result.content[0].text
             return result.content[0].text
 
-        assert "every reference resolves" in await call("build_design", path=path, scope="structure")
-        assert "placed: base, lid, insert ×4, screw ×4" in await call("build_design", path=path, scope="structure")
+        structure = await call("build_design", path=path, scope="structure")
+        assert "every reference resolves" in structure and "placed: base, lid, insert ×4, screw ×4" in structure
         built = await call("build_design", path=path)
         assert "SUCCEEDED" in built and "no problems; 34 checks pass" in built and "build/" in built
         scoped = await call("build_design", path=path, scope="lid")
@@ -176,10 +223,28 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
         assert "Materials" in await call("list_backends") and "bom" in await call("list_backends")
 
 
+@pytest.mark.geometry
+async def test_build_summaries_count_omitted_problems_and_explore_returns_details(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    folder = copy_design("tiny", tmp_path / "tiny")
+    requirements = [f"Review {letter}" for letter in "abcdefgh"]
+    edit_json(folder / "design.json", lambda d: d.update(requirements=[{"text": text} for text in requirements]))
+    async with Client(build_mcp(core)) as client:
+        built = await client.call_tool("build_design", {"path": str(folder)})
+        assert not built.is_error and all(c.type == "text" for c in built.content)
+        text = built.content[0].text
+        assert "… 3 more problems" in text and "8 unverified" in text and "Review h" not in text
+        detail = await client.call_tool("explore_design", {"path": str(folder), "focus": "rev 1"})
+        assert not detail.is_error and all(text in detail.content[0].text for text in requirements)
+
+
 def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp_path: Path) -> None:
     written = init_project(tmp_path / "project", core.settings, "python", core.registry.all(), hooks=False, codex=False)
     assert ".claude/skills/hitlcad/" in written and ".agents/skills/hitlcad-build123d/" in written
     skill = (tmp_path / "project" / ".claude/skills/hitlcad/SKILL.md").read_text(encoding="utf-8")
+    reference = (tmp_path / "project" / ".claude/skills/hitlcad/reference/design-json.md").read_text(encoding="utf-8")
+    assert "[reference/design-json.md](reference/design-json.md)" in skill
     for generated in (
         '"kind": "gear"',
         '"type": "cylindrical"',
@@ -188,8 +253,8 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
         '"process": "sheet_metal"',
         '"fastener": "lid_screw.seat"',
     ):
-        assert generated in skill
-    assert "$" not in skill.replace("$(", "")
+        assert generated in reference and generated not in skill
+    assert "$" not in skill.replace("$(", "") and "$" not in reference
     playbook = (tmp_path / "project" / ".claude/skills/hitlcad/playbook.md").read_text(encoding="utf-8")
     assert "- `mate.fit`: A mate's fit is not what it asks for. Size the hole and the shaft" in playbook
     assert (
@@ -245,6 +310,35 @@ def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_
     for output in ("build/parts/gear.step", "parts/__pycache__/gear.pyc", ".git/index", "parts/gear.py~"):
         assert not _relevant(folders, design / output)
     assert not _relevant(folders, tmp_path / "elsewhere.py")
+
+
+@pytest.mark.geometry
+async def test_a_design_edited_while_the_server_was_down_builds_when_opened_not_at_start(
+    core: HitlCad, settings: Any, tmp_path: Path
+) -> None:
+    """A server knows every design it ever opened: building each that changed at start would build them all."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    await core.builds.build(state.id)
+    await core.shutdown()
+    spec = json.loads((folder / "design.json").read_text(encoding="utf-8"))
+    spec["parameters"][0]["value"] = 12
+    (folder / "design.json").write_text(json.dumps(spec), encoding="utf-8")
+
+    later = HitlCad.create(settings, registry=core.registry, renderer=NullRenderer())
+    later.start()
+    await asyncio.sleep(1)  # more than the debounce
+    assert len(later.designs.get(state.id).revisions) == 1
+    later.designs.ensure(folder)
+    for _ in range(600):
+        if len(later.designs.get(state.id).revisions) == 2:
+            break
+        await asyncio.sleep(0.05)
+    assert later.designs.get(state.id).revisions[-1].summary == "Rebuilt after the files changed"
+    later.designs.ensure(folder)  # opened again, its files unchanged: not again
+    await asyncio.sleep(1)
+    assert len(later.designs.get(state.id).revisions) == 2
+    await later.shutdown()
 
 
 @pytest.mark.geometry
@@ -360,23 +454,122 @@ def test_a_database_of_another_layout_is_set_aside_whole(tmp_path: Path) -> None
 
 
 @pytest.mark.geometry
-async def test_a_server_keeps_a_build_process_started_for_each_backend(settings: Any, tmp_path: Path) -> None:
-    """So a save builds without waiting for build123d (or Blender) to load."""
-    core = HitlCad.create(settings.model_copy(update={"warm_builds": 1}), renderer=NullRenderer())
+async def test_a_server_keeps_each_design_s_worker_between_its_builds(settings: Any, tmp_path: Path) -> None:
+    """A worker started with the server takes the first design's builds, which find build123d loaded and what it
+    loaded the build before, but the design's files as they are then (lib/ as edited, not as kept); another design
+    gets a worker of its own; none outlive the server."""
+    core = HitlCad.create(settings, renderer=NullRenderer())
     core.start()
-    backend = core.registry.get("build123d")
-    kept = backend.executor._ready  # type: ignore[attr-defined]
-    for _ in range(200):
-        if kept.get(tuple(backend.command())):  # type: ignore[attr-defined]
+    workers = core.registry.get("build123d").workers
+    widths = []
+
+    async def worker_of(design_id: str) -> int:
+        revision = await core.builds.build(design_id)
+        assert revision.report.status == "succeeded", revision.report.lead()
+        widths.append(revision.report.metrics.size[0])  # type: ignore[union-attr]
+        held = [h for h in workers._idle if h.design]
+        return next(h.worker.pid for h in held if h.design == str(Path(core.designs.get(design_id).path).resolve()))
+
+    for _ in range(200):  # warm: started before any build asks
+        if workers._idle:
             break
         await asyncio.sleep(0.05)
-    (spare,) = kept[tuple(backend.command())]  # type: ignore[attr-defined]
-    state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
-    revision = await core.builds.build(state.id)
-    assert revision.report.status == "succeeded", revision.report.lead()
-    assert spare.proc.returncode is not None  # it took the build's first job, and ended with it
+    (warm,) = workers._idle
+    folder = write_design(tmp_path / "kept", {
+        "design.json": {"hitlcad": 2, "name": "Kept", "backend": "build123d", "ground": "block",
+                        "parts": {"block": {"role": "a block", "file": "parts/block.py", "material": "PLA"}}},
+        "lib/size.py": "WIDTH = 10\n",
+        "parts/block.py": "from build123d import Box\nfrom lib.size import WIDTH\n\n\ndef build(p, i):\n"
+                          "    return {'block': (Box(WIDTH, 10, 10), {})}\n",
+        "assembly.py": "from build123d import Location\n\n\ndef build(p, i):\n    return {'block': [Location()]}\n",
+    })  # fmt: skip
+    kept, _ = core.designs.open(folder)
+    assert await worker_of(kept.id) == warm.worker.pid
+    (folder / "lib/size.py").write_text("WIDTH = 20\n", encoding="utf-8")
+    assert await worker_of(kept.id) == warm.worker.pid and widths == [10, 20]
+    other_design, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
+    other = await worker_of(other_design.id)
+    assert other != warm.worker.pid
     await core.shutdown()
-    assert kept == {}
+    assert (
+        workers._idle == [] and not psutil.pid_exists(other) or psutil.Process(other).status() == psutil.STATUS_ZOMBIE
+    )
+
+
+@pytest.mark.geometry
+async def test_a_build_of_newer_files_supersedes_the_one_running(core: HitlCad, tmp_path: Path) -> None:
+    """The running build stops once its part files are done, and records nothing; the newer one takes what they
+    built from the part cache, and both callers get its revision."""
+    folder = write_design(tmp_path / "pair", {
+        "design.json": {"hitlcad": 2, "name": "Pair", "backend": "build123d", "ground": "slow",
+                        "parameters": [{"name": "w", "value": 10, "min": 1, "max": 50}],
+                        "parts": {"slow": {"role": "a block", "file": "parts/slow.py", "material": "PLA"},
+                                  "fast": {"role": "a block", "file": "parts/fast.py", "material": "PLA"}}},
+        "parts/slow.py": "import time\nfrom build123d import Box\n\n\ndef build(p, i):\n    time.sleep(3)\n"
+                         "    return {'slow': (Box(10, 10, 10), {})}\n",
+        "parts/fast.py": "from build123d import Box\n\n\ndef build(p, i):\n    return {'fast': (Box(p['w'], 10, 10), {})}\n",
+        "assembly.py": "from build123d import Location\n\n\ndef build(p, i):\n"
+                       "    return {'slow': [Location()], 'fast': [Location((50, 0, 0))]}\n",
+    })  # fmt: skip
+    state, _ = core.designs.open(folder)
+    first = asyncio.create_task(core.builds.build(state.id))
+    work = core.designs.store.revision_dir(state.id, 1) / "work"
+    for _ in range(600):  # until its part files run
+        if list(work.glob("part-*/job.json")):
+            break
+        await asyncio.sleep(0.05)
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=20))
+    second = await core.builds.build(state.id)
+    assert (await first).id == second.id == 1 and len(core.designs.get(state.id).revisions) == 1
+    assert core.designs.get(state.id).building is None
+    assert {p.name: p.cached for p in second.report.parts} == {"slow": True, "fast": False}
+    assert next(p for p in second.report.parts if p.name == "fast").metrics.size[0] == 20  # type: ignore[union-attr]
+
+
+@pytest.mark.geometry
+async def test_a_build_superseded_by_files_that_build_nothing_ends_its_building(core: HitlCad, tmp_path: Path) -> None:
+    folder = write_design(tmp_path / "slow", {
+        "design.json": {"hitlcad": 2, "name": "Slow", "backend": "build123d", "ground": "slow",
+                        "parts": {"slow": {"role": "a block", "file": "parts/slow.py", "material": "PLA"}}},
+        "parts/slow.py": "import time\nfrom build123d import Box\n\n\ndef build(p, i):\n    time.sleep(3)\n"
+                         "    return {'slow': (Box(10, 10, 10), {})}\n",
+        "assembly.py": "from build123d import Location\n\n\ndef build(p, i):\n    return {'slow': [Location()]}\n",
+    })  # fmt: skip
+    state, _ = core.designs.open(folder)
+    first = asyncio.create_task(core.builds.build(state.id))
+    while core.designs.get(state.id).building is None:
+        await asyncio.sleep(0.05)
+    edit_json(folder / "design.json", lambda d: d.update(parts={}, ground=None))
+    with pytest.raises(HitlcadError, match="declares no parts yet"):
+        await core.builds.build(state.id)
+    with pytest.raises(Superseded):
+        await first
+    assert core.designs.get(state.id).building is None and not core.designs.get(state.id).revisions
+
+
+async def test_a_parameter_edit_made_on_values_an_agent_has_since_changed_is_refused(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    """The panel showed width 10; the agent wrote 15 meanwhile: the human's 20 would silently undo it."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=15))
+    with pytest.raises(HitlcadError, match="width is now 15 \\(it showed 10\\)") as refused:
+        await core.builds.edit_parameters(state.id, {"width": 20}, {"width": 10})
+    assert (refused.value.code, http_status(refused.value.diagnostic)) == ("conflict.design_changed", 409)
+    assert json.loads((folder / "design.json").read_text(encoding="utf-8"))["parameters"][0]["value"] == 15
+
+
+def test_design_json_changed_while_it_is_edited_is_not_overwritten(tmp_path: Path) -> None:
+    folder = DesignFolder(copy_design("tiny", tmp_path / "tiny"))
+
+    def change(design: Any) -> Any:
+        edit_json(folder.design_file, lambda d: d.update(name="Theirs"))  # an agent writes it meanwhile
+        return design.model_copy(update={"name": "Mine"})
+
+    with pytest.raises(HitlcadError, match="changed while it was being edited"):
+        folder.edit(change)
+    assert folder.load().name == "Theirs"
 
 
 def test_one_server_keeps_a_data_folder(tmp_path: Path) -> None:

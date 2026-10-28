@@ -5,6 +5,15 @@ hitlcad runs each in Blender's Python with `p` (parameter values) and `i` (inter
 attributes; see the hitlcad skill) and records what each reads. 1 Blender unit = 1 mm, Z up. Each
 part file runs in a fresh, empty scene.
 
+## Built-in construction
+
+`from hitlcad_blender import section_form` builds a hollow rotational form from `(z, radius)`
+sections, returning the usual `(object, connectors)` value. It handles ring winding, floor, rim and
+circumferential resolution. See the [arguments and limitations](../hitlcad/reference/builders-blender.md)
+and complete [section-form recipe](../hitlcad-form/assets/section-form/design.json). Use this for a
+matching section-driven shape before writing face indices by hand. Its `wall` is a radial offset;
+verify actual local thickness through requirements and manufacturing results.
+
 ## Part files
 
 `def build(p, i)` returns `{part name: (object or [objects], connectors)}` for exactly the parts
@@ -41,7 +50,8 @@ Figurines and other organic parts print on support: give them `{"process": "fdm"
 or `{"process": "resin"}`, so their walls and (for resin) sealed hollows are still checked.
 
 Rules:
-- Keep code self-contained: `bpy`, `bmesh`, `mathutils`, the standard library and numpy, plus `lib/`.
+- Use `bpy`, `bmesh`, `mathutils`, the standard library and numpy, `lib/`, and the installed model
+  packages listed by `list_backends`. Blender model packages cannot depend on the server's Python environment.
 - Every dimension a human may want to tune must come from `p[...]` or `i.<value>`.
 - Prefer building geometry with `bmesh` or `bpy.data` directly over `bpy.ops`, which depends on
   context. `bpy.ops.mesh.primitive_*_add` works in background mode and is fine for primitives.

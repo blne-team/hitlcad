@@ -2,7 +2,7 @@
 view (three-cad-viewer's instanced format), and as the tree a backend writes its own assembly file from.
 
 The view draws each part per instance at the instance's place, nested by component, the way
-`analysis.cadview.View` draws any part. Viewer ids are `/<design>/<instance path>`, and "face i" of an
+`geometry.cadview.Scene` draws any part. Viewer ids are `/<design>/<instance path>`, and "face i" of an
 instance is `faces()[i]` of its part's STEP (`parts/<part>.step`), the way picks and the geometry tools
 number them. A part in several colours is a group of one shape per colour at its instance's id
 (`/<design>/<instance path>/<material>`); mesh picks name a point, which the build resolves to its
@@ -17,7 +17,6 @@ from typing import Any
 from hitlcad.analysis.model import BuiltDesign, PartGeometry
 from hitlcad.core import frames as fr
 from hitlcad.geometry import cadview
-from hitlcad.geometry.features import flat
 from hitlcad.kernel.errors import Unmeasurable
 from hitlcad.review.measure import location
 
@@ -28,7 +27,7 @@ def step_assembly(built: BuiltDesign, target: Path) -> bool:
     from build123d import Compound, export_step
 
     try:
-        shapes = {id(part): flat(part.features.exact()) for part in all_parts(built)}
+        shapes = {id(part): cadview.flat(part.features.exact()) for part in all_parts(built)}
     except Unmeasurable:
         return False
 
@@ -66,8 +65,9 @@ def tree(built: BuiltDesign) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def write_view(built: BuiltDesign, target: Path) -> None:
-    view = cadview.View()
+def write_scene(built: BuiltDesign, out_dir: Path) -> None:
+    """The 3D view of a build in `out_dir`: its parts' views, its components' included, placed per instance."""
+    scene = cadview.Scene(out_dir)
     root = built.spec.name.replace("/", "_")
 
     def group(design: BuiltDesign, path: str, name: str, transform: fr.Frame) -> dict[str, Any]:
@@ -77,7 +77,9 @@ def write_view(built: BuiltDesign, target: Path) -> None:
             if part_or_component in design.components:
                 parts.append(group(design.components[part_or_component], f"{path}/{address}", address, placed))
             else:
-                parts.append(view.part(design.parts[part_or_component].features, f"{path}/{address}", address, placed))
+                parts.append(
+                    scene.part(design.parts[part_or_component].view_file, f"{path}/{address}", address, placed)
+                )
         return cadview.group(path, name, parts)
 
-    view.write(group(built, f"/{root}", root, fr.IDENTITY), built.mesh.bounds, target)
+    scene.write(group(built, f"/{root}", root, fr.IDENTITY))

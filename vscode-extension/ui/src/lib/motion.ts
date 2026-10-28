@@ -30,18 +30,26 @@ export function extent(range: MotionRange): [number, number] {
   return range.continuous && range.poses.length === 0 ? [range.current, range.current + 360] : [range.start, range.end];
 }
 
-/** What moves, and where to, with the mate at `value`: each drive about or along its own axis, or a loop at the
- * solved position nearest `value` (only what was checked is shown). */
+/** What moves, and where to, with the mate at `value`: each drive about or along its own axis by its law, or a loop at
+ * the solved position nearest `value` (only what was checked is shown). */
 export function movesAt(range: MotionRange, value: number): CadMove[] {
   if (range.poses.length > 0) {
     const i = nearest(range.values, value);
     return range.poses.map((p) => ({ instances: p.instances, matrix: p.frames[i] ?? STILL }));
   }
   const delta = value - range.current;
-  return range.drives.map((d) => ({
-    instances: d.instances,
-    matrix: d.kind === "angle" ? turn(d.origin, d.axis, d.rate * delta) : slide(d.axis, d.rate * delta),
-  }));
+  return range.drives.map((d) => {
+    const moved = along(d.law, delta);
+    return { instances: d.instances, matrix: d.kind === "angle" ? turn(d.origin, d.axis, moved) : slide(d.axis, moved) };
+  });
+}
+
+/** A drive's law at `x`: straight between its points, held at its ends beyond them. */
+function along(law: [number, number][], x: number): number {
+  const upper = law.findIndex(([a]) => a >= x);
+  if (upper <= 0) return (upper === 0 ? law[0] : law[law.length - 1])?.[1] ?? 0;
+  const [a0, b0] = law[upper - 1]!, [a1, b1] = law[upper]!;
+  return b0 + ((b1 - b0) * (x - a0)) / (a1 - a0);
 }
 
 type Vec3 = [number, number, number];

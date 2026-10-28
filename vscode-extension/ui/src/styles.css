@@ -646,6 +646,42 @@ code {
   flex-direction: column;
   gap: 12px;
 }
+.parameter-context {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--glass-rule);
+}
+.parameter-context.selected {
+  padding-left: 10px;
+  border-left: 2px solid var(--focus);
+}
+.parameter-context-head,
+.parameter-context-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.parameter-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  overflow-wrap: anywhere;
+}
+.parameter-targets strong {
+  min-width: 0;
+  font-weight: 600;
+}
+.parameter-scope {
+  display: flex;
+  gap: 3px;
+}
+.parameter-scope .toggle {
+  padding: 3px 7px;
+  font-size: var(--step--1);
+}
 .param {
   display: flex;
   flex-direction: column;
@@ -848,6 +884,114 @@ details summary {
 .hint-close:hover {
   opacity: 1;
 }
+.inspection-tools {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 6px;
+}
+.viewer-tool-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  color: var(--ink-2);
+  background: transparent;
+  cursor: pointer;
+}
+.inspect-lens {
+  stroke: var(--focus);
+}
+.viewer-tool-button:hover,
+.viewer-tool-button[aria-pressed="true"],
+.inspection-tools[open] .inspect-button {
+  background: var(--raised);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+.viewer-tool-button[aria-pressed="true"] {
+  color: var(--focus);
+  border-color: var(--focus);
+}
+.canvas-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cad-stage[data-panning="true"] canvas {
+  cursor: grab;
+}
+.cad-stage[data-panning="true"] canvas:active {
+  cursor: grabbing;
+}
+.viewport:has(.pan-button[aria-pressed="true"]) .viewport-hint:not(.pan-hint) {
+  display: none;
+}
+.grid-base-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--rule);
+  white-space: nowrap;
+  font-size: 12px;
+}
+.cad-stage .tcv_grid-content {
+  width: max-content;
+  min-width: 120px;
+}
+.inspection-tools summary {
+  list-style: none;
+}
+.inspection-tools summary::-webkit-details-marker {
+  display: none;
+}
+.inspection-tools:not([open]) .inspection-controls {
+  display: none;
+}
+.viewport:has(.inspection-tools[open]) .viewport-hint {
+  display: none;
+}
+.inspection-controls {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(420px, calc(100vw - 20px));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-rule);
+  border-radius: var(--radius-s);
+  box-shadow: var(--glass-shadow);
+}
+.inspect-finding {
+  display: block;
+  margin-top: 5px;
+}
+.measurement-panel {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--glass-rule);
+  padding-top: 8px;
+}
+.measurement-panel textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+}
+.measurement-result {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 .selection-box {
   flex: 0 1 auto;
   min-height: 0;
@@ -920,8 +1064,14 @@ details summary {
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: auto !important;
-  max-width: calc(100% - 20px);
+  width: max-content !important;
+  height: auto !important;
+  /* Leave room for the shape filter at the bottom right. */
+  max-width: calc(100% - 160px);
+  flex-wrap: wrap;
+  justify-content: center;
+  /* Override the viewer's overflow-x: clip so popup menus above the toolbar receive pointer events. */
+  overflow: visible;
   z-index: 6;
   padding: 2px 8px;
   background: var(--glass);
@@ -1127,6 +1277,10 @@ details summary {
   top: 10px;
   transform: translateX(-50%);
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100% - 24px);
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0.6rem;
@@ -1139,6 +1293,12 @@ details summary {
 }
 .motion-control input[type="range"] {
   width: 180px;
+}
+.motion-control select {
+  max-width: min(360px, 100%);
+}
+.viewport:has(.motion-control) .side {
+  top: calc(var(--motion-control-height, 70px) + 20px);
 }
 .tally {
   font-family: var(--narrow);

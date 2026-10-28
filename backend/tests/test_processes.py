@@ -28,7 +28,6 @@ from build123d import (
     Rectangle,
     Rotation,
     Sphere,
-    export_gltf,
     export_step,
     export_stl,
     extrude,
@@ -48,6 +47,7 @@ from hitlcad.core import frames as fr
 from hitlcad.core.design import PartSpec
 from hitlcad.core.report import Reads
 from hitlcad.core.structure import Tolerances
+from hitlcad.geometry.walls import wall_thickness
 from hitlcad.kernel.errors import Unmeasurable
 
 pytestmark = pytest.mark.geometry
@@ -61,10 +61,10 @@ def part(shape, tmp_path: Path, name: str) -> PartGeometry:
     step, stl, glb = tmp_path / f"{name}.step", tmp_path / f"{name}.stl", tmp_path / f"{name}.glb"
     export_step(shape, str(step))
     export_stl(shape, str(stl), tolerance=0.01, angular_tolerance=0.1)
-    export_gltf(shape, str(glb), binary=True, linear_deflection=0.01, angular_deflection=0.1)
+    # Process checks read the solid and STL; exporting the viewer's GLB adds another tessellation for no assertion.
     return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
-                        mesh_file=stl, step_file=step, objects_file=glb, frames={}, catalog=None, reads=Reads(),
-                        cached=False)  # fmt: skip
+                        mesh_file=stl, step_file=step, objects_file=glb, view_file=tmp_path / f"{name}.view", frames={},
+                        catalog=None, reads=Reads(), cached=False)  # fmt: skip
 
 
 def body(shape, tmp_path: Path, name: str, settings: AnalysisSettings = SETTINGS) -> Body:
@@ -247,7 +247,7 @@ def test_an_open_mesh_has_no_wall_thickness_to_read(tmp_path: Path) -> None:
     box.export(tmp_path / "open.stl")
     geometry = PartGeometry(name="open", spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py",
                             backend="blender", mesh_file=tmp_path / "open.stl", step_file=None,
-                            objects_file=tmp_path / "open.glb", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+                            objects_file=tmp_path / "open.glb", view_file=tmp_path / "open.view", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
     shape = Body("open", [Leaf("open", geometry, None, fr.IDENTITY)], SETTINGS, TOL)  # type: ignore[arg-type]
     with pytest.raises(Unmeasurable, match="open is not a closed mesh"):
         _ = shape.walls
@@ -256,6 +256,13 @@ def test_an_open_mesh_has_no_wall_thickness_to_read(tmp_path: Path) -> None:
     thickness = finding(SheetMetalProcess(process="sheet_metal", thickness_mm=2, min_bend_radius_mm=2).checks(shape),
                         "sheet_thickness")  # fmt: skip
     assert thickness.passed is None
+
+
+def test_a_skin_no_line_leaves_by_a_wall_has_no_wall_thickness() -> None:
+    """An overlap as thin as a sheet: no reading anywhere, so none to look round for a thinner one."""
+    sheet = trimesh.Trimesh([[0, 0, 0], [10, 0, 0], [0, 10, 0]], [[0, 1, 2]])
+    with pytest.raises(Unmeasurable, match="no wall to measure"):
+        wall_thickness(sheet, 50)
 
 
 def test_a_design_s_own_tolerances_reach_its_process_checks(tmp_path: Path) -> None:

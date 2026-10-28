@@ -1,7 +1,7 @@
 """Agent skills hitlcad installs into design projects, for Claude Code and Codex.
 
 Each folder here is one skill, copied whole into a project; `$connectors`, `$mates`, `$relations`,
-`$fasteners`, `$checks` and `$processes` in its SKILL.md are filled in from the framework's unions, and the `hitlcad`
+`$fasteners`, `$checks` and `$processes` in its reference files are filled in from the framework's unions, and the `hitlcad`
 skill gets `playbook.md`, every code from the error catalog with its usual fix, and the plugins' reference files
 under `reference/` (`$references` lists them). Every enabled backend adds a `hitlcad-<backend>` skill holding its
 authoring guide. Skill folders named
@@ -51,7 +51,7 @@ def _backend_skill(backend: CADBackend) -> Skill:
 def render(backends: Iterable[CADBackend]) -> dict[str, Skill]:
     """Every skill by name."""
     references = registry().skill_references
-    values = describe.guide("") | {"references": "\n".join(f"- [{name}](reference/{name})" for name in references)
+    values = describe.guide("") | {"references": "\n".join(f"- [{name}]({name})" for name in references)
                                    or "- none: no plugin beyond hitlcad's own adds one"}  # fmt: skip
     skills: dict[str, Skill] = {}
     for folder in files(__name__).iterdir():
@@ -59,6 +59,7 @@ def render(backends: Iterable[CADBackend]) -> dict[str, Skill]:
             skill = _read(folder)
             skill["SKILL.md"] = Template(skill["SKILL.md"]).substitute(values)
             skills[folder.name] = skill
+    skills[PREFIX]["reference/design-json.md"] = Template(skills[PREFIX]["reference/design-json.md"]).substitute(values)
     skills[PREFIX]["playbook.md"] = describe.playbook()
     skills[PREFIX] |= {f"reference/{name}": text for name, text in references.items()}
     for backend in backends:

@@ -9,10 +9,12 @@ dead point).
 
 A position is clear when no pair of instances it moves overlaps there beyond what they share where they sit. A pair
 is measured again only once the positions since have moved its points as far as its gap was, so every position is
-shown clear; what happens between two positions is not, and the result says so (`motion.sampled`) until the human
-has watched the motion. A sweep is cached twice over: its solve by what that depends on (the loop's mates,
-relations, frames and bounds, the driver, the solver and the tolerances), and its collisions by that and every pair
-measured; the second key is also what a human's watch is of.
+shown clear; one no clearance is asked of whose gap is less than a position's move (gears in mesh) is from then on
+only tested for meeting at each position (`Collider.meets`), far cheaper than measuring it. What happens between
+two positions is not shown clear, and the result says so (`motion.sampled`) until the human has watched the motion.
+A sweep is cached twice over: its solve by what that depends on (the loop's mates, relations, frames and bounds, the
+driver, the solver and the tolerances), and its collisions by that and every pair measured; the second key is also
+what a human's watch is of.
 """
 
 from __future__ import annotations
@@ -26,13 +28,13 @@ from pydantic import Field
 
 from hitlcad.analysis.base import ResultCache
 from hitlcad.analysis.interference import boxes_touch
-from hitlcad.analysis.model import SEARCH_MM, AnalysisSettings, Leaf, gap
-from hitlcad.analysis.motion.findings import Contact, Findings, Least, Pair, at_rest
+from hitlcad.analysis.model import AnalysisSettings
+from hitlcad.analysis.motion.findings import Contact, Findings, Least, Pair, Parted, at_rest
 from hitlcad.analysis.motion.plans import LoopPlan, link_label, ranges
-from hitlcad.analysis.motion.turning import axis_frame, not_round
 from hitlcad.core import frames as fr
 from hitlcad.core.loops import SAMPLE_MM, LoopMate, LoopProblem, LoopRelation, Position, Solver
 from hitlcad.core.structure import Axis, Mate, Relation, symmetry_of
+from hitlcad.geometry.mesh import Collider
 from hitlcad.kernel.model import Model
 
 if TYPE_CHECKING:
@@ -78,10 +80,11 @@ class Solved(Model):
     def rest_index(self) -> int:
         return self.values.index(self.rest)
 
-    def at(self, i: int) -> dict[str, fr.Frame]:
-        """Each moving cluster's motion at position `i`."""
-        return {c: np.vstack([np.reshape(m, (3, 4)), [0.0, 0.0, 0.0, 1.0]]) for c, m in zip(self.clusters, self.poses[i],
-                                                                                          strict=True)}  # fmt: skip
+    def stacked(self) -> dict[str, np.ndarray]:
+        """Each moving cluster's motion at every position, as a stack of frames."""
+        flat = np.asarray(self.poses, dtype=float).reshape(len(self.values), len(self.clusters), 3, 4)
+        frames = np.concatenate([flat, np.broadcast_to([[[[0.0, 0.0, 0.0, 1.0]]]], (*flat.shape[:2], 1, 4))], axis=2)
+        return {c: frames[:, k] for k, c in enumerate(self.clusters)}
 
     @property
     def locks(self) -> list[LoopStop]:
@@ -101,13 +104,16 @@ class LoopSwept(Findings):
 class LoopPair(Pair):
     """A pair, the moving cluster each rides on (`hq` None: q stays), and the turn p makes against q, where a mate
     between their clusters holds them to one (a carrier in its bearing): what is round about it of either is left
-    out (`turning.not_round`), as the exact sweep leaves it out. Once shaped, the solids it moves."""
+    out (`turning.not_round`), as the exact sweep leaves it out. Once shaped, the solids it moves, and their
+    colliders."""
 
     hp: str
     hq: str | None
     turn: Axis | None
     a: manifold3d.Manifold | None = None
     b: manifold3d.Manifold | None = None
+    ca: Collider | None = None
+    cb: Collider | None = None
 
     def key(self) -> list[object]:
         turn = (
@@ -117,12 +123,12 @@ class LoopPair(Pair):
         )
         return [self.p.path, self.p.part.digest, np.round(self.p.transform, 6).tolist(), self.hp, self.q.path,
                 self.q.part.digest, np.round(self.q.transform, 6).tolist(), self.hq, turn, self.need, self.tracked,
-                round(self.sitting_mm3, 6)]  # fmt: skip
+                round(self.sitting_mm3, 6), self.contact_key()]  # fmt: skip
 
-    def against(self, poses: dict[str, fr.Frame]) -> fr.Frame:
-        """p's motion against q (in q's frame as assembled) at a position."""
+    def against(self, poses: dict[str, np.ndarray]) -> np.ndarray:
+        """p's motion against q (in q's frame as assembled) at each position (`Solved.stacked`)."""
         moved = poses[self.hp]
-        return moved if self.hq is None else np.linalg.inv(poses[self.hq]) @ moved
+        return moved if self.hq is None else fr.rigid_inverse(poses[self.hq]) @ moved
 
 
 REPORTED = 400  # the most positions of a loop a report carries, for the panel
@@ -138,7 +144,8 @@ def sweep(plan: LoopPlan, settings: AnalysisSettings, cache: ResultCache) -> Loo
 def _sweep(plan: LoopPlan, settings: AnalysisSettings, cache: ResultCache) -> LoopSwept:
     solver = settings.loop_solver
     if solver is None:
-        return LoopSwept(why=f"no loop solver {settings.solver!r} is installed")
+        why = f"no loop solver {settings.solver!r} is installed" if settings.solver else "no loop solver is set"
+        return LoopSwept(why=why)
     solved = _drive(plan, solver, cache)
     if isinstance(solved, str):
         return LoopSwept(why=solved)
@@ -149,7 +156,7 @@ def _sweep(plan: LoopPlan, settings: AnalysisSettings, cache: ResultCache) -> Lo
     key = cache.key("loop-sweep", solved.key, [p.key() for p in pairs], settings.overlap_mm3,
                     settings.mesh_tolerance_mm, plan.world.tolerances.position_mm)  # fmt: skip
     found = Findings.model_validate(cache.get_or(key, lambda: _collide(pairs, solved, plan, settings).model_dump()))
-    return out.model_copy(update={"contacts": found.contacts, "least": found.least, "key": key})
+    return out.model_copy(update={"contacts": found.contacts, "parted": found.parted, "least": found.least, "key": key})
 
 
 def _drive(plan: LoopPlan, solver: Solver, cache: ResultCache) -> Solved | str:
@@ -191,9 +198,9 @@ def _problem(plan: LoopPlan, driver: int, kind: str) -> LoopProblem:
     for k in plan.relations:
         rel: Relation = k.source
         axes = rel.axes(k.a.frame, k.b.frame)
-        ratio = rel.ratio(k.a.owner.nominals(k.a.spec), k.b.owner.nominals(k.b.spec))
         relations.append(LoopRelation(link_label(k), rel, find(k.a.instance), find(k.b.instance), k.a.frame, k.b.frame,
-                                      ratio, (axes[0].kind, axes[1].kind), rel.tolerance or tol.position_mm))  # fmt: skip
+                                      plan.world.laws[id(k)], (axes[0].kind, axes[1].kind),
+                                      rel.tolerance or tol.position_mm))  # fmt: skip
     leaves = plan.world.leaves
     corners = {c: np.vstack([_corners(leaves[p].bounds) for p in plan.leaves_of(c)]) for c in plan.clusters}
     return LoopProblem(plan.clusters, mates, relations, driver, kind, corners, tol)
@@ -214,7 +221,7 @@ def _solve_key(problem: LoopProblem, solver: Solver, cache: ResultCache) -> str:
         "loop-solve", solver.name, solver.version, SAMPLE_MM, tol.position_mm, tol.angle_deg, tol.motion_steps,
         [[m.label, m.mate.model_dump(mode="json"), m.a, m.b, rounded(m.fa), rounded(m.fb), sorted(m.holds)]
          for m in problem.mates],
-        [[r.label, r.relation.model_dump(mode="json"), r.a, r.b, rounded(r.fa), rounded(r.fb), round(r.ratio, 12),
+        [[r.label, r.relation.model_dump(mode="json"), r.a, r.b, rounded(r.fa), rounded(r.fb), r.law.key(),
           r.kinds, r.tolerance] for r in problem.relations],
         problem.clusters, problem.driver, problem.kind, {c: rounded(p) for c, p in problem.corners.items()},
     )  # fmt: skip
@@ -285,11 +292,10 @@ def _pairs(plan: LoopPlan, solved: Solved) -> list[LoopPair]:
     """Each leaf the loop moves with every other leaf its motion may bring it near, but those that move with it."""
     w, tol = plan.world, plan.world.tolerances
     hosts = {p: c for c in plan.clusters for p in plan.leaves_of(c)}
-    poses = [solved.at(i) for i in range(len(solved.values))]
+    poses = solved.stacked()
     boxes = {}
     for p, c in hosts.items():
-        corners = _corners(w.leaves[p].bounds)
-        moved = np.vstack([corners @ pose[c][:3, :3].T + pose[c][:3, 3] for pose in poses])
+        moved = _placed(_corners(w.leaves[p].bounds), poses[c]).reshape(-1, 3)
         boxes[p] = np.array([moved.min(axis=0), moved.max(axis=0)])
     turns = _turns(plan, solved)
     out = []
@@ -326,69 +332,81 @@ def _collide(pairs: list[LoopPair], solved: Solved, plan: LoopPlan, settings: An
     contact each way."""
     tol, out = plan.world.tolerances, Findings()
     round_mm = settings.mesh_tolerance_mm + tol.position_mm  # a facetted round is round to this
-    shapes: dict[tuple[str, tuple[float, ...]], manifold3d.Manifold] = {}
-
-    def shaped(leaf: Leaf, turn: Axis) -> manifold3d.Manifold:
-        key = (leaf.path, *np.round([*turn.origin, *turn.direction], 6).tolist())
-        if key not in shapes:
-            shapes[key] = not_round(leaf.manifold, axis_frame(turn), round_mm)
-        return shapes[key]
-
     kept = []
     for x in pairs:
         if x.turn is None:
-            x.a, x.b = x.p.manifold, x.q.manifold
+            (x.a, x.ca), (x.b, x.cb) = (x.p.manifold, x.p.collider), (x.q.manifold, x.q.collider)
         else:
-            x.a, x.b = shaped(x.p, x.turn), shaped(x.q, x.turn)
-            if x.a.is_empty() or x.b.is_empty():  # all of one is round about the turn: it keeps its gap
+            (x.a, x.ca), (x.b, x.cb) = x.p.not_round(x.turn, round_mm), x.q.not_round(x.turn, round_mm)
+            if x.ca is None or x.cb is None:  # all of one is round about the turn: it keeps its gap
                 continue
             x.sitting_mm3 = float((x.a ^ x.b).volume()) if x.sitting_mm3 else 0.0
         kept.append(x)
     least: dict[tuple[str, str], Least] = {}
-    poses = [solved.at(i) for i in range(len(solved.values))]
-    rest = solved.rest_index
-    for way in (range(rest, len(poses)), range(rest, -1, -1)):
+    poses, rest = solved.stacked(), solved.rest_index
+    along = {id(x): x.against(poses) for x in kept}
+    for way in (range(rest, len(solved.values)), range(rest, -1, -1)):
         steps = list(way)
         if len(steps) < 2:
             continue
-        moves = {id(x): [x.against(poses[i]) for i in steps] for x in kept}
+        moves = {id(x): along[id(x)][steps] for x in kept}
         travel = {id(x): _travel(_corners(x.p.bounds), moves[id(x)]) for x in kept}
         due = {id(x): 0.0 for x in kept}
         need = {id(x): x.need for x in kept}
+        near: set[int] = set()  # no clearance asked of it, and its gap skips no position: now only whether it meets
         hits: list[Contact] = []
+        parted: list[Parted] = []
         for j, i in enumerate(steps):
             for x in kept:
+                assert x.a is not None and x.b is not None and x.ca is not None and x.cb is not None
                 so_far = travel[id(x)][j]
-                if so_far < due[id(x)]:
+                if x.touching is not None:  # kept in contact: measured at every position, for parting or overlap
+                    found = x.ca.distance(x.cb, moves[id(x)][j])
+                    if found > x.parts_at(settings, tol):
+                        parted.append(Parted(kind=solved.kind, at=solved.values[i], end=solved.values[steps[-1]],
+                                             a=x.p.path, b=x.q.path, gap_mm=round(found, 6),
+                                             relation=x.touching.source.address))  # fmt: skip
+                        continue
+                elif so_far < due[id(x)]:
                     continue
-                reach = need[id(x)] + travel[id(x)][-1] - so_far + tol.position_mm + SEARCH_MM
-                assert x.a is not None and x.b is not None
-                a = x.a.transform(moves[id(x)][j][:3, :])
-                found = gap(a, x.b, reach)  # searched near first, as far as `reach` if need be
-                if found >= reach:  # it cannot close the gap before the end
-                    due[id(x)] = math.inf
-                    continue
-                if x.tracked:
-                    _record(least, x, found, solved.kind, solved.values[i])
-                need[id(x)] = need[id(x)] if found >= need[id(x)] else 0.0  # its clearance is broken: now only contact
-                shared = float((a ^ x.b).volume()) if found < tol.position_mm else 0.0
+                elif id(x) in near:
+                    found = 0.0 if x.ca.meets(x.cb, moves[id(x)][j]) else tol.position_mm
+                else:
+                    found = x.ca.distance(x.cb, moves[id(x)][j])
+                    if found >= need[id(x)] + travel[id(x)][-1] - so_far + tol.position_mm:  # it cannot close the gap
+                        due[id(x)] = math.inf
+                        continue
+                    if x.tracked:
+                        _record(least, x, found, solved.kind, solved.values[i])
+                    need[id(x)] = need[id(x)] if found >= need[id(x)] else 0.0  # its clearance is broken: only contact
+                    then = travel[id(x)][j + 1] if j + 1 < len(steps) else math.inf
+                    if not x.tracked and so_far + found < then:
+                        near.add(id(x))
+                shared = (
+                    float((x.a.transform(moves[id(x)][j][:3, :]) ^ x.b).volume()) if found < tol.position_mm else 0.0
+                )
                 if shared > x.sitting_mm3 + settings.overlap_mm3:
                     clear = solved.values[steps[j - 1]] if j else solved.values[i]
                     hits.append(Contact(kind=solved.kind, at=solved.values[i], end=solved.values[steps[-1]],
                                         clear=clear, a=x.p.path, b=x.q.path, overlap_mm3=round(shared, 6)))  # fmt: skip
                 due[id(x)] = so_far + max(found - need[id(x)], tol.position_mm)
-            if hits:
+            if hits or parted:
                 out.contacts += hits
+                out.parted += parted
                 break
     out.least = list(least.values())
     return out
 
 
-def _travel(corners: np.ndarray, motions: list[fr.Frame]) -> list[float]:
+def _placed(points: np.ndarray, motions: np.ndarray) -> np.ndarray:
+    """Points (n × 3) moved by each of a stack of motions: positions × n × 3."""
+    return np.einsum("sij,nj->sni", motions[:, :3, :3], points) + motions[:, None, :3, 3]
+
+
+def _travel(corners: np.ndarray, motions: np.ndarray) -> list[float]:
     """How far points have moved, summed over the motions so far, at each one."""
-    placed = [corners @ m[:3, :3].T + m[:3, 3] for m in motions]
-    steps = [0.0] + [float(np.linalg.norm(b - a, axis=1).max()) for a, b in zip(placed, placed[1:], strict=False)]
-    return np.cumsum(steps).tolist()
+    steps = np.linalg.norm(np.diff(_placed(corners, motions), axis=0), axis=2).max(axis=1)
+    return np.concatenate([[0.0], np.cumsum(steps)]).tolist()
 
 
 def _record(least: dict[tuple[str, str], Least], pair: LoopPair, found: float, kind: str, at: float) -> None:

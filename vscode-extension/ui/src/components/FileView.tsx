@@ -2,24 +2,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, fileCadUrl } from "../api/client";
 import type { Pick, SelectionItem } from "../api/types";
 import { useSelection } from "../hooks/useSelection";
-import { useViewJson } from "../hooks/useViewJson";
+import { useScene } from "../hooks/useScene";
 import { type CadBounds, exactShapes } from "../lib/cadView";
 import { notifyHost, selectionMarker, selectionText } from "../lib/selection";
 import { CadCanvas } from "./CadCanvas";
 import { ExplodeSpread } from "./ExplodeSpread";
 import { SelectHint } from "./SelectHint";
 import { SelectionBox } from "./SelectionBox";
+import { InspectionControls } from "./InspectionControls";
+import { type Inspection, selectedInstances } from "../lib/inspection";
 
 /** Viewer for any model file on the server's machine, which the server converts for three-cad-viewer. */
 export function FileView({ path }: { path: string }) {
   const name = path.split(/[\\/]/).pop() || path;
-  const { data, error: fetchError } = useViewJson(fileCadUrl(path));
+  const { data, error: fetchError } = useScene(fileCadUrl(path));
   const [viewError, setViewError] = useState<string | null>(null);
   const loadError = fetchError ?? viewError;
   const [bounds, setBounds] = useState<CadBounds | null>(null);
   const described = useRef(new Map<string, SelectionItem>());
   const [exploded, setExploded] = useState(false);
   const [spread, setSpread] = useState(1);
+  const [inspection, setInspection] = useState<Inspection | null>(null);
 
   const describe = useCallback(
     (picks: Pick[]) =>
@@ -59,14 +62,17 @@ export function FileView({ path }: { path: string }) {
       </header>
       <div className={`viewport${exploded ? " exploded" : ""}`}>
         {data !== null && !loadError && (
-          <CadCanvas data={data} markers={markers} spread={spread} onExplode={setExploded} onPick={sel.select} onReady={setBounds} onError={setViewError} />
+          <CadCanvas data={data} markers={markers} spread={spread} inspection={inspection} onExplode={setExploded} onPick={sel.select} onReady={setBounds} onError={setViewError}
+            tools={(activateInspection) => <InspectionControls count={selectedInstances(sel.items).length} onOpen={activateInspection} onAction={(action) => setInspection({
+              revision: null, instances: selectedInstances(sel.items), action, sequence: (inspection?.sequence ?? 0) + 1,
+            })} />} />
         )}
         {data === null && !loadError && <div className="viewport-message">Converting {name}…</div>}
         {loadError && <p className="viewport-message fail">Could not show {name}: {loadError}</p>}
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {data !== null && !loadError && !sel.items.length && (
           <SelectHint>
-            {exactShapes(data).size ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more.
+            {exactShapes(data).size ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more. Right-drag to pan; scroll to zoom.
           </SelectHint>
         )}
         <div className="side">

@@ -1,4 +1,4 @@
-"""Loop solvers: hitlcad's own, on scipy's least squares."""
+"""Loop solvers: hitlcad's own, CasADi's SQP method on the problem's compiled graph."""
 
 from __future__ import annotations
 
@@ -9,6 +9,6 @@ from hitlcad.kernel.plugins import hookimpl
 
 @hookimpl
 def hitlcad_solvers() -> dict[str, Any]:
-    from hitlcad.builtin.solvers.least_squares import LeastSquares
+    from hitlcad.builtin.solvers.sqp import Sqp
 
-    return {LeastSquares.name: LeastSquares()}
+    return {Sqp.name: Sqp()}

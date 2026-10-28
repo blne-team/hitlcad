@@ -68,6 +68,7 @@ class ModelPackage:
     #: The backends whose part files may import it; a backend whose Python is not hitlcad's (Blender's) runs
     #: only packages that need nothing but the standard library and the backend's own modules.
     backends: tuple[str, ...]
+    summary: str = ""  # public helpers and their purpose, discoverable without importing backend modules
 
     def files(self) -> list[Path]:
         return sorted((self.root / self.package.replace(".", "/")).rglob("*.py"))

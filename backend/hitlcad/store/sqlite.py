@@ -31,8 +31,9 @@ from hitlcad.core.events import EVENT_ADAPTER, Event, RevisionCreated
 from hitlcad.core.report import Revision
 from hitlcad.kernel.errors import STORE_IN_USE, STORE_UNREADABLE
 
-#: The tables' layout: a database of another is set aside. Raise it with every change to TABLES.
-SCHEMA = 1
+#: The tables' layout and what their rows hold (the events' types): a database of another is set aside. Raise it
+#: with every change to either.
+SCHEMA = 2
 DATABASE = "hitlcad.db"
 LOCK = "hitlcad.lock"
 

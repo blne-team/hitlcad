@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import shutil
 from collections.abc import AsyncIterator
@@ -14,6 +15,7 @@ from hitlcad.config import Settings
 from hitlcad.render.base import NullRenderer
 
 DESIGNS = Path(__file__).parent / "designs"
+BACKENDS = ["build123d", "blender"]
 
 
 class SharedCache(Settings):
@@ -36,15 +38,35 @@ def shared_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture
 def settings(request: pytest.FixtureRequest, tmp_path: Path, shared_cache: Path) -> Settings:
     if request.node.get_closest_marker("cold_cache"):
-        return Settings(data_dir=tmp_path / "data", backends=["build123d", "blender"])
-    return SharedCache(data_dir=tmp_path / "data", backends=["build123d", "blender"], shared_cache=shared_cache)
+        return Settings(data_dir=tmp_path / "data", backends=BACKENDS)
+    return SharedCache(data_dir=tmp_path / "data", backends=BACKENDS, shared_cache=shared_cache)
+
+
+@pytest.fixture(scope="session")
+async def backends(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[BackendRegistry]:
+    """The session's backends, on the session's event loop: their workers outlive each test's server, so the next
+    test's designs find a spare with its libraries loaded, as a server's next design does. Each xdist worker has its
+    own."""
+    registry = BackendRegistry.from_settings(Settings(data_dir=tmp_path_factory.mktemp("backends"), backends=BACKENDS))
+    yield registry
+    for backend in registry.all():
+        await backend.close()
 
 
 @pytest.fixture
-async def core(settings: Settings) -> AsyncIterator[HitlCad]:
-    app = HitlCad.create(settings, registry=BackendRegistry.from_settings(settings), renderer=NullRenderer())
+async def core(request: pytest.FixtureRequest, settings: Settings, backends: BackendRegistry) -> AsyncIterator[HitlCad]:
+    """A server on the session's backends; one of its own for a test that serves it on an event loop of its own
+    (a TestClient's), since workers are their loop's."""
+    shared = inspect.iscoroutinefunction(request.function)
+    app = HitlCad.create(settings, registry=backends if shared else None, renderer=NullRenderer())
     yield app
     await app.shutdown()
+
+
+def edit_json(path: Path, change: Any) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change(data)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def write_design(root: Path, files: dict[str, Any]) -> Path:

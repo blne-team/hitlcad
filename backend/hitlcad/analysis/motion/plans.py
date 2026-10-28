@@ -23,6 +23,7 @@ from hitlcad.analysis.coverage import Link, nested_links
 from hitlcad.analysis.interference import Allowance, allowed
 from hitlcad.analysis.model import BuiltDesign, Leaf
 from hitlcad.core import frames as fr
+from hitlcad.core.laws import Law, Linear, compose
 from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import Axis, Mate, Relation, Tolerances
 from hitlcad.kernel.errors import MOTION_HELD, StructureError
@@ -32,12 +33,16 @@ if TYPE_CHECKING:
     from hitlcad.analysis.motion.tree import Swept
 
 NAME = "motion"
-_UNIT = 0.01  # of the driving motion, to read a driven rate by
+_STEP = 0.01  # ° or mm of one end of a relation, to read how its coordinates move by
+_HOLDS = 1e-7  # of a step: a relation's coordinate that moves less than this does not move
+_UNIT_MM = 0.5  # of an input's travel, as 1° of its turn: the steps a driven mate's motion is followed by
+_MOVES = 1e-6  # ° or mm: a driven mate that moves less than this does not move
 
 
 @dataclass
 class Plan:
-    """One mate's sweep: its free motions and ranges, which side moves, and the world it moves in."""
+    """One input's sweep: its free motions and ranges, which side moves, the world it moves in, and the mates whose
+    motion it drives (`driven`), which it checks along its own."""
 
     link: Link
     ranges: list[tuple[str, float, float, bool]]  # (free motion, start, end, continuous)
@@ -45,7 +50,19 @@ class Plan:
     sign: float
     free: dict[str, float]
     world: World
+    driven: list[Driven] = field(default_factory=list)
     swept: Swept | None = None  # once `sweep` has run
+
+
+@dataclass
+class Driven:
+    """A mate's free motion an input drives: how far it moves (from, to) as the input moves through its range
+    `kind`."""
+
+    link: Link
+    kind: str
+    by: str  # the input's free motion
+    span: tuple[float, float]
 
 
 @dataclass
@@ -78,6 +95,8 @@ class World:
     ground: str
     moving_links: list[Link]
     relations: list[Link]
+    laws: dict[int, Law] = field(metadata={"doc": "Each relation's law, by its link's id"})
+    touching: dict[frozenset[str], Link] = field(metadata={"doc": "Leaf pairs a relation keeps in contact, and it"})
     ok_pairs: dict[frozenset[str], Allowance]
     tolerances: Tolerances
     tracked: dict[frozenset[str], float] = field(
@@ -90,21 +109,24 @@ class World:
 
 @dataclass(frozen=True)
 class Drive:
-    """How a cluster moves per unit of the mate's free motion: `rate` times as far about or along `axis`."""
+    """How a cluster moves as the input moves: about or along `axis`, by `law` of the input's motion."""
 
     axis: Axis
-    rate: float
+    law: Law
 
     def at(self, value: float) -> fr.Frame:
-        return self.axis.motion(self.rate * value)
+        return self.axis.motion(self.law.at(value))
 
-    def speed(self, radius: float) -> float:
-        """The furthest a point `radius` from the axis travels per unit (mm)."""
-        return abs(self.rate) * (1.0 if self.axis.kind == "travel" else math.radians(1.0) * radius)
+    def speed(self, radius: float, lo: float, hi: float) -> float:
+        """The furthest a point `radius` from the axis travels per unit of the input, within [lo, hi] (mm)."""
+        return self.law.steepest(lo, hi) * (1.0 if self.axis.kind == "travel" else math.radians(1.0) * radius)
 
-    def key(self) -> list[float | str]:
-        return [self.axis.kind, *np.round(self.axis.origin, 6).tolist(), *np.round(self.axis.direction, 6).tolist(),
-                round(self.rate, 9)]  # fmt: skip
+    def about(self) -> tuple[object, ...]:
+        """Its axis, as plain values: what a solid shaped against it is kept by."""
+        return (self.axis.kind, *np.round(self.axis.origin, 6).tolist(), *np.round(self.axis.direction, 6).tolist())
+
+    def key(self) -> list[object]:
+        return [*self.about(), self.law.key()]
 
 
 class Clusters:
@@ -202,8 +224,10 @@ def plans(built: BuiltDesign) -> list[Plan | LoopPlan | Result]:
         return []
     moving_links = [k for k in all_links if isinstance(k.source, Mate) and not k.rigid]
     relations = [k for k in all_links if isinstance(k.source, Relation)]
-    world = World(leaves, clusters, ground, moving_links, relations, allowed(all_links), built.tolerances,
-                  _tracked(built))  # fmt: skip
+    laws = {id(k): k.source.law(k.ends()) for k in relations}
+    touching = {frozenset((k.a.instance, k.b.instance)): k for k in relations if k.source.touching}
+    world = World(leaves, clusters, ground, moving_links, relations, laws, touching, allowed(all_links),
+                  built.tolerances, _tracked(built))  # fmt: skip
     edges = [*moving_links, *relations]
     blocks = _blocks(edges, clusters)
     block_of = {id(edges[n]): i for i, block in enumerate(blocks) for n in block}
@@ -233,9 +257,65 @@ def plans(built: BuiltDesign) -> list[Plan | LoopPlan | Result]:
             solve.add(block_of[id(link)])  # the relation it cannot hold closes a loop through this mate
         trees.append(plan)
     in_loops = {id(edges[n]) for i in solve for n in blocks[i]}
-    out += [p for p in trees if id(p.link) not in in_loops]
+    out += _inputs([p for p in trees if id(p.link) not in in_loops])
     out += [_loop_plan([edges[n] for n in sorted(blocks[i])], edges, world) for i in sorted(solve)]
     return out
+
+
+def _inputs(trees: list[Plan]) -> list[Plan]:
+    """The plans of the inputs: each mate's free motion in turn, but one an input before it already moves, which
+    that input drives (`Plan.driven`) and its sweep checks. A plan left with no range of its own is no input. A
+    follower's own motion comes after the rest, so its cam drives it, not it the cam."""
+
+    def follows(plan: Plan) -> bool:
+        find, w = plan.world.clusters.find, plan.world
+        return any(w.laws[id(r)].one_way and find(r.b.instance) in plan.moving and find(r.a.instance) not in plan.moving
+                   for r in w.relations)  # fmt: skip
+
+    inputs: list[Plan] = []
+    for plan in sorted(trees, key=follows):
+        own = []
+        for span in plan.ranges:
+            kind = span[0]
+            found = next(((p, by, moved) for p in inputs for by, *_ in p.ranges
+                          if (moved := _moved(p, by, plan.link, kind)) is not None), None)  # fmt: skip
+            if found is None:
+                own.append(span)
+                continue
+            by_plan, by, moved = found
+            rest = plan.free.get(kind, 0.0)
+            by_plan.driven.append(Driven(plan.link, kind, by, (rest + min(moved), rest + max(moved))))
+        if own:
+            plan.ranges = own
+            inputs.append(plan)
+    return inputs
+
+
+def _moved(plan: Plan, kind: str, link: Link, free: str) -> list[float] | None:
+    """How far `link`'s free motion `free` moves from where it sits, at positions through `plan`'s range `kind`
+    (counted on past a half turn); None when that range does not move it."""
+    driven = drives(plan, kind)[0]
+    find = plan.world.clusters.find
+    da, db = driven.get(find(link.a.instance)), driven.get(find(link.b.instance))
+    if da is db:
+        return None
+    fa = link.a.frame
+    coordinate = Axis(free, fr.origin(fa), fr.z_axis(fa))  # `Mate.motion`
+    rest = plan.free.get(kind, 0.0)
+    _, lo, hi, continuous = next(r for r in plan.ranges if r[0] == kind)
+    ends = (rest - 180.0, rest + 180.0) if continuous else (lo, hi)
+    out = []
+    for end in ends:
+        n = max(int(abs(end - rest) / (1.0 if kind == "angle" else _UNIT_MM)), 1)
+        total = last = 0.0
+        for i in range(1, n + 1):
+            value = (end - rest) * i / n
+            motion = np.linalg.inv(da.at(value) if da else fr.IDENTITY) @ (db.at(value) if db else fr.IDENTITY)
+            now = coordinate.of(motion)
+            total += fr.reduce_angle(now - last, None) if free == "angle" else now - last
+            last = now
+            out.append(total)
+    return out if max(abs(v) for v in out) > _MOVES else None
 
 
 def _blocks(edges: list[Link], clusters: Clusters) -> list[list[int]]:
@@ -286,32 +366,31 @@ def link_label(link: Link) -> str:
 
 
 def drives(plan: Plan, kind: str) -> tuple[dict[str, Drive], list[Link]]:
-    """Each moving cluster's drive per unit of the mate's `kind`, carried on through relations along the
-    axis each gives the cluster it drives, at the rate that holds the relation (`Relation.coordinates`); and
-    the relations no drive about a fixed axis can hold: one coupling a moving cluster to one that cannot
-    move, or two driven ones at rates it does not hold (a closed train)."""
+    """Each moving cluster's drive by the mate's `kind`, carried on through relations along the axis each gives
+    the cluster it drives, by the law that holds the relation (`_carried`); and the relations no drive about a
+    fixed axis can hold: one coupling a moving cluster to one that cannot move, or two driven ones by laws it
+    does not hold (a closed train). A follower does not drive its cam back: a one-way law driven from b holds
+    nothing still."""
     w, fa = plan.world, plan.link.a.frame
-    drives = dict.fromkeys(plan.moving, Drive(Axis(kind, fr.origin(fa), fr.z_axis(fa)), plan.sign))  # `Mate.motion`
+    find = w.clusters.find
+    drives = dict.fromkeys(
+        plan.moving, Drive(Axis(kind, fr.origin(fa), fr.z_axis(fa)), Linear(plan.sign))
+    )  # `Mate.motion`
     stuck: dict[int, Link] = {}  # by id: links compare by their frames
     changed = True
     while changed:
         changed = False
         for rel in w.relations:
-            ca, cb = w.clusters.find(rel.a.instance), w.clusters.find(rel.b.instance)
-            if (ca in drives) == (cb in drives) or id(rel) in stuck:
+            ca, cb = find(rel.a.instance), find(rel.b.instance)
+            if (ca in drives) == (cb in drives) or id(rel) in stuck or _back(w, rel, cb in drives):
                 continue
-            axis_a, axis_b = rel.source.axes(rel.a.frame, rel.b.frame)
-            driven, axis = (rel.b, axis_b) if ca in drives else (rel.a, axis_a)
-            off = [
-                _off(rel, drives | {w.clusters.find(driven.instance): Drive(axis, rate)}, w.clusters.find)
-                for rate in (0.0, 1.0)
-            ]
-            if math.isclose(off[0], off[1], abs_tol=1e-12):  # its own motion does not move the relation
+            drive = _carried(w, rel, drives, ca in drives)
+            if drive is None:
                 stuck[id(rel)] = rel
                 continue
-            drive = Drive(axis, off[0] / (off[0] - off[1]))
-            own = [k for k in w.moving_links if k is not plan.link and w.clusters.find(driven.instance) in
-                   (w.clusters.find(k.a.instance), w.clusters.find(k.b.instance))]  # fmt: skip
+            driven = rel.b if ca in drives else rel.a
+            own = [k for k in w.moving_links if k is not plan.link and find(driven.instance) in
+                   (find(k.a.instance), find(k.b.instance))]  # fmt: skip
             for k in own:
                 side = w.clusters.side(driven.instance, w.moving_links, exclude=k, ground=w.ground, also=plan.link)
                 if side is None or side & drives.keys():
@@ -320,20 +399,49 @@ def drives(plan: Plan, kind: str) -> tuple[dict[str, Drive], list[Link]]:
                 changed = True
                 break
     stuck |= {id(r): r for r in w.relations if id(r) not in stuck and (
-        (w.clusters.find(r.a.instance) in drives) != (w.clusters.find(r.b.instance) in drives)
-        or w.clusters.find(r.a.instance) in drives and abs(_off(r, drives, w.clusters.find)) > 1e-9)}  # fmt: skip
+        (find(r.a.instance) in drives) != (find(r.b.instance) in drives) and not _back(w, r, find(r.b.instance) in drives)
+        or find(r.a.instance) in drives and find(r.b.instance) in drives and abs(_off(w, r, drives)) > _HOLDS)}  # fmt: skip
     return drives, list(stuck.values())
 
 
-def _off(rel: Link, drives: dict[str, Drive], cluster: Callable[[str], str]) -> float:
-    """How far a relation is from holding (b's units) after `_UNIT` of the drives moves its ends' clusters."""
-    spec: Relation = rel.source
+def _back(world: World, rel: Link, from_b: bool) -> bool:
+    """Whether the relation is driven from b by a law that only drives b from a."""
+    return from_b and world.laws[id(rel)].one_way
+
+
+def _carried(world: World, rel: Link, drives: dict[str, Drive], from_a: bool) -> Drive | None:
+    """The drive of the relation's undriven end, about or along its own axis, that holds the relation as the other
+    end moves by its drive; None where none can. Moved along fixed axes the relation's coordinates are linear in
+    the ends' (each read from a small step of one end): a straight-line law holds at the rate that keeps it, and
+    any law where each coordinate is its own end's alone."""
+    find, law = world.clusters.find, world.laws[id(rel)]
+    driver, other = (rel.a, rel.b) if from_a else (rel.b, rel.a)
+    given = drives[find(driver.instance)]
+    axis = rel.source.axes(rel.a.frame, rel.b.frame)[1 if from_a else 0]
+    (qa1, qb1), (qa2, qb2) = (_coordinates(rel, {find(end.instance): along.motion(_STEP)}, find)
+                              for end, along in ((driver, given.axis), (other, axis)))  # fmt: skip
+    if isinstance(law, Linear):  # off = qb − r·qa, linear in both ends' steps
+        c_driver, c_other = qb1 - law.ratio * qa1, qb2 - law.ratio * qa2
+        if abs(c_other) < _HOLDS * _STEP:
+            return None
+        return Drive(axis, compose(Linear(-c_driver / c_other), given.law))
+    if max(abs(qa2), abs(qb1)) > _HOLDS * _STEP or abs(qb2) < _HOLDS * _STEP:
+        return None
+    return Drive(axis, compose(law, given.law, qa1 / _STEP, _STEP / qb2))
+
+
+def _coordinates(rel: Link, moved: dict[str, fr.Frame], find: Callable[[str], str]) -> tuple[float, float]:
+    """The relation's coordinates once its ends' clusters are `moved`."""
     fa, fb = rel.a.frame, rel.b.frame
-    moved = [
-        d.at(_UNIT) @ end.frame if (d := drives.get(cluster(end.instance))) else end.frame for end in (rel.a, rel.b)
-    ]
-    qa, qb = spec.coordinates(fa, fb, *moved)
-    return qb - spec.ratio(rel.a.owner.nominals(rel.a.spec), rel.b.owner.nominals(rel.b.spec)) * qa
+    ma, mb = (moved.get(find(end.instance), fr.IDENTITY) @ end.frame for end in (rel.a, rel.b))
+    return rel.source.coordinates(fa, fb, ma, mb)
+
+
+def _off(world: World, rel: Link, drives: dict[str, Drive]) -> float:
+    """How far a relation is from holding (b's units) a unit of the input on."""
+    find = world.clusters.find
+    qa, qb = _coordinates(rel, {c: d.at(1.0) for c, d in drives.items()}, find)
+    return qb - world.laws[id(rel)].at(qa)
 
 
 def unit(kind: str) -> str:

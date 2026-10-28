@@ -1,0 +1,35 @@
+{
+  "hitlcad": 2,
+  "name": "Mounting plate with screw bosses",
+  "backend": "build123d",
+  "brief": {
+    "title": "A parametric mounting plate",
+    "summary": "A rectangular plate with four round through holes and raised bosses, driven by shared mounting centers.",
+    "assumptions": ["Hole sizes are geometric dimensions; no screw fit, thread strength or load capacity is established."]
+  },
+  "parameters": [
+    {"name": "width", "value": 60, "min": 40, "max": 100},
+    {"name": "depth", "value": 40, "min": 30, "max": 80},
+    {"name": "thickness", "value": 3, "min": 2, "max": 6},
+    {"name": "hole_diameter", "value": 3.4, "min": 2, "max": 5},
+    {"name": "boss_height", "value": 6, "min": 0, "max": 12},
+    {"name": "boss_diameter", "value": 9, "min": 7, "max": 12}
+  ],
+  "ground": "plate",
+  "manufacturing": {"process": "fdm"},
+  "parts": {
+    "plate": {
+      "role": "Supports four mounting points",
+      "file": "parts/plate.py",
+      "material": "PLA",
+      "connectors": {"holes": {"kind": "hole", "count": 4}}
+    }
+  },
+  "requirements": [
+    {"text": "One connected mounting plate", "check": {"kind": "bodies", "target": "plate", "count": 1}},
+    {"text": "Four complete mounting holes", "check": {"kind": "hole", "target": "plate", "diameter": "hole_diameter", "count": 4}},
+    {"text": "Height follows the plate and bosses", "check": {"kind": "size", "target": "plate", "axis": "z", "min": "interfaces.overall_height", "max": "interfaces.overall_height"}},
+    {"text": "Walls retain at least 1 mm", "check": {"kind": "wall", "target": "plate", "min": 1}}
+  ],
+  "configurations": {"compact": {"width": 40, "depth": 30, "boss_height": 4}}
+}

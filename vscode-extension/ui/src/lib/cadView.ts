@@ -1,16 +1,9 @@
 import type * as Three from "three";
-import {
-  decodeInstancedFormat,
-  Display,
-  isInstancedFormat,
-  type RenderOptions,
-  type Shapes,
-  Viewer,
-  type ViewerOptions,
-} from "three-cad-viewer";
+import { Display, type RenderOptions, type Shapes, Viewer, type ViewerOptions } from "three-cad-viewer";
 import "three-cad-viewer/css";
 import type { Pick, Vec3 } from "../api/types";
 import type { CadMove } from "./motion";
+import type { Inspection } from "./inspection";
 
 /** A numbered marker drawn over the model: an agent pin or a selected item. */
 export interface CadMarker {
@@ -45,9 +38,9 @@ const SELECT_COLOR = "#2f6df6";
 const GHOST_COLOR = "#4c6ef5";
 
 const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, directIntensity: 1.1, metalness: 0.3, roughness: 0.65, defaultOpacity: 0.5, normalLen: 0 };
-// The axes and the grid at the design's origin (0, 0, 0), which its parts are placed from, not at the middle of
-// its bounding box: three-cad-viewer's default moves them with the model's extent.
-const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, axes0: true, grid: [true, false, false], collapse: 1 };
+// Keep origin axes in design coordinates. The XY grid is placed at the model base below;
+// centerGrid prevents the viewer from additionally lowering it by half its grid size.
+const VIEW: ViewerOptions = { up: "Z", control: "orbit", ortho: true, axes: false, axes0: true, centerGrid: true, grid: [true, false, false], collapse: 1 };
 
 /** The instance a viewer path names: "/Gearbox/tilt/planet[2]" -> "tilt/planet[2]" (the root is the design). */
 /** A box's eight corners. */
@@ -66,13 +59,13 @@ interface ViewNode {
 }
 
 /** Every node of a view's tree: the design, its assemblies and its shapes. */
-function nodes(data: unknown): ViewNode[] {
+function nodes(shapes: Shapes): ViewNode[] {
   const out: ViewNode[] = [];
   const walk = (node: ViewNode) => {
     out.push(node);
     node.parts?.forEach(walk);
   };
-  walk((data as { shapes: ViewNode }).shapes);
+  walk(shapes as unknown as ViewNode);
   return out;
 }
 
@@ -81,15 +74,10 @@ function nodes(data: unknown): ViewNode[] {
  * as the server numbers them (it marks them `exact`). A click on one names its component; a click on any
  * other shape (a mesh) is a point.
  */
-export const exactShapes = (data: unknown): Set<string> => new Set(nodes(data).filter((n) => n.exact).map((n) => n.id));
+export const exactShapes = (shapes: Shapes): Set<string> => new Set(nodes(shapes).filter((n) => n.exact).map((n) => n.id));
 
 /** The ids of a view's shapes, the leaves of its tree: what an explode pulls apart. */
-export const shapesOf = (data: unknown): string[] => nodes(data).filter((n) => !n.parts?.length).map((n) => n.id);
-
-const decode = (data: unknown): Shapes => {
-  if (!isInstancedFormat(data)) throw new Error("the server sent a model the viewer cannot read");
-  return decodeInstancedFormat(data);
-};
+export const shapesOf = (shapes: Shapes): string[] => nodes(shapes).filter((n) => !n.parts?.length).map((n) => n.id);
 const flat = (a: ArrayLike<number> | number[][]): ArrayLike<number> => (Array.isArray(a) ? (a as (number | number[])[]).flat() : a);
 
 /**
@@ -103,19 +91,28 @@ const flat = (a: ArrayLike<number> | number[][]): ArrayLike<number> => (Array.is
  */
 export class CadView {
   readonly bounds: CadBounds | null;
+  readonly toolbar: HTMLElement;
+  readonly gridMenu: HTMLElement;
   private readonly display: Display;
   private readonly viewer: Viewer;
   private readonly three: typeof Three;
   private readonly observer: ResizeObserver;
   private readonly canvas: HTMLCanvasElement;
   private readonly markers: Three.Group;
+  private readonly highlights: Three.Group;
+  private inspected: string[] = [];
+  private inspectionSequence: number | null = null;
+  private panning = false;
+  private gridAtBase = true;
+  private readonly gridBaseZ: number;
+  private readonly unsubscribeTool: () => void;
   /** Markers drawn at a size on screen, not in the model: their unit is one CSS pixel (see `sizeMarkers`). */
   private readonly onScreen: Three.Object3D[] = [];
   private ghost: Three.Group | null = null;
   private readonly rootId: string;
   private readonly exact: Set<string>;
   /** Every group `place` has moved, as built. */
-  private readonly built = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion }>();
+  private readonly built = new Map<Three.Object3D, { position: Three.Vector3; quaternion: Three.Quaternion; scale: Three.Vector3 }>();
   private marked: CadMarker[] = [];
   /** Each shape's way out from the model's middle, in its parent's frame: its offset at a spread of 1. */
   private readonly outward = new Map<Three.Object3D, Three.Vector3>();
@@ -131,14 +128,14 @@ export class CadView {
 
   constructor(
     private readonly container: HTMLElement,
-    data: unknown,
+    shapes: Shapes,
     dark: boolean,
     private readonly onPick: (pick: Pick, additive: boolean) => void,
     private readonly onExplode: (on: boolean) => void,
+    private readonly onPan: (on: boolean) => void,
   ) {
-    this.exact = exactShapes(data);
-    const ids = shapesOf(data);
-    const shapes = decode(data);
+    this.exact = exactShapes(shapes);
+    const ids = shapesOf(shapes);
     this.rootId = shapes.id;
     const bb = shapes.bb;
     this.bounds = bb ? { min: [bb.xmin, bb.ymin, bb.zmin], max: [bb.xmax, bb.ymax, bb.zmax] } : null;
@@ -165,9 +162,12 @@ export class CadView {
     this.display = new Display(container, options);
     this.viewer = new Viewer(this.display, options, null);
     this.viewer.render(shapes, RENDER, VIEW);
+    this.toolbar = container.querySelector<HTMLElement>(".tcv_cad_toolbar")!;
+    this.gridMenu = container.querySelector<HTMLElement>(".tcv_grid-content")!;
     this.three = window.THREE as typeof Three; // set by the Viewer constructor
     this.markers = new this.three.Group();
-    this.viewer.scene.add(this.markers);
+    this.highlights = new this.three.Group();
+    this.viewer.scene.add(this.markers, this.highlights);
     this.viewer.scene.onBeforeRender = (renderer, _scene, camera) => this.sizeMarkers(renderer, camera);
     this.explodeFrom(ids);
     // The toolbar's explode button (and its key, x) calls the viewer's setExplode, which only armed a clip to
@@ -179,6 +179,26 @@ export class CadView {
     };
 
     this.canvas = this.viewer.renderer.domElement;
+    // A transformed local bounding box can extend below a rotated curved part. Use the
+    // placed face meshes, excluding clipping helpers, to put the grid on the visible geometry.
+    this.viewer.scene.updateMatrixWorld(true);
+    const placed = new this.three.Box3();
+    for (const group of Object.values(this.viewer.nestedGroup.groups)) {
+      if ("front" in group && group.front instanceof this.three.Object3D) placed.expandByObject(group.front, true);
+    }
+    this.gridBaseZ = placed.isEmpty() ? this.bounds?.min[2] ?? 0 : placed.min.z;
+    this.unsubscribeTool = this.viewer.state.subscribe("activeTool", (change) => {
+      if (change.new) this.setPan(false);
+    });
+    // The viewer recreates grid lines and labels when zooming or changing theme. Reapply only
+    // the XY plane's height whenever it positions those planes; assembly and origin axes stay as built.
+    const grid = this.viewer.gridHelper;
+    const setCenter = grid.setCenter.bind(grid);
+    grid.setCenter = (axes0, flipY) => {
+      setCenter(axes0, flipY);
+      if (grid.children[0]) grid.children[0].position.z = this.gridAtBase ? this.gridBaseZ : 0;
+    };
+    this.setGridAtBase(true);
     this.canvas.addEventListener("pointerdown", this.onDown);
     this.canvas.addEventListener("pointerup", this.onUp);
     this.observer = new ResizeObserver(() => this.fit());
@@ -196,11 +216,105 @@ export class CadView {
     if (tool) this.container.querySelector<HTMLInputElement>(`.tcv_button_${tool}`)?.click();
   }
 
+  /** Return clicks to selection after a viewer tool or camera pan. */
+  activateInspection(): void {
+    this.setPan(false);
+    this.stopTool();
+  }
+
+  /** Move the camera parallel to the screen with the left mouse button. */
+  setPan(on: boolean): void {
+    if (on) this.stopTool();
+    this.viewer.controls.controls.mouseButtons.LEFT = on ? this.three.MOUSE.PAN : this.three.MOUSE.ROTATE;
+    if (this.panning === on) return;
+    this.panning = on;
+    this.onPan(on);
+  }
+
+  /** A display reference only: preserve model coordinates and the origin's axes. */
+  setGridAtBase(on: boolean): void {
+    this.gridAtBase = on;
+    this.viewer.gridHelper.setCenter(this.viewer.state.get("axes0"), true);
+    this.redraw();
+  }
+
   /** Replace the numbered markers (pins and selected items). */
   setMarkers(markers: CadMarker[]): void {
     this.marked = markers;
     this.drawMarkers();
     this.redraw();
+  }
+
+  /** Inspect whole instances without changing the design or its geometry selection. */
+  inspect({ instances, action, sequence }: Inspection): void {
+    if (sequence === this.inspectionSequence) return;
+    this.inspectionSequence = sequence;
+    this.activateInspection();
+    const T = this.three;
+    const paths = instances.map((instance) => `${this.rootId}/${instance}`);
+    const belongs = (path: string) => paths.some((p) => path === p || path.startsWith(`${p}/`));
+    const states = this.viewer.getStates();
+    for (const [path, state] of Object.entries(states)) {
+      if (action !== "restore" && action !== "isolate" && !belongs(path)) continue;
+      const visible = action === "restore" || belongs(path);
+      states[path] = state.map((s) => s === 3 ? 3 : visible ? 1 : 0) as typeof state;
+    }
+    this.viewer.setStates(states);
+    this.inspected = action === "restore" ? [] : instances;
+    this.drawHighlights();
+    if (action === "restore") {
+      this.viewer.resetClip();
+      this.viewer.state.set("activeTab", "tree");
+    }
+    const box = new T.Box3();
+    if (action === "restore" || paths.length === 0) {
+      box.setFromObject(this.viewer.nestedGroup.rootGroup!);
+    } else {
+      for (const path of paths) {
+        const group = this.viewer.nestedGroup.groups[path];
+        if (group) box.expandByObject(group);
+      }
+    }
+    if (box.isEmpty()) return;
+    const center = box.getCenter(new T.Vector3());
+    this.viewer.setCameraTarget(center);
+    const camera = this.viewer.camera.getCamera();
+    const projected = corners([box.min.toArray(), box.max.toArray()]).map((p) => new T.Vector3(...p).project(camera));
+    const extent = Math.max(...projected.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)]));
+    if (extent > 0) this.viewer.setCameraZoom(this.viewer.getCameraZoom() / (extent * 1.2));
+    if (action.startsWith("section")) {
+      const axis = { sectionX: 0, sectionY: 1, sectionZ: 2 }[action as "sectionX" | "sectionY" | "sectionZ"];
+      const normal: Vec3 = [0, 0, 0];
+      normal[axis] = -1;
+      this.viewer.resetClip();
+      this.viewer.setClipNormal(0, normal);
+      this.viewer.refreshPlane(0, center.getComponent(axis) - this.viewer.clipping.clipPlanes[0]!.center[axis]!);
+      this.viewer.state.set("activeTab", "clip");
+    } else {
+      this.viewer.resetClip();
+    }
+    this.viewer.idPicker?.setDirty();
+    this.redraw();
+  }
+
+  clearInspection(): void {
+    this.inspected = [];
+    this.inspectionSequence = null;
+    this.clear(this.highlights);
+    this.redraw();
+  }
+
+  private drawHighlights() {
+    this.clear(this.highlights);
+    const T = this.three;
+    for (const instance of this.inspected) {
+      const group = this.viewer.nestedGroup.groups[`${this.rootId}/${instance}`];
+      if (!group) continue;
+      const helper = new T.Box3Helper(new T.Box3().setFromObject(group), SELECT_COLOR);
+      (helper.material as Three.LineBasicMaterial).depthTest = false;
+      helper.renderOrder = 9;
+      this.highlights.add(helper);
+    }
   }
 
   private drawMarkers() {
@@ -269,14 +383,14 @@ export class CadView {
   }
 
   /** Show an earlier revision's model as an X-ray ghost, or remove it (`null`). */
-  setGhost(data: unknown): void {
+  setGhost(shapes: Shapes | null): void {
     if (this.ghost) {
       this.clear(this.ghost);
       this.viewer.scene.remove(this.ghost);
       this.ghost = null;
     }
-    if (data !== null) {
-      this.ghost = this.ghostOf(decode(data));
+    if (shapes !== null) {
+      this.ghost = this.ghostOf(shapes);
       this.viewer.scene.add(this.ghost);
     }
     this.redraw();
@@ -285,9 +399,11 @@ export class CadView {
   dispose(): void {
     cancelAnimationFrame(this.tween);
     this.observer.disconnect();
+    this.unsubscribeTool();
     this.canvas.removeEventListener("pointerdown", this.onDown);
     this.canvas.removeEventListener("pointerup", this.onUp);
     this.clear(this.markers);
+    this.clear(this.highlights);
     if (this.ghost) this.clear(this.ghost);
     this.viewer.dispose();
     this.display.dispose();
@@ -349,9 +465,10 @@ export class CadView {
     for (const [group, base] of this.built) {
       group.position.copy(base.position);
       group.quaternion.copy(base.quaternion);
+      group.scale.copy(base.scale);
     }
     const hold = (group: Three.Object3D) => {
-      if (!this.built.has(group)) this.built.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone() });
+      if (!this.built.has(group)) this.built.set(group, { position: group.position.clone(), quaternion: group.quaternion.clone(), scale: group.scale.clone() });
     };
     for (const move of this.motion ?? []) {
       const step = new T.Matrix4().fromArray([...move.matrix, 0, 0, 0, 1]).transpose(); // by rows, as the report has it
@@ -360,7 +477,7 @@ export class CadView {
         if (!group) continue;
         hold(group);
         const placed = step.clone().multiply(new T.Matrix4().compose(group.position, group.quaternion, group.scale));
-        placed.decompose(group.position, group.quaternion, new T.Vector3());
+        placed.decompose(group.position, group.quaternion, group.scale);
       }
     }
     if (this.spread !== 0) {
@@ -371,12 +488,13 @@ export class CadView {
     }
     this.viewer.scene.updateMatrixWorld(true);
     this.drawMarkers(); // markers go with their parts
+    this.drawHighlights();
     this.viewer.idPicker?.setDirty(); // the pick buffer shows the parts where they were drawn last
     this.redraw();
   }
 
   private readonly onDown = (e: PointerEvent) => {
-    this.press = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+    this.press = !this.panning && e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
   };
 
   private readonly onUp = (e: PointerEvent) => {

@@ -1,0 +1,54 @@
+{
+  "hitlcad": 2,
+  "name": "Cam and flat follower",
+  "backend": "build123d",
+  "parameters": [
+    {"name": "base_r", "value": 20, "min": 10, "max": 40, "description": "the cam's base circle"},
+    {"name": "lift", "value": 6, "min": 1, "max": 12},
+    {"name": "rise", "value": 120, "min": 60, "max": 170, "description": "degrees of rise, then as many of return after a dwell"},
+    {"name": "cam_angle", "value": 30, "min": -180, "max": 180, "description": "the cam as assembled"},
+    {"name": "cut_scale", "value": 1, "min": 0.5, "max": 1.5, "description": "the lift the profile is cut to, of the law's"}
+  ],
+  "ground": "base",
+  "parts": {
+    "base": {
+      "role": "carries the cam's axis and the follower's guide",
+      "file": "parts/cam.py",
+      "material": "PLA",
+      "connectors": {
+        "axis": {"kind": "frame", "symmetry": "axial"},
+        "guide": {"kind": "frame", "symmetry": "axial"}
+      }
+    },
+    "camshaft": {
+      "role": "the cam, turning about its axis",
+      "file": "parts/cam.py",
+      "material": "PLA",
+      "connectors": {
+        "axis": {"kind": "frame", "symmetry": "axial"},
+        "lobe": {"kind": "frame"}
+      }
+    },
+    "follower": {
+      "role": "a flat-faced follower sliding in the guide",
+      "file": "parts/cam.py",
+      "material": "PLA",
+      "connectors": {
+        "slide": {"kind": "frame", "symmetry": "axial"},
+        "face": {"kind": "frame"}
+      }
+    }
+  },
+  "mates": [
+    {"type": "revolute", "a": "base.axis", "b": "camshaft.axis"},
+    {"type": "slider", "a": "base.guide", "b": "follower.slide", "fit": {"clearance": [0.5, 1.5]},
+     "limits": {"travel": [-25.5, -18]}}
+  ],
+  "relations": [
+    {"type": "cam", "a": "camshaft.lobe", "b": "follower.face", "lift": "interfaces.lift_table", "base": "base_r"}
+  ],
+  "requirements": [
+    {"text": "A spring from the guide to the follower's foot stays between its solid and free lengths",
+     "check": {"kind": "span", "between": ["base.guide", "follower.face"], "min": 18, "max": 26}}
+  ]
+}

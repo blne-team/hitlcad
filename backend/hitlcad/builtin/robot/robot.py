@@ -22,6 +22,7 @@ import numpy as np
 
 from hitlcad.analysis.coverage import Link, nested_links
 from hitlcad.core import frames as fr
+from hitlcad.core.laws import Linear
 from hitlcad.core.structure import Mate, Relation
 
 if TYPE_CHECKING:
@@ -119,14 +120,15 @@ def tree(built: BuiltDesign) -> Tree:
     for link in found:
         if isinstance(link.source, Relation):
             driver, driven = by_child.get(link.a.instance), by_child.get(link.b.instance)
-            if driver and driven and {driver.kind, driven.kind} <= {"revolute", "continuous", "prismatic"}:
-                na, nb = link.a.owner.nominals(link.a.spec), link.b.owner.nominals(link.b.spec)
+            law = link.source.law(link.ends())
+            if (driver and driven and {driver.kind, driven.kind} <= {"revolute", "continuous", "prismatic"}
+                    and isinstance(law, Linear)):  # a mimic is a straight line  # fmt: skip
                 axis_a, axis_b = link.source.axes(link.a.frame, link.b.frame)
                 # joint values turn about (or slide along) each joint's Z, in radians or metres
                 sign = np.sign(np.dot(fr.z_axis(driver.frame), axis_a.direction)) * np.sign(
                     np.dot(fr.z_axis(driven.frame), axis_b.direction))  # fmt: skip
                 unit = {"angle": math.radians(1), "travel": MM}
-                mimics[driven.name] = (driver.name, float(sign * link.source.ratio(na, nb) * unit[axis_b.kind]
+                mimics[driven.name] = (driver.name, float(sign * law.ratio * unit[axis_b.kind]
                                                           / unit[axis_a.kind]))  # fmt: skip
     return Tree(base_path, leaves, joints, frames, mimics)
 

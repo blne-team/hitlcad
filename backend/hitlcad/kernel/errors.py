@@ -143,7 +143,7 @@ def advice(code: str) -> str:
 def http_status(d: Diagnostic) -> int:
     match d.owner:
         case "request":
-            return 404 if d.code.startswith("not_found.") else 422
+            return 404 if d.code.startswith("not_found.") else 409 if d.code.startswith("conflict.") else 422
         case "design":
             return 422
         case "environment" | "plugin":
@@ -310,7 +310,9 @@ PART_EMPTY = define(
 )  # fmt: skip
 PART_OPEN = define(
     code="part.mesh_open", owner="design", title="A part's mesh does not close a solid",
-    hint="Close the solid: open shells come from surfaces never thickened and from non-manifold booleans.",
+    hint="Repair the reported region in the part file: bridge boundary edges, remove duplicate/internal faces, "
+    "or reverse incorrectly wound faces. Locations are in the part's own frame, in mm. "
+    "Thicken surfaces meant to enclose material; then rebuild before trusting volume or wall checks.",
 )  # fmt: skip
 PART_BREP = define(
     code="part.brep_invalid", owner="design", title="A part fails the kernel's shape check",
@@ -380,8 +382,16 @@ MOTION_LOOP = define(
     "where it sits; nothing to fix unless the loop is a mistake.",
 )  # fmt: skip
 MOTION_LOCKED = define(
-    code="motion.locked", owner="design", title="A loop that cannot move through a mate's limits",
-    hint="Change the limits to where the loop goes (the message gives them), or the links, so that it goes further.",
+    code="motion.locked", owner="design", title="Motion that runs a mate past its limits, or a loop that locks within them",
+    hint="Change the limits to where the motion goes (the message gives them), or what drives it, so that they agree.",
+)  # fmt: skip
+MOTION_PARTED = define(
+    code="motion.parted", owner="design", title="Parts a relation keeps in contact stand apart within the motion",
+    hint="The profile and the relation's law disagree where it says: cut the profile from the same table the law "
+    "reads, or correct the table.",
+)  # fmt: skip
+MOTION_DRIVEN = define(
+    code="motion.driven", owner="design", title="A mate another motion drives, checked along that motion's sweep",
 )  # fmt: skip
 MOTION_SAMPLED = define(
     code="motion.sampled", owner="design", title="A loop's motion, clear at each position solved but not between",
@@ -427,6 +437,10 @@ REQUEST_INVALID = define(code="request.invalid", owner="request", title="The req
 PARAMETER_INVALID = define(
     code="parameter.invalid", owner="request", title="An unknown parameter, or a value outside its range",
     hint="Use parameters design.json declares, within their min and max.",
+)  # fmt: skip
+DESIGN_CHANGED = define(
+    code="conflict.design_changed", owner="request", title="design.json changed since the edit was made on it",
+    hint="Look at the design as it is now, and make the edit again on it.",
 )  # fmt: skip
 SOURCES_CHANGED = define(
     code="build.sources_changed", owner="request", title="A file changed while the design built",

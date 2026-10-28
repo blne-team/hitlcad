@@ -1,4 +1,5 @@
-"""The requirement checks: size, fits within, volume, mass, holes, walls, bodies, clearance and tolerance stacks."""
+"""The requirement checks: size, fits within, volume, mass, holes, walls, bodies, clearance, tolerance stacks and
+spans."""
 
 from __future__ import annotations
 
@@ -224,3 +225,30 @@ class StackCheck(Bounded, Check):
         ok = (least is None or low >= least) and (most is None or high <= most)
         return ok, (f"{nominal:.3f} mm nominal, {low:.3f} … {high:.3f} worst case (± {worst:.3f}), ± {rss:.3f} RSS "
                     f"over {len(self.tolerances)} parts (needs {need(least, most)})")  # fmt: skip
+
+
+class SpanCheck(Bounded, Check):
+    """The length between two connector frames' origins, mm: where they sit and at every position motion moves
+    either through (a spring's ends, from its solid height to its free length less the preload it must keep)."""
+
+    kind: Literal["span"]
+    between: tuple[str, str] = Field(description="Connector ends, e.g. ['lifter.spring_seat', 'head.spring_seat']")
+    example = {"kind": "span", "between": ["follower.spring", "base.spring"], "min": 18, "max": "free_length"}
+    hint = "Change where the ends sit, or the motion that moves them, or the bounds (a spring's lengths)."
+
+    def targets(self) -> list[str]:
+        return list(self.between)
+
+    def verify(self, build: BuildBodies) -> Verdict:
+        a, b = (build.built.frames(end) for end in self.between)
+        if len(a) != 1 or len(b) != 1:
+            return (
+                False,
+                f"a span runs between two single frames; {self.between[0]} has {len(a)}, {self.between[1]} {len(b)}",
+            )
+        sitting, moved = build.lengths(a[0], b[0])
+        least, most = build.number(self.min), build.number(self.max)
+        lo, hi = min([(sitting, ""), *moved]), max([(sitting, ""), *moved])
+        ok = (least is None or lo[0] >= least) and (most is None or hi[0] <= most)
+        through = f", {lo[0]:.2f} … {hi[0]:.2f} mm through {', '.join(sorted({m for _, m in moved}))}" if moved else ""
+        return ok, f"{sitting:.2f} mm where they sit{through} (needs {need(least, most)})"

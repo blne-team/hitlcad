@@ -14,21 +14,11 @@ from hitlcad.workspace import agents
 AGENT_GUIDE = """\
 # Design project (hitlcad)
 
-This workspace holds parametric CAD assemblies in `designs/<name>/` (`design.json`, `interfaces.py`,
-`parts/`, `assembly.py`). The `hitlcad` MCP server builds, verifies and renders them; the human
-reviews each build in the hitlcad panel in VS Code and talks to you here, in your own chat.
-
-Use the `hitlcad` skill for any work on a design, and the `hitlcad-<backend>` skill before writing a
-design's code. hitlcad installs both in `.claude/skills/` and `.agents/skills/`; if they are
-missing, run `hitlcad init .` in this folder.
-
-- Declare the structure in design.json before writing geometry, and check it with
-  `build_design(path, scope="structure")`.
-- Build, measure and render only through the hitlcad tools. Other CAD, Blender or bpy skills are
-  API reference for part files, not a way to build or export.
-- Never edit `build/`; it is regenerated from the design's files.
-- When the human points at something ("this", "the selected …", pins), hitlcad's prompt hook has
-  added it to their message, named by instance and connector. `explore_design(path)` repeats it.
+Designs live in `designs/<name>/`; the human reviews them in the hitlcad panel in VS Code.
+Follow the `hitlcad` MCP instructions. Use the `hitlcad` skill for design work and
+`hitlcad-<backend>` before editing model code; load references and companion skills as needed.
+Skills are installed in `.claude/skills/` and `.agents/skills/` (`hitlcad init .` installs them).
+Build, measure, export and render through hitlcad tools; other CAD skills serve as API reference.
 """
 
 IGNORED = ["__pycache__/", agents.CLAUDE_HOOKS]  # the prompt hook names this machine's interpreter

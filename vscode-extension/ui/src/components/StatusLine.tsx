@@ -3,7 +3,8 @@ import type { DesignState } from "../api/types";
 /** The design's build status and the panel's connection, one line under its name. */
 export function StatusLine({ design, connected }: { design: DesignState; connected: boolean | null }) {
   const status = design.building ? "building" : design.error ? "failed" : "idle";
-  const label = design.building ? "Building" : design.error ? "Stopped" : "Up to date";
+  const doing = design.building?.doing;
+  const label = design.building ? (doing ? doing[0]!.toUpperCase() + doing.slice(1) : "Building") : design.error ? "Stopped" : "Up to date";
   return (
     <div className="statusline" title="Saving the design's files rebuilds what changed">
       <span className={`dot status-${status}`} aria-hidden />

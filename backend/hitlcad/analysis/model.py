@@ -21,11 +21,11 @@ from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath, Segment, is_interface_ref
 from hitlcad.core.design import DesignSpec, PartSpec
 from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
-from hitlcad.core.structure import Connector, Measured, Tolerances
+from hitlcad.core.structure import Axis, Connector, Measured, Tolerances
 from hitlcad.core.types import Value
 from hitlcad.geometry import cadview
 from hitlcad.geometry.features import BrepFeatures, Features, Hole, MeshFeatures
-from hitlcad.geometry.mesh import closed, load_mesh, measure, measure_union
+from hitlcad.geometry.mesh import Collider, MeshIssue, closed, load_mesh, measure, measure_union, topology
 from hitlcad.kernel.errors import StructureError, Unmeasurable
 from hitlcad.materials import Material
 
@@ -58,6 +58,7 @@ class PartGeometry:
     mesh_file: Path
     step_file: Path | None
     objects_file: Path
+    view_file: Path
     frames: dict[str, list[fr.Frame]]
     catalog: CatalogInfo | None
     reads: Reads
@@ -67,6 +68,11 @@ class PartGeometry:
     @cached_property
     def mesh(self) -> trimesh.Trimesh:
         return load_mesh(self.mesh_file)
+
+    @cached_property
+    def mesh_issues(self) -> list[MeshIssue]:
+        """Source defects, inspected only when a part fails closure, before cleanup hides their locations."""
+        return topology(self.mesh_file)
 
     @cached_property
     def solid(self) -> manifold3d.Manifold | None:
@@ -88,6 +94,29 @@ class PartGeometry:
         if self.step_file is None:
             return MeshFeatures(self.name, lambda: self.mesh, objects)
         return BrepFeatures(self.name, cadview.load_step(self.step_file), lambda: self.mesh, objects)
+
+    @cached_property
+    def collider(self) -> Collider:
+        """Its solid's collider, in its own frame: every instance's, placed (`Leaf.collider`)."""
+        return Collider(self.manifold)
+
+    @cached_property
+    def _not_round(self) -> dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider | None]]:
+        return {}
+
+    def not_round(
+        self, origin: np.ndarray, direction: np.ndarray, tolerance: float
+    ) -> tuple[manifold3d.Manifold, Collider | None]:
+        """Its solid less its part round about an axis in its own frame (`turning.not_round`), and that one's
+        collider (None: nothing is left), made once for every instance that turns about it."""
+        from hitlcad.analysis.motion.turning import not_round
+
+        origin = origin - np.dot(origin, direction) * direction  # the axis' point nearest the part's origin
+        key = (*np.round(origin, 6).tolist(), *np.round(direction, 6).tolist(), tolerance)
+        if key not in self._not_round:
+            solid = not_round(self.manifold, fr.on_axis(origin, direction)[:3], tolerance)
+            self._not_round[key] = solid, None if solid.is_empty() else Collider(solid)
+        return self._not_round[key]
 
     @cached_property
     def digest(self) -> str:
@@ -122,6 +151,18 @@ class Leaf:
     @cached_property
     def manifold(self) -> manifold3d.Manifold:
         return self.part.manifold.transform(self.transform[:3, :])
+
+    @cached_property
+    def collider(self) -> Collider:
+        return self.part.collider.at(self.transform)
+
+    def not_round(self, axis: Axis, tolerance: float) -> tuple[manifold3d.Manifold, Collider | None]:
+        """The leaf less its part round about `axis`, placed, and its collider: its part's (`PartGeometry.not_round`)."""
+        inverse = fr.rigid_inverse(self.transform)
+        origin = inverse[:3, :3] @ axis.origin + inverse[:3, 3]
+        direction = inverse[:3, :3] @ (axis.direction / np.linalg.norm(axis.direction))
+        solid, collider = self.part.not_round(origin, direction, tolerance)
+        return solid.transform(self.transform[:3, :]), None if collider is None else collider.at(self.transform)
 
     @cached_property
     def vertices(self) -> np.ndarray:
@@ -359,20 +400,6 @@ class BuiltDesign:
 # --------------------------------------------------------------------------- bodies for checks
 
 
-#: A gap between solids is looked for this far (mm) first, and WIDEN times as far each time nothing is within
-#: reach: fitted parts are close, so looking near first is cheap.
-SEARCH_MM, WIDEN = 1.0, 4
-
-
-def gap(a: manifold3d.Manifold, b: manifold3d.Manifold, upto: float) -> float:
-    """Smallest distance (mm) between two solids, or `upto` when they are further apart; 0 when they touch
-    or overlap."""
-    search = SEARCH_MM
-    while (found := float(a.min_gap(b, search))) >= search and search < upto:
-        search = min(search * WIDEN, upto)
-    return found
-
-
 class Body:
     """What a requirement or process check measures: placed part instances, as one body."""
 
@@ -426,10 +453,13 @@ class Body:
     def overlap(self, other: Body) -> float:
         return float((self.manifold ^ other.manifold).volume())
 
+    @cached_property
+    def collider(self) -> Collider:
+        return Collider(self.manifold)
+
     def gap(self, other: Body) -> float:
         """Smallest distance (mm) between the two; 0 when they touch or overlap."""
-        span = np.maximum(self.bounds[1], other.bounds[1]) - np.minimum(self.bounds[0], other.bounds[0])
-        return gap(self.manifold, other.manifold, float(np.linalg.norm(span)))
+        return self.collider.distance(other.collider)
 
 
 @dataclass(frozen=True)
@@ -481,6 +511,18 @@ class BuildBodies:
 
     def placed(self, address: str) -> Body:
         return self._body("placed", address, lambda: self.built.leaves_of(address))
+
+    def lengths(self, a: PlacedFrame, b: PlacedFrame) -> tuple[float, list[tuple[float, str]]]:
+        """How far apart two frames' origins are where they sit, and at every position motion moves either
+        through, with the mate that moves it there."""
+        from hitlcad.analysis.motion import positions
+
+        def apart(motions: dict[str, fr.Frame]) -> float:
+            ends = (fr.origin(motions.get(f.instance, fr.IDENTITY) @ f.frame) for f in (a, b))
+            return float(np.linalg.norm(next(ends) - next(ends)))
+
+        return apart({}), [(apart(m), mate) for mate, m in positions(self.built, self.settings, self.cache)
+                           if a.instance in m or b.instance in m]  # fmt: skip
 
     def moved_gap(self, a: Body, b: Body) -> Moved | None:
         """The least gap between two bodies while a mate moves one against the other, as motion analysis

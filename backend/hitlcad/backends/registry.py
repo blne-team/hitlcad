@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from hitlcad.backends.base import BackendInfo, CADBackend
+from hitlcad.backends.workers import Ticket
 from hitlcad.config import Settings
 from hitlcad.kernel.errors import PLUGIN_MISSING, REQUEST_INVALID
 from hitlcad.kernel.plugins import registry
@@ -39,3 +40,9 @@ class BackendRegistry:
 
     def describe(self) -> list[BackendInfo]:
         return [b.describe() for b in self.all()]
+
+    async def supersede(self, ticket: Ticket) -> None:
+        """A newer build replaced `ticket`'s: its jobs waiting for a worker end, its running ones finish."""
+        ticket.superseded = True
+        for backend in self.all():
+            await backend.workers.wake()

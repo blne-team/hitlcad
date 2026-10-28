@@ -13,12 +13,18 @@ from hitlcad.core.types import Pin, SelectionItem, Vec
 from hitlcad.kernel.errors import catalog
 from hitlcad.kernel.plugins import registry
 
-CHECK_KINDS = ", ".join(c.example["kind"] for c in registry().checks)
-
 
 def _examples(types: tuple[type, ...], indent: str) -> str:
     """One line per type: its example in design.json and its docstring."""
     return "\n".join(f"{indent}- `{json.dumps(t.example)}`: {' '.join((t.__doc__ or '').split())}" for t in types)
+
+
+def model_package_lines(indent: str = "") -> list[str]:
+    """Importable construction helpers, described without importing backend-specific code."""
+    return [
+        f"{indent}- `{p.package}` ({', '.join(p.backends)})" + (f": {p.summary}" if p.summary else "")
+        for p in registry().model_packages
+    ]
 
 
 def guide(indent: str = "") -> dict[str, str]:
@@ -31,6 +37,7 @@ def guide(indent: str = "") -> dict[str, str]:
         "mates": _examples(found.mates, indent),
         "relations": _examples(found.relations, indent),
         "fasteners": _examples((FastenerSet,), indent),
+        "builders": "\n".join(model_package_lines(indent)),
     }
 
 

@@ -1,19 +1,21 @@
-"""Loops of motion without a build: what relations count as moved, and the loop solver on four-bars whose motion is
-known in closed form."""
+"""Loops of motion without a build: what relations count as moved, the loop solver on four-bars whose motion is
+known in closed form, and the gaps motion measures between solids."""
 
 from __future__ import annotations
 
 import math
 
+import manifold3d
 import numpy as np
 import pytest
 
 from hitlcad.builtin.gears.relations import GearRelation, RackRelation, ScrewRelation
 from hitlcad.builtin.joints.mates import RevoluteMate
-from hitlcad.builtin.solvers.least_squares import LeastSquares
+from hitlcad.builtin.solvers.sqp import Sqp
 from hitlcad.core import frames as fr
 from hitlcad.core.loops import LoopMate, LoopProblem
-from hitlcad.core.structure import Tolerances
+from hitlcad.core.structure import Ends, Tolerances
+from hitlcad.geometry.mesh import Collider
 
 TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
 Z = (0.0, 0.0, 1.0)
@@ -26,7 +28,7 @@ def turned(f: fr.Frame, point: tuple[float, float, float], degrees: float) -> fr
 def test_gears_on_fixed_axes_turn_by_their_ratio() -> None:
     gear = GearRelation(type="gear", a="sun.teeth", b="planet.teeth")
     fa, fb = fr.IDENTITY, fr.translation([30.0, 0.0, 0.0])
-    ratio = gear.ratio({"teeth": 12}, {"teeth": 18})
+    ratio = gear.law(Ends(fa, fb, {"teeth": 12}, {"teeth": 18}, lambda ref: None)).ratio
     qa, qb = gear.coordinates(fa, fb, turned(fa, (0, 0, 0), 30.0), turned(fb, (30, 0, 0), 30.0 * ratio))
     assert (qa, qb) == pytest.approx((30.0, -20.0))
     assert qb == pytest.approx(ratio * qa)
@@ -40,7 +42,7 @@ def test_a_planet_on_a_moving_carrier_turns_by_willis() -> None:
     planet = turned(turned(fb, (30, 0, 0), 10.0 * 12 / 18), (0, 0, 0), 10.0)  # spun on its pin, then carried
     qa, qb = gear.coordinates(fa, fb, fa, planet)
     assert qa == pytest.approx(-10.0)  # the sun against the line of centres, which turned 10°
-    assert qb == pytest.approx(gear.ratio({"teeth": 12}, {"teeth": 18}) * qa)
+    assert qb == pytest.approx(gear.law(Ends(fa, fb, {"teeth": 12}, {"teeth": 18}, lambda ref: None)).at(qa))
 
 
 def test_a_rack_travels_the_pinion_s_pitch_arc() -> None:
@@ -48,7 +50,7 @@ def test_a_rack_travels_the_pinion_s_pitch_arc() -> None:
     fa = fr.IDENTITY
     fb = fr.translation([0.0, -10.0, 0.0]) @ fr.rotation_about((0, 0, 0), (1, 0, 0), 90.0)  # pitch line below
     _, along = rack.axes(fa, fb)
-    ratio = rack.ratio({"module": 1.0, "teeth": 20}, {})
+    ratio = rack.law(Ends(fa, fb, {"module": 1.0, "teeth": 20}, {}, lambda ref: None)).ratio
     qa, qb = rack.coordinates(fa, fb, turned(fa, (0, 0, 0), 36.0), fr.translation(along.direction * ratio * 36.0) @ fb)
     assert (qa, qb) == pytest.approx((36.0, ratio * 36.0))
 
@@ -87,7 +89,7 @@ def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> Loop
 
 def trace(problem: LoopProblem, end: float) -> list[float]:
     start = problem.start()
-    return [start.value] + [p.value for p in LeastSquares().trace(problem, start, end, TOL.motion_steps)]
+    return [start.value] + [p.value for p in Sqp().trace(problem, start, end, TOL.motion_steps)]
 
 
 def test_a_crank_rocker_turns_its_crank_a_full_turn_and_swings_its_rocker_as_it_must() -> None:
@@ -95,7 +97,7 @@ def test_a_crank_rocker_turns_its_crank_a_full_turn_and_swings_its_rocker_as_it_
     assert problem.freedoms() == (True, 0)
     start, swing = problem.start(), []
     for end in (start.value + 180, start.value - 180):
-        positions = list(LeastSquares().trace(problem, start, end, TOL.motion_steps))
+        positions = list(Sqp().trace(problem, start, end, TOL.motion_steps))
         assert positions[-1].value == pytest.approx(end)
         swing += [problem.coordinate(p, 3, "angle") - problem.coordinate(start, 3, "angle") for p in positions]
     assert (min(swing), max(swing)) == pytest.approx((-18.11, 45.90), abs=0.02)  # in closed form
@@ -109,3 +111,18 @@ def test_a_linkage_that_cannot_turn_its_crank_locks_where_it_must() -> None:
     up = trace(problem, start.value + 180)[-1] - start.value
     assert 34.23 <= up <= 34.8
     assert trace(problem, start.value - 180)[-1] == pytest.approx(start.value - 180)  # the other way it turns on
+
+
+def test_a_solid_wholly_inside_another_is_no_distance_from_it() -> None:
+    """A pin that a step takes wholly into a block, its surface clear of the block's, has met it."""
+    block, pin = (
+        Collider(manifold3d.Manifold.cube((10, 10, 10), True)),
+        Collider(manifold3d.Manifold.cube((1, 1, 1), True)),
+    )
+    moved = np.eye(4)
+    for at, apart in ((0.0, 0.0), (5.0, 0.0), (20.0, 14.5)):
+        moved[0, 3] = at
+        assert pin.distance(block, moved) == pytest.approx(apart) and block.distance(pin, None, moved) == pytest.approx(
+            apart
+        )
+        assert pin.meets(block, moved) is (apart == 0.0) and block.meets(pin, None, moved) is (apart == 0.0)

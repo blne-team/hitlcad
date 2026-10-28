@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RevisionInfo } from "../api/types";
 import { toExtension } from "./host";
+import type { Inspection } from "./inspection";
 
 export type InspectorTab = "pins" | "structure" | "parameters" | "changes" | "report" | "bom" | "brief";
 
@@ -21,6 +22,7 @@ export interface DesignUi {
   configuration: string | null;
   /** Where a range of motion of a revision is in the view; null, or another revision's: as built. */
   motion: MotionAt | null;
+  inspection: Inspection | null;
 }
 
 /** A range of motion (by its frames and kind) of one revision at one value: what the slider shows, and where a
@@ -33,7 +35,7 @@ export interface MotionAt {
 }
 
 const INITIAL: DesignUi = {
-  revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null,
+  revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null,
 };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;

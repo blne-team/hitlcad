@@ -13,6 +13,7 @@ from hitlcad.kernel.errors import (
     PART_EMPTY,
     PART_OPEN,
     REQUIREMENT_UNCHECKED,
+    Location,
     StructureError,
     of,
 )
@@ -34,9 +35,21 @@ class Parts:
             if m.triangles == 0:
                 out.append(result(self.name, PART_EMPTY, name, False, "the part is empty", [name]))
                 continue
-            out.append(result(self.name, PART_OPEN, name, m.watertight,
-                              "closed mesh" if m.watertight else "the mesh does not close a solid: volume, mass, walls "
-                              "and overlaps cannot be measured", [name], severity="warning"))  # fmt: skip
+            detail = "closed mesh"
+            values = {}
+            if not m.watertight:
+                issues = part.mesh_issues
+                evidence = "; ".join(issue.detail for issue in issues)
+                detail = "the mesh does not close a solid: volume, mass, walls and overlaps cannot be measured"
+                if evidence:
+                    detail += f"; source mesh before cleanup: {evidence}; locations are part-local mm"
+                else:
+                    detail += "; no edge-pairing defect found: inspect shell orientation and self-intersections"
+                values = {issue.kind: issue.count for issue in issues}
+            finding = result(self.name, PART_OPEN, name, m.watertight, detail, [name], values, severity="warning")
+            if not m.watertight:
+                finding.where = Location(file=part.file, address=name)
+            out.append(finding)
             if part.valid is not None:
                 out.append(result(self.name, PART_BREP, name, part.valid, "B-rep valid" if part.valid else
                                   "the kernel's shape check fails: booleans and exports may be wrong", [name]))  # fmt: skip

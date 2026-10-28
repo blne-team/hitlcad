@@ -56,6 +56,7 @@ export function useSelection(describe: Describe, initial?: SelectionItem[]) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof Element && e.target.closest(".inspection-tools[open]")) return; // Escape closes the inspection popup first.
       if (e.key === "Escape" && latest.current.length && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) clear();
     };
     // Capture phase: three-cad-viewer binds Escape itself and stops it from bubbling.

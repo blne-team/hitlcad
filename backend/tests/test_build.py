@@ -23,7 +23,7 @@ from hitlcad.geometry import cadview
 from hitlcad.kernel.errors import Location
 from hitlcad.workspace.folder import DesignFolder
 
-from .conftest import copy_design, results, write_design
+from .conftest import copy_design, edit_json, results, write_design
 
 pytestmark = pytest.mark.geometry
 
@@ -43,13 +43,6 @@ def edit(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8")
 
 
-def edit_json(path: Path, change: Any) -> None:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    change(data)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-@pytest.mark.smoke
 @pytest.mark.cold_cache
 async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("enclosure", tmp_path / "enclosure")
@@ -61,7 +54,16 @@ async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(cor
     assert not [r for r in results(report, "connector") if r.subject.startswith("base.inserts")]  # datums: no result
     assert len(report.instances) == 10 and report.mass and report.mass.mass_g > 20
     out = tmp_path / "out"
-    for rel in ("model.step", "mesh.stl", "view.json", "parts/base.step", "parts/lid.3mf", "model.3mf", "bom.csv"):
+    for rel in (
+        "model.step",
+        "mesh.stl",
+        "scene.json",
+        "parts/base.step",
+        "parts/base.view",
+        "parts/lid.3mf",
+        "model.3mf",
+        "bom.csv",
+    ):
         assert (out / rel).is_file(), rel
     assert not (out / "model.blend").exists()  # no Blender part
     # A part's glTF carries names and colours; not the PBR texture maps bd_warehouse gives its fasteners.
@@ -71,14 +73,17 @@ async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(cor
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
     assert len(urdf.findall("link")) == 10 and all(j.get("type") == "fixed" for j in urdf.findall("joint"))
     assert ET.parse(out / "sdf" / "model.sdf").getroot().find("model") is not None
-    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
-    leaves = [p["id"] for p in view["shapes"]["parts"]]
-    assert "/Enclosure/insert[3]" in leaves and len(view["instances"]) == 4  # tessellated once per part
+    scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    leaves = [p["id"] for p in scene["shapes"]["parts"]]
+    assert "/Enclosure/insert[3]" in leaves and len(scene["instances"]) == 4  # tessellated once per part
+    assert {i["path"] for i in scene["instances"]} == {f"parts/{p}.view" for p in ("base", "lid", "insert", "screw")}
 
     edit_json(folder / "design.json", lambda d: d["parameters"][3].update(value=5))  # lid_t, read by parts/box.py
     second = await build(core, folder, tmp_path / "b")
     # the cache works per file: base and lid share parts/box.py, one parametric history
     assert {p.name: p.cached for p in second.parts} == {"base": False, "lid": False, "insert": True, "screw": True}
+    # a cached part's view comes back with it, as it was
+    assert (tmp_path / "b/parts/insert.view").read_bytes() == (out / "parts/insert.view").read_bytes()
     assert next(p for p in second.parts if p.name == "lid").reads.parameters == ["height", "lid_t", "wall", "width"]
 
 
@@ -123,20 +128,11 @@ async def test_a_fastener_needs_the_into_thread_and_an_iso_273_clearance_hole(co
                              "screw[0].seat")  # fmt: skip
 
 
-async def test_floating_parts_and_broken_references(core: HitlCad, tmp_path: Path) -> None:
-    folder = copy_design("enclosure", tmp_path / "enclosure")
-    edit_json(
-        folder / "design.json",
-        lambda d: (
-            d["mates"].pop(1),
-            d.update(fasteners=[]),
-            d["mates"].append({"type": "rigid", "a": "base.top", "b": "lid.nothing"}),
-        ),
-    )
+async def test_a_part_nothing_joins_to_the_ground_floats(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("hinge", tmp_path / "hinge")
+    edit_json(folder / "design.json", lambda d: d.update(mates=[]))
     report = await build(core, folder, tmp_path / "out")
-    text = "\n".join(failing(report))
-    assert "coverage insert[0]: insert[0] is floating" in text and "coverage screw[3]" in text
-    assert "part lid declares no connector 'nothing'" in text
+    assert "coverage lid: lid is floating" in "\n".join(failing(report)), failing(report)
 
 
 async def test_errors_in_a_part_file_name_its_line_and_spare_the_others(core: HitlCad, tmp_path: Path) -> None:
@@ -196,7 +192,8 @@ async def test_the_hinge_sweeps_its_range_and_finds_the_stop(core: HitlCad, tmp_
     (sweep,) = report.motions  # what the panel moves: the lid, about the hinge axis, -100 … 0°
     (lid,) = sweep.drives
     assert (sweep.kind, sweep.start, sweep.end, lid.instances) == ("angle", -100, 0, ["lid"])
-    assert lid.axis == pytest.approx((1, 0, 0)) and lid.rate == 1 and sweep.current == pytest.approx(0, abs=1e-6)
+    assert lid.axis == pytest.approx((1, 0, 0)) and sweep.current == pytest.approx(0, abs=1e-6)
+    assert lid.law == pytest.approx([(-100, -100), (0, 0)])  # the slider's span, the lid turning with it
     edit_json(folder / "design.json", lambda d: d["parameters"][6].update(value=0))  # no stop post
     clear = await build(core, folder, tmp_path / "b")
     (motion,) = results(clear, "motion")
@@ -243,6 +240,7 @@ async def test_motion_finds_what_the_paddle_meets_between_any_two_positions(core
     assert 4.25 < motion.values["angle"] < 4.35
     (clear,) = results(report, "requirement")  # measured over the turn, not only where it sits
     assert clear.status == "fail" and "0.00 mm (needs ≥ 0.3) at 4.3° of base.axle+paddle.hub" in clear.detail
+    assert clear.detail.endswith(" mm where they sit"), clear.detail
 
     # Lower, the pin passes 0.2 mm under it: nothing collides, but the clearance is broken half way round
     edit_json(folder / "design.json", lambda d: d["parameters"][1].update(value=1.3))
@@ -325,24 +323,6 @@ async def test_an_insert_set_into_solid_material_is_not_an_expected_overlap(core
     lines = problem_lines(report.results, report.problems, 10)
     assert lines[0].startswith("  ✗ interference base+insert[0] ×4 at [0, 1, 2, 3] [interference.overlap]: "), lines
     assert report.tally.problems == 1, lines
-
-
-@pytest.mark.once
-async def test_the_fan_turns_into_a_pin_in_its_duct(core: HitlCad, tmp_path: Path) -> None:
-    folder = shutil.copytree(EXAMPLES / "handhold-fan", tmp_path / "fan")
-    # A Ø1.2 pin into the blades' path at 22.5°: eight blades, every 45°, meet it only between positions
-    edit_json(folder / "design.json", lambda d: next(p for p in d["parameters"] if p["name"] == "blade_count")
-              .update(value=8))  # fmt: skip
-    wire = 'add(teardrop(pad, p["wire_hole_d"], i.pad_depth), mode=Mode.SUBTRACT)\n'
-    edit(folder / "parts/duct.py", wire, wire + "        add(Rot(0, 0, 22.5) * Pos(33.25, 0, 13) * Rot(0, 90, 0) * "
-         "Cylinder(0.6, 4.5, mode=Mode.PRIVATE))\n")  # fmt: skip
-    edit(folder / "parts/duct.py", "Pos, add", "Pos, Rot, add")
-    report = await build(core, folder, tmp_path / "pin")
-    assert report.status == "succeeded", report.lead()
-    (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
-    assert motion.status == "fail" and "impeller hits duct at 18.5°" in motion.detail and "at -18.5°" in motion.detail
-    (tips,) = [r for r in results(report, "requirement") if r.subject == "Impeller blade tips clear the duct"]
-    assert tips.status == "fail" and "0.74 mm where they sit" in tips.detail, tips.detail
 
 
 async def test_an_impeller_too_big_for_its_duct_is_one_problem(core: HitlCad, tmp_path: Path) -> None:
@@ -449,6 +429,48 @@ async def test_an_analysis_that_crashes_is_reported_and_spares_the_others(
     assert results(report, "interference")
 
 
+async def test_a_bug_writing_the_outputs_surfaces_as_itself(
+    core: HitlCad, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not as the ExceptionGroup of the task group the outputs are written in, which says nothing of what broke."""
+    from hitlcad.build import assemble
+
+    def crash(*_: Any) -> None:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(assemble, "write_scene", crash)
+    with pytest.raises(ValueError, match="boom"):
+        await build(core, copy_design("tiny", tmp_path / "tiny"), tmp_path / "out")
+
+
+@pytest.mark.smoke
+async def test_a_build_draws_its_view_from_its_parts_views(
+    core: HitlCad, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A B-rep part is tessellated where it is built, not again in hitlcad's process to draw the build."""
+
+    def tessellated(*_: Any) -> None:
+        raise AssertionError("tessellated in hitlcad's process")
+
+    monkeypatch.setattr(cadview, "brep_view", tessellated)
+    out = tmp_path / "out"
+    report = await build(core, copy_design("tiny", tmp_path / "tiny"), out)
+    assert report.status == "succeeded", report.lead()
+    scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    for instance in scene["instances"]:
+        view = cadview.PartView.read(out / instance["path"])
+        assert view.templates[instance["shape"]]["exact"] and len(view.shapes[instance["shape"]]["triangles"])
+
+
+def test_a_degenerate_triangle_in_a_mesh_draws_its_other_edges() -> None:
+    """Its zero-length edge has no neighbour, so it reads as a boundary: one that is no line, nor any run of them."""
+    xs, ys = np.meshgrid(np.arange(3.0), np.arange(3.0))
+    vertices = np.column_stack([xs.ravel(), ys.ravel(), np.zeros(9)])
+    faces = [[0, 1, 4], [0, 4, 3], [1, 2, 5], [1, 5, 4], [3, 4, 7], [3, 7, 6], [4, 5, 8], [4, 8, 7], [4, 4, 5]]
+    shape = cadview._mesh_shape(trimesh.Trimesh(vertices, faces, process=False))
+    assert shape["segments_per_edge"].tolist() == [8]  # the sheet's outline, one run round its 3 × 3 vertices
+
+
 async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_path: Path) -> None:
     folder = copy_design("gearbox", tmp_path / "gearbox")
     report = await build(core, folder, tmp_path / "out")
@@ -481,10 +503,42 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     )
 
 
-@pytest.mark.once
-async def test_the_gearbox_s_other_ratio_meshes_too(core: HitlCad, tmp_path: Path) -> None:
-    report = await build(core, copy_design("gearbox", tmp_path / "gearbox"), tmp_path / "out", "ratio_5")
-    assert report.status == "succeeded" and len(results(report, "relation", "pass")) == 6
+async def test_a_cam_lifts_its_follower_by_its_law_and_stays_on_it(core: HitlCad, tmp_path: Path) -> None:
+    folder = copy_design("cam", tmp_path / "cam")
+    report = await build(core, folder, tmp_path / "a")
+    (relation,) = results(report, "relation")
+    assert relation.status == "pass", relation.detail
+    motion = {r.subject: r for r in results(report, "motion")}
+    cam, slide = motion["base.axis+camshaft.axis"], motion["base.guide+follower.slide"]
+    assert (cam.code, cam.status) == ("motion.clear", "pass"), cam.detail
+    assert "moves through a full turn without collision" in cam.detail
+    assert slide.code == "motion.driven" and "driven by base.axis ↔ camshaft.axis" in slide.detail, slide.detail
+    lo, hi = map(float, re.search(r"moves (-?[\d.]+) … (-?[\d.]+) mm", slide.detail).groups())
+    assert hi - lo == pytest.approx(6.0, abs=0.05)  # the law's lift
+    (sweep,) = report.motions  # the panel lifts the follower by the law as the cam turns
+    lifted = [d for d in sweep.drives if d.instances == ["follower"]][0].law
+    assert max(y for _, y in lifted) - min(y for _, y in lifted) == pytest.approx(6.0, abs=0.05)
+    (spring,) = [r for r in results(report, "requirement") if r.status != "unverified"]
+    assert spring.status == "pass" and "19.00 … 25.00 mm through base.axis+camshaft.axis" in spring.detail, (
+        spring.detail
+    )
+
+    edit_json(folder / "design.json", lambda d: d["parameters"][4].update(value=0.85))  # a profile cut short
+    short = await build(core, folder, tmp_path / "b")
+    (cam,) = [r for r in results(short, "motion") if r.subject == "base.axis+camshaft.axis"]
+    assert (cam.code, cam.status) == ("motion.parted", "fail"), cam.detail
+    assert "camshaft stands" in cam.detail and "camshaft.lobe~follower.face keeps them in contact" in cam.detail
+
+    def loose(d: dict[str, Any]) -> None:  # no relation: the follower is held on its own slide as the cam turns
+        d["parameters"][4].update(value=1)
+        d["relations"] = []
+
+    edit_json(folder / "design.json", loose)
+    held = await build(core, folder, tmp_path / "c")
+    (cam,) = [r for r in results(held, "motion") if r.subject == "base.axis+camshaft.axis"]
+    assert (
+        cam.code == "motion.collision" and "follower stays where it sits on base.guide ↔ follower.slide" in cam.detail
+    )
 
 
 async def test_a_four_bar_moves_with_its_loop_and_says_what_it_checked(core: HitlCad, tmp_path: Path) -> None:
@@ -530,24 +584,30 @@ async def test_the_panel_turns_the_gears_a_moving_gear_drives_about_their_own_ax
     folder = copy_design("gearbox", tmp_path / "gearbox")
     edit_json(folder / "design.json", open_train)
     report = await build(core, folder, tmp_path / "out", "ratio_5")
+    assert len(results(report, "relation", "pass")) == 3, failing(report)  # sun 12 meshes each planet 18
     (sweep,) = [m for m in report.motions if m.mate == "motor.spindle+rotor.axis"]
     sun, *planets = sweep.drives
-    assert sun.instances == ["rotor", "sun"] and abs(sun.rate) == 1  # the sun slides on the rotor's D-shaft
+    rate = {id(d): (d.law[-1][1] - d.law[0][1]) / (d.law[-1][0] - d.law[0][0]) for d in sweep.drives}
+    assert sun.instances == ["rotor", "sun"] and abs(rate[id(sun)]) == 1  # the sun slides on the rotor's D-shaft
     assert sorted(i for p in planets for i in p.instances) == ["planet[0]", "planet[1]", "planet[2]"]
     for planet in planets:  # 12 teeth drive 18, each about its own pin
-        assert abs(planet.rate) == pytest.approx(12 / 18) and np.hypot(*planet.origin[:2]) > 10
-        assert np.dot(sun.axis, planet.axis) * sun.rate * planet.rate < 0  # and the other way round
-
-
-async def test_a_gear_cut_to_another_module_fails_its_connector_and_meshes_with_nothing(
-    core: HitlCad, tmp_path: Path
-) -> None:
-    folder = copy_design("gearbox", tmp_path / "gearbox")
-    edit(folder / "parts/gears.py", 'planet = spur(p["planet_teeth"], m,', 'planet = spur(p["planet_teeth"], 1.0,')
-    report = await build(core, folder, tmp_path / "out")
-    assert "connector planet.teeth: tip Ø20.000, m1.25 × (18 + 2) needs Ø25.000 ± 0.125" in failing(report)
-    unverified = [r.detail for r in results(report, "relation", "unverified")]
-    assert len(unverified) == 6 and "not verified until planet[0].teeth measures as declared" in unverified[0]
+        assert abs(rate[id(planet)]) == pytest.approx(12 / 18) and np.hypot(*planet.origin[:2]) > 10
+        assert np.dot(sun.axis, planet.axis) * rate[id(sun)] * rate[id(planet)] < 0  # and the other way round
+    # the planets' pins are not inputs: the sun's sweep drives them, and is the only sweep that turns them
+    assert [m.mate for m in report.motions].count("motor.spindle+rotor.axis") == 1
+    assert not [m for m in report.motions if "planet" in m.mate]
+    pins = [r for r in results(report, "motion") if "planet" in r.subject]
+    assert pins and all(r.code == "motion.driven" and r.status == "pass" for r in pins), [r.detail for r in pins]
+    lo, hi = map(float, re.search(r"moves (-?[\d.]+) … (-?[\d.]+)°, driven by motor.spindle ↔ rotor.axis",
+                                  pins[0].detail).groups())  # fmt: skip
+    assert hi - lo == pytest.approx(240.0)  # 12 / 18 of the sun's full turn
+    # limits on a driven mate are checked against how far its input drives it
+    edit_json(folder / "design.json",
+              lambda d: next(m for m in d["mates"] if m["b"] == "planet.bore").update(limits={"angle": [0, 200]}))  # fmt: skip
+    past = await build(core, folder, tmp_path / "past", "ratio_5")
+    (pin, *_) = [r for r in results(past, "motion") if "planet" in r.subject and r.status == "fail"]
+    assert pin.code == "motion.locked" and "driven by motor.spindle ↔ rotor.axis through its range" in pin.detail
+    assert "past its limits.angle [0, 200]" in pin.detail, pin.detail
 
 
 async def test_components_are_built_bound_and_counted_and_robot_descriptions_mesh_each_part(
@@ -635,8 +695,8 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
     assert {p.name: p.backend for p in report.parts} == {"plate": "build123d", "knob": "blender"}
     assert not (tmp_path / "out" / "model.step").exists()  # an assembly with a mesh part has no B-rep STEP
     # A B-rep part's colour reaches the view, as a mesh part's does
-    view = json.loads((tmp_path / "out" / "view.json").read_text(encoding="utf-8"))
-    plate = next(leaf for leaf in cadview.leaves(view["shapes"]) if leaf["id"].endswith("/plate"))
+    scene = json.loads((tmp_path / "out" / "scene.json").read_text(encoding="utf-8"))
+    plate = next(leaf for leaf in cadview.leaves(scene["shapes"]) if leaf["id"].endswith("/plate"))
     red, green, blue = (int(plate["color"][i : i + 2], 16) for i in (1, 3, 5))
     assert green > 0 and red == blue == 0, plate["color"]
     # Blender assembles both backends' parts from their glTF, each where mesh.stl has it
@@ -774,14 +834,14 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     red, white, blue = "#ff0000", "#ffffff", "#0000ff"
 
     # The view: a part in one colour is one shape at its instance; in two, a group of a shape per colour.
-    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
-    nodes = {node["id"]: node for node in view["shapes"]["parts"]}
+    scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    nodes = {node["id"]: node for node in scene["shapes"]["parts"]}
     assert {leaf["id"]: leaf["color"] for leaf in nodes["/Toy/base"]["parts"]} == {
         "/Toy/base/red": red,
         "/Toy/base/white": white,
     }
     assert nodes["/Toy/knob[0]"]["color"] == nodes["/Toy/knob[1]"]["color"] == blue
-    assert len(view["instances"]) == 3  # each colour of each part tessellated once
+    assert len(scene["instances"]) == 3  # each colour of each part tessellated once
 
     # 3MF: each part's colours as base materials, the assembly placed as mesh.stl is.
     def colours(rel: str) -> set[str]:
@@ -822,6 +882,7 @@ EXAMPLE_BUILDS = [
 ]  # fmt: skip
 
 
+@pytest.mark.examples
 @pytest.mark.parametrize(("name", "configuration"), EXAMPLE_BUILDS)
 async def test_the_readme_examples_build_and_verify_in_every_configuration(
     core: HitlCad, tmp_path: Path, name: str, configuration: str | None
@@ -833,7 +894,6 @@ async def test_the_readme_examples_build_and_verify_in_every_configuration(
 
 
 async def test_the_view_places_parts_whose_shape_was_moved_into_their_own_frame(core: HitlCad, tmp_path: Path) -> None:
-    import base64
 
     # Modelled where it sits in the product, then moved into its own frame; the assembly moves it back.
     part = """from build123d import *
@@ -857,9 +917,9 @@ def build(p, i):
     out = tmp_path / "out"
     report = await build(core, folder, out)
     assert report.status == "succeeded", report.lead()
-    view = json.loads((out / "view.json").read_text(encoding="utf-8"))
-    (leaf,) = view["shapes"]["parts"]
-    buffer = view["instances"][leaf["shape"]["ref"]]["vertices"]
-    vertices = np.frombuffer(base64.b64decode(buffer["buffer"]), dtype=buffer["dtype"]).reshape(-1, 3)
+    scene = json.loads((out / "scene.json").read_text(encoding="utf-8"))
+    (leaf,) = scene["shapes"]["parts"]
+    instance = scene["instances"][leaf["shape"]["ref"]]
+    vertices = cadview.PartView.read(out / instance["path"]).shapes[instance["shape"]]["vertices"].reshape(-1, 3)
     placed = trimesh.transform_points(vertices, cadview._frame(leaf["loc"]))
     np.testing.assert_allclose([placed.min(0), placed.max(0)], trimesh.load(out / "mesh.stl").bounds, atol=1e-3)

@@ -17,7 +17,8 @@ from hitlcad.core import frames as fr
 from hitlcad.core.address import End, InstancePath
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.iso286 import deviations, fit_clearance
-from hitlcad.core.structure import Axis, Fit, Tolerances, Verification, symmetry_of
+from hitlcad.core.laws import Linear
+from hitlcad.core.structure import Axis, Ends, Fit, Tolerances, Verification, symmetry_of
 from hitlcad.kernel.errors import DesignInvalid, Location
 
 TOL = Tolerances(position_mm=0.01, angle_deg=0.05, motion_steps=2000)
@@ -126,11 +127,16 @@ def test_a_cylindrical_mate_leaves_turning_and_sliding_free_and_flip_reverses_b(
 def test_gear_relations_check_centre_distance_and_give_ratios() -> None:
     gear = GearRelation(type="gear", a="s.t", b="p.t")
     sun, planet = {"module": 1.25, "teeth": 18, "width": 10}, {"module": 1.25, "teeth": 18, "width": 10}
-    assert gear.verify(frame(), frame((22.5, 0, 0)), sun, planet, TOL).passed
-    assert not gear.verify(frame(), frame((22.6, 0, 0)), sun, planet, TOL).passed
     ring = {"module": 1.25, "teeth": 54, "width": 10, "internal": 1.0}
-    assert gear.verify(frame((22.5, 0, 0)), frame(), planet, ring, TOL).passed
-    assert gear.ratio(sun, planet) == pytest.approx(-1.0) and gear.ratio(planet, ring) == pytest.approx(18 / 54)
+
+    def ends(fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float]) -> Ends:
+        return Ends(fa, fb, na, nb, lambda ref: None)
+
+    assert gear.verify(ends(frame(), frame((22.5, 0, 0)), sun, planet), TOL).passed
+    assert not gear.verify(ends(frame(), frame((22.6, 0, 0)), sun, planet), TOL).passed
+    assert gear.verify(ends(frame((22.5, 0, 0)), frame(), planet, ring), TOL).passed
+    assert gear.law(ends(frame(), frame((22.5, 0, 0)), sun, planet)) == Linear(-1.0)
+    assert gear.law(ends(frame((22.5, 0, 0)), frame(), planet, ring)).ratio == pytest.approx(18 / 54)
 
 
 def test_relations_drive_each_end_the_way_it_physically_moves() -> None:
@@ -257,7 +263,7 @@ def _part(tmp_path: Path, name: str, mesh: Any) -> Any:
     mesh.export(tmp_path / f"{name}.stl")
     return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
                         mesh_file=tmp_path / f"{name}.stl", step_file=None, objects_file=tmp_path / f"{name}.glb",
-                        frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+                        view_file=tmp_path / f"{name}.view", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
 
 
 def test_one_closedness_test_measures_solids_that_touch_along_an_edge(tmp_path: Path) -> None:
@@ -317,7 +323,7 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
     ))  # fmt: skip
     parts = {name: PartGeometry(name=name, spec=spec.parts[name], file="parts/a.py", backend="build123d",
                                 mesh_file=Path("unused.stl"), step_file=None, objects_file=Path("unused.glb"),
-                                frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
+                                view_file=Path("unused.view"), frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
                                 reads=Reads(), cached=False)
              for name in ("a", "b")}  # fmt: skip
     built = BuiltDesign(spec=spec, folder=Path(), values={"w": 10}, interfaces={}, interface_reads={},
@@ -327,6 +333,9 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
     assert [m.detail for m in built.measured[("a", "teeth")]] == ["no parameter 'teeth'"] * 2
     relations = Relations().run(Context(built, None, None, None))  # type: ignore[arg-type]
     assert [r.status for r in relations] == ["unverified"] * 2
+    assert "not verified until a.teeth[0] and b.teeth[0] measures as declared" in relations[0].detail, relations[
+        0
+    ].detail
 
 
 def test_results_with_one_cause_are_one_problem_and_pattern_copies_fold() -> None:

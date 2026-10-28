@@ -26,10 +26,12 @@ from pydantic import Field
 
 from hitlcad.analysis.base import ResultCache
 from hitlcad.analysis.interference import boxes_touch
-from hitlcad.analysis.model import SEARCH_MM, WIDEN, AnalysisSettings, Leaf, gap
-from hitlcad.analysis.motion.findings import Contact, Findings, Least, Pair, Stop, at_rest
+from hitlcad.analysis.model import AnalysisSettings, Leaf
+from hitlcad.analysis.motion.findings import Contact, Findings, Least, Pair, Parted, Stop, at_rest
 from hitlcad.analysis.motion.plans import Drive, Plan, drives
-from hitlcad.analysis.motion.turning import axis_frame, not_round, profile, radius, revolve
+from hitlcad.analysis.motion.turning import axis_frame, profile, radius, revolve
+from hitlcad.core.loops import SAMPLE_MM
+from hitlcad.geometry.mesh import Collider
 
 if TYPE_CHECKING:
     import manifold3d
@@ -52,35 +54,43 @@ def sweep(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Swept:
 @dataclass
 class _Pair(Pair):
     """A pair, the drives that move each (`dq` None: q stays), and once shaped, the solids the sweep moves (placed
-    where they sit) and how fast the gap between them can close (mm per unit of the mate's motion)."""
+    where they sit), their colliders, and how fast the gap between them can close (mm per unit of the mate's
+    motion, anywhere in `span`, the mate's motion swept from where it sits)."""
 
     dp: Drive
     dq: Drive | None
+    span: tuple[float, float]
     a: manifold3d.Manifold | None = None
     b: manifold3d.Manifold | None = None
+    ca: Collider | None = None
+    cb: Collider | None = None
     speed: float = 0.0
 
-    def solids(self, value: float) -> tuple[manifold3d.Manifold, manifold3d.Manifold]:
+    def gap(self, value: float) -> float:
+        """The gap between the two at the mate's `value`."""
+        assert self.ca is not None and self.cb is not None
+        return self.ca.distance(self.cb, self.dp.at(value), None if self.dq is None else self.dq.at(value))
+
+    def shared(self, value: float) -> float:
+        """What the two share (mm³) at the mate's `value`."""
         assert self.a is not None and self.b is not None
         b = self.b if self.dq is None else self.b.transform(self.dq.at(value)[:3, :])
-        return self.a.transform(self.dp.at(value)[:3, :]), b
+        return float((self.a.transform(self.dp.at(value)[:3, :]) ^ b).volume())
 
     def key(self) -> list[object]:
         """What its sweep depends on, once `at_rest` has kept it: its leaves where they sit, how they move,
         the gap they must keep, and what they may share where they sit (what a mate allows)."""
         return [self.p.path, self.p.part.digest, np.round(self.p.transform, 6).tolist(), self.dp.key(), self.q.path,
                 self.q.part.digest, np.round(self.q.transform, 6).tolist(), self.dq.key() if self.dq else None,
-                self.need, self.tracked, round(self.sitting_mm3, 6)]  # fmt: skip
+                self.need, self.tracked, round(self.sitting_mm3, 6), self.contact_key()]  # fmt: skip
 
 
 @dataclass
 class _Track:
-    """A pair as one direction sweeps it: where its gap is next measured, how far that measurement looks, and
-    the gap it must keep from here on."""
+    """A pair as one direction sweeps it: where its gap is next measured, and the gap it must keep from here on."""
 
     pair: _Pair
     need: float
-    search: float
     next: float = 0.0
     gap: float = math.inf
 
@@ -91,8 +101,8 @@ class _Sweep:
         self.tol = plan.world.tolerances
         self.round_mm = settings.mesh_tolerance_mm + self.tol.position_mm  # a facetted round is round to this
         self.least: dict[tuple[str, str], Least] = {}
-        self.shapes: dict[tuple[object, ...], tuple[manifold3d.Manifold, float]] = {}
-        self.turned: dict[tuple[object, ...], manifold3d.Manifold] = {}
+        self.shapes: dict[tuple[object, ...], tuple[manifold3d.Manifold, float, Collider | None]] = {}
+        self.turned: dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider]] = {}
 
     def run(self) -> Swept:
         """The sweep, cached by the pairs it moves. Which pairs it moves, and what each may share where it sits,
@@ -126,7 +136,8 @@ class _Sweep:
             pairs = [p for p in kept if self._shaped(p) and not self._clear_in_a_turn(p, kind)]
             for end in ends:
                 if not out.stopped:
-                    self._advance(kind, rest, end, pairs, out)
+                    self._advance(kind, rest, end, [p for p in pairs if not p.touching], out)
+                    self._follow(kind, rest, end, [p for p in pairs if p.touching], out)
         out.least = [least.model_copy(update={"complete": not out.stopped}) for least in self.least.values()]
         return out
 
@@ -134,7 +145,8 @@ class _Sweep:
         """Each moving leaf with every other leaf its motion may bring it near, but those that move with it."""
         w = self.plan.world
         moving = {p: drives[c] for p in w.leaves if (c := w.clusters.find(p)) in drives}
-        boxes = {p: _swept_bounds(w.leaves[p], d, [0.0, *deltas]) for p, d in moving.items()}
+        span = (min(0.0, *deltas), max(0.0, *deltas))
+        boxes = {p: _swept_bounds(w.leaves[p], d, span) for p, d in moving.items()}
         out = []
         for p, dp in moving.items():
             for q, other in w.leaves.items():
@@ -145,7 +157,7 @@ class _Sweep:
                 if boxes_touch(
                     boxes[p], other.bounds if dq is None else boxes[q], (need or 0.0) + self.tol.position_mm
                 ):
-                    out.append(_Pair(w.leaves[p], other, need or 0.0, need is not None, dp, dq))
+                    out.append(_Pair(w.leaves[p], other, need or 0.0, need is not None, dp, dq, span))
         return out
 
     def _shaped(self, pair: _Pair) -> bool:
@@ -155,23 +167,28 @@ class _Sweep:
         stays what it is where they sit. Two moving leaves are moved whole."""
         if pair.dq is not None:
             pair.a, pair.b = pair.p.manifold, pair.q.manifold
-            pair.speed = sum(d.speed(radius(s, axis_frame(d.axis))) for d, s in ((pair.dp, pair.a), (pair.dq, pair.b)))
+            pair.ca, pair.cb = pair.p.collider, pair.q.collider
+            pair.speed = sum(d.speed(radius(s, axis_frame(d.axis)), *pair.span)
+                             for d, s in ((pair.dp, pair.a), (pair.dq, pair.b)))  # fmt: skip
             return True
-        (pair.a, reach), (pair.b, _) = self._shape(pair.p, pair.dp), self._shape(pair.q, pair.dp)
-        pair.speed = pair.dp.speed(reach)
-        if pair.a.is_empty() or pair.b.is_empty():
+        (pair.a, reach, pair.ca), (pair.b, _, pair.cb) = self._shape(pair.p, pair.dp), self._shape(pair.q, pair.dp)
+        pair.speed = pair.dp.speed(reach, *pair.span)
+        if pair.ca is None or pair.cb is None:
             return False
         pair.sitting_mm3 = float((pair.a ^ pair.b).volume()) if pair.sitting_mm3 else 0.0
         return True
 
-    def _shape(self, leaf: Leaf, drive: Drive) -> tuple[manifold3d.Manifold, float]:
-        """The leaf less what is round about the drive's axis (all of it, along a travel), and how far that
-        reaches from the axis."""
-        key = (leaf.path, *drive.key())
+    def _shape(self, leaf: Leaf, drive: Drive) -> tuple[manifold3d.Manifold, float, Collider | None]:
+        """The leaf less what is round about the drive's axis (all of it, along a travel), how far that reaches
+        from the axis, and its collider (None: nothing is left)."""
+        key = (leaf.path, *drive.about())
         if key not in self.shapes:
             frame = axis_frame(drive.axis)
-            solid = not_round(leaf.manifold, frame, self.round_mm) if drive.axis.kind == "angle" else leaf.manifold
-            self.shapes[key] = (solid, radius(solid, frame))
+            if drive.axis.kind != "angle":
+                self.shapes[key] = (leaf.manifold, radius(leaf.manifold, frame), leaf.collider)
+            else:
+                solid, collider = leaf.not_round(drive.axis, self.round_mm)
+                self.shapes[key] = (solid, radius(solid, frame), collider)
         return self.shapes[key]
 
     def _clear_in_a_turn(self, pair: _Pair, kind: str) -> bool:
@@ -181,18 +198,18 @@ class _Sweep:
         if pair.dq is not None or pair.dp.axis.kind != "angle":
             return False
         assert pair.a is not None and pair.b is not None
-        key = (pair.p.path, *pair.dp.key())
+        key = (pair.p.path, *pair.dp.about())
         if key not in self.turned:
             frame = axis_frame(pair.dp.axis)
-            self.turned[key] = revolve(profile(pair.a, frame, 0.0), frame, self.tol.position_mm)
-        turned = self.turned[key]
+            solid = revolve(profile(pair.a, frame, 0.0), frame, self.tol.position_mm)
+            self.turned[key] = solid, Collider(solid)
+        turned, collider = self.turned[key]
         if (turned ^ pair.b).volume() > pair.sitting_mm3 + self.settings.overlap_mm3:
             return False
         if not pair.tracked:
             return True
-        span = float(np.linalg.norm(np.ptp(np.vstack([pair.p.bounds, pair.q.bounds]), axis=0)))
-        sitting = gap(pair.a, pair.b, span)
-        least = min(sitting, float(turned.min_gap(pair.b, sitting + self.tol.position_mm)))
+        assert pair.ca is not None and pair.cb is not None
+        least = min(pair.ca.distance(pair.cb), collider.distance(pair.cb))
         if least < pair.need:
             return False
         self._record(pair, least, kind, None)
@@ -203,31 +220,25 @@ class _Sweep:
         to the first contact, or until the positions run out."""
         sign, span = math.copysign(1.0, end - rest), abs(end - rest)
         step_mm, budget = self.tol.position_mm, self.tol.motion_steps
-        tracks = [_Track(p, p.need, p.need + SEARCH_MM) for p in pairs if p.speed > 0]
+        tracks = [_Track(p, p.need) for p in pairs if p.speed > 0]
         x = clear = 0.0
         while True:
             hit: tuple[_Pair, float] | None = None
             for t in (t for t in tracks if t.next <= x):
-                a, b = t.pair.solids(sign * x)
-                found = float(a.min_gap(b, t.search))
-                if found >= t.search:  # nothing within the search: at least that far apart
-                    reach = t.need + t.pair.speed * (span - x) + step_mm
-                    if t.search >= reach:
-                        t.next = math.inf  # it cannot close the gap before the end
-                        continue
-                    lower, t.search = t.search, min(t.search * WIDEN, reach)
-                else:
-                    lower = t.gap = found
-                    if t.pair.tracked:
-                        self._record(t.pair, found, kind, rest + sign * x)
-                    t.need = t.need if found >= t.need else 0.0  # its clearance is broken here: now only contact
-                    if (
-                        found < step_mm
-                        and (shared := float((a ^ b).volume())) > t.pair.sitting_mm3 + self.settings.overlap_mm3
-                    ):
-                        hit = (t.pair, shared) if hit is None or shared > hit[1] else hit
-                    t.search = max(2 * found, t.need + SEARCH_MM)
-                t.next = x + max(lower - t.need, step_mm) / t.pair.speed
+                found = t.pair.gap(sign * x)
+                if found >= t.need + t.pair.speed * (span - x) + step_mm:
+                    t.next = math.inf  # it cannot close the gap before the end
+                    continue
+                t.gap = found
+                if t.pair.tracked:
+                    self._record(t.pair, found, kind, rest + sign * x)
+                t.need = t.need if found >= t.need else 0.0  # its clearance is broken here: now only contact
+                if (
+                    found < step_mm
+                    and (shared := t.pair.shared(sign * x)) > t.pair.sitting_mm3 + self.settings.overlap_mm3
+                ):
+                    hit = (t.pair, shared) if hit is None or shared > hit[1] else hit
+                t.next = x + max(found - t.need, step_mm) / t.pair.speed
             if hit:
                 out.contacts.append(Contact(kind=kind, at=rest + sign * x, end=end, clear=rest + sign * clear,
                                             a=hit[0].p.path, b=hit[0].q.path, overlap_mm3=round(hit[1], 6)))  # fmt: skip
@@ -244,6 +255,31 @@ class _Sweep:
             x = min(following, span)
             out.positions += 1
 
+    def _follow(self, kind: str, rest: float, end: float, pairs: list[_Pair], out: Swept) -> None:
+        """Pairs a relation keeps in contact, from where the mate sits towards `end` at positions no point moves
+        more than `SAMPLE_MM` apart, up to the first where they part or overlap."""
+        if not pairs:
+            return
+        sign, span = math.copysign(1.0, end - rest), abs(end - rest)
+        n = max(math.ceil(span * max(p.speed for p in pairs) / SAMPLE_MM), 1)
+        for i in range(1, n + 1):
+            value = sign * span * i / n
+            for pair in pairs:
+                assert pair.touching is not None
+                gap = pair.gap(value)
+                if gap > pair.parts_at(self.settings, self.tol):
+                    out.parted.append(Parted(kind=kind, at=rest + value, end=end, a=pair.p.path, b=pair.q.path,
+                                             gap_mm=round(gap, 6), relation=pair.touching.source.address))  # fmt: skip
+                    return
+                if (
+                    gap < self.tol.position_mm
+                    and (shared := pair.shared(value)) > pair.sitting_mm3 + self.settings.overlap_mm3
+                ):
+                    out.contacts.append(Contact(kind=kind, at=rest + value, end=end, clear=rest + sign * span * (i - 1) / n,
+                                                a=pair.p.path, b=pair.q.path, overlap_mm3=round(shared, 6)))  # fmt: skip
+                    return
+            out.positions += 1
+
     def _record(self, pair: _Pair, found: float, kind: str, at: float | None) -> None:
         key = (pair.p.path, pair.q.path)
         if key not in self.least or found < self.least[key].gap_mm:
@@ -251,12 +287,12 @@ class _Sweep:
                                     at=None if at is None else round(at, 6), complete=True)  # fmt: skip
 
 
-def _swept_bounds(leaf: Leaf, drive: Drive, deltas: list[float]) -> np.ndarray:
-    """A box around everything the leaf passes through: moved by each of `deltas` along a travel, anywhere in
-    a full turn about an axis."""
+def _swept_bounds(leaf: Leaf, drive: Drive, span: tuple[float, float]) -> np.ndarray:
+    """A box around everything the leaf passes through as the mate moves through `span`: as far as the drive's
+    law takes it along a travel, anywhere in a full turn about an axis."""
     z = drive.axis.direction / np.linalg.norm(drive.axis.direction)
     if drive.axis.kind == "travel":
-        shifts = np.outer([drive.rate * d for d in deltas], z)
+        shifts = np.outer(drive.law.bounds(*span), z)
         return np.array([leaf.bounds[0] + shifts.min(axis=0), leaf.bounds[1] + shifts.max(axis=0)])
     d = leaf.vertices - drive.axis.origin
     along = d @ z

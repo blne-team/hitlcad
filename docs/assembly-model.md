@@ -81,6 +81,7 @@ designs/gearbox/
     …
   lib/             helpers part files share, not parts (gear.py: involute outlines)
   vendor/          vendor STEP files
+  references/      pictures `silhouette` requirements compare the design with
   assembly.py      def build(p, i) -> {part or component: [placement, …]}
   build/           outputs of the latest successful build; git-ignored
 designs/pan_tilt/  a design using gearbox twice, as two components
@@ -286,6 +287,10 @@ instance nothing connects is floating, the real-CAD "under-defined component".
 | `gear` | two `gear` connectors | same module; axes parallel; centre distance m(z₁ ± z₂)/2 (− for an internal gear); face widths overlap; not verified until both gears measure as declared | b turns −z_a/z_b (+ internal), both about a's Z |
 | `rack` | a `gear` and a `frame` on the pitch line | pitch circle tangent to the pitch line; pinion axis square to the rack | π·m·z mm per turn, along the rack's X the way the pitch point moves |
 | `screw` | two `frame`s | axes collinear | `lead` mm per turn, right-hand: back along a's Z as a turns positively about it |
+| `cam` | two `frame`s: the cam (Z its axis, X where its law's angle is 0) and the follower (at the point its lift is given for, Z along its travel, away from the cam) | the follower's travel square to the cam's axis; it sits `base` + its law's lift for the cam's angle as assembled | the follower lifts by `lift`, an interface value `[[θ°, mm], …]` over one turn (the table the design's code cuts the profile from), smooth between its points (PCHIP); it follows the cam and does not drive it back; the two stay in contact |
+
+A relation couples b's motion to a's by a law: a straight line for gears, a rack and a screw, the lift
+table for a cam. Any part turning against a follower is a cam (a rocker arm pressing a valve stem).
 
 Distances are verified within the relation's `tolerance`, or `verification.position_mm`. A single
 frame meets every frame of the other end (a sun and its planets); two patterns pair one-to-one.
@@ -316,7 +321,9 @@ is fine). A fastener set joins its parts rigidly.
 The requirement checks are `size`, `fits_within`, `volume`, `mass`, `hole`, `wall`, `bodies` (each
 on a `target`: a part in its own frame, an instance or component path placed, or the whole design),
 `clearance` (between two placed things: the least gap where they sit and wherever a range of motion
-moves one against the other, as motion analysis sweeps it, and where) and `stack`:
+moves one against the other, as motion analysis sweeps it, and where), `span` (the length between two
+connector frames where they sit and at every position motion moves either through: a spring's ends) and
+`stack`:
 
 ```jsonc
 {"text": "The carrier keeps an axial gap under the lid",
@@ -328,6 +335,25 @@ A stack is the gap between two connector frames along the first one's Z: nominal
 case (± the sum of the contributors' tolerances, which must stay within min and max) and RSS.
 `mass` uses each part's material (a catalog part's from its provider); a part without one makes it
 `unverified`, naming the part.
+
+`silhouette` (the `pictures` plugin) compares the model, seen from one side, with a picture of what it
+should look like: a photo, render or sketch the human saves under `references/`, with the
+requirement's text saying what matters in it:
+
+```jsonc
+{"text": "Looks like Max from the front: the floppy ears matter most",
+ "check": {"kind": "silhouette", "image": "references/front.jpg", "view": "front", "height": "height",
+           "min_overlap": 0.9, "max_deviation": 3}}
+```
+
+The subject is cut out of its background (a transparent PNG as it is cut; otherwise by the colour of
+the picture's border, refined by GrabCut, or as the area a sketch's lines enclose), scaled to `height`
+mm and stood on Z=0, centred across. The check measures how much of the two outlines' union they
+share and how far either strays from the other; a failure names what strays, how far and which way
+(`head (ear_left) stops 4.2 mm short of the reference towards +Z at X −18.0, Z 168.0`), and
+`build_design` shows the agent both outlines over the picture on a millimetre grid, which it reads
+landmarks from. A picture is checksummed into the build, so saving a new one builds again, from cached
+parts.
 
 A requirement's numbers (min and max, a box, a hole's diameter, a wall) may name a parameter or an
 interface value instead (`"max": "interfaces.height_max"`), so the requirement follows the design in
@@ -387,14 +413,19 @@ default configuration).
 
 ## Motion
 
-For every mate with a range of motion (its `limits`, or a full turn for a revolute or cylindrical
-mate without angle limits), motion analysis moves the side of the mate away from `ground` from
-where it sits towards each end of the range (both ways round, for a full turn), and reports the
-first contact each way and the limit to change ("base.hinge ↔ lid.pin: from 0.0°, lid hits base at
+A mechanism has inputs, and everything else follows them. Each mate's free motion with a range (its
+`limits`, or a full turn for a revolute or cylindrical mate without angle limits) is an input, but one
+an input before it already moves (a gear's turn its relation drives, a follower its cam lifts: a
+follower's own motion comes after the rest): that mate is `motion.driven`, checked along its input's
+sweep, and fails (`motion.locked`) where its input drives it past its own limits. For each input,
+motion analysis moves the side of the mate away from `ground` from where it sits towards each end of
+the range (both ways round, for a full turn), and reports the first contact each way and the limit to
+change ("base.hinge ↔ lid.pin: from 0.0°, lid hits base at
 -99.0° on the way to -100°: limits.angle [-100, 0] run past it; make them [-98.9, 0], or clear base").
 
 It sweeps by conservative advancement, so a collision between two positions is never missed: at each
-position it measures the gap (manifold3d) between each moving instance and every instance it can
+position it measures the gap (FCL, from a tree of each solid's triangles built once, the solids moved
+not remeshed) between each moving instance and every instance it can
 reach, and moves on no further than lets any point travel that gap: the gap over the instance's
 largest distance from the axis, for a turn, or the gap itself, along a slide. Where instances
 touch, a step moves no point further than `verification.position_mm`, which is how closely a
@@ -415,16 +446,24 @@ sweep, and says where.
 
 Rigid mates, fastener sets and rigid components join instances into rigid clusters; the other
 mates and the relations join clusters. A mate whose two ends are held rigidly anyway does not move
-(an informational pass). Relations carry a motion on: a gear driven by a moving gear turns about its
-own axis at the rate its relation holds (`Relation.coordinates`: each gear's turn against the line
-of their centres, so a gear on a moving arm turns by Willis's relation).
+(an informational pass). Relations carry a motion on: a part driven by a moving one moves about or along
+its own axis by the law its relation holds (`Relation.coordinates`: each gear's turn against the line of
+their centres, so a gear on a moving arm turns by Willis's relation), and conservative advancement
+bounds each step by the law's steepest slope over the range. A part hit while it is held on a motion of
+its own is named, with the relation that would couple them. Parts a relation keeps in contact (a cam
+and its follower) are checked at positions no point moves more than 0.5 mm apart: standing apart by
+more than the relation's tolerance and both meshes' is `motion.parted` (the profile and its law
+disagree), sharing volume a collision. Motion is kinematic: forces (whether a follower leaves its cam at
+speed, a spring's preload) are not checked; a `span` requirement keeps a spring's ends between its
+lengths wherever motion takes them.
 
 ### Loops
 
 A block of mates and relations that moves only together is a loop: a closed loop of mates (a
 four-bar, a slider-crank), or a relation no turn about a fixed axis can hold (a planet on a moving
 carrier meshing with a fixed ring). A loop is swept once, by a loop solver (`hitlcad_solvers`;
-`HITLCAD_SOLVER`, hitlcad's own `least_squares` by default), driven by one of its mates: the first
+`HITLCAD_SOLVER`, hitlcad's own `sqp` by default: CasADi's SQP method on the loop's compiled graph; empty, and no loop is swept: each of its
+pairs is unverified, "no loop solver is set", and checked as assembled only), driven by one of its mates: the first
 with `limits`, through them; else the first whose full turn the solver completes; else the first.
 The solver proposes positions; hitlcad checks every one: each mate still holds what its type
 `holds` of b's frame in a's, each relation its coupling from as assembled, within the verification
@@ -434,8 +473,11 @@ or turns about its own axis without moving anything else (a gear sliding on its 
 where it sits, and not counted as a freedom.
 
 At each position every pair the loop moves is measured as the exact sweep measures it, round parts
-about a mate's axis left out where one of the pair turns against the other on it. Every position is
-shown clear, but what happens between two of them is not:
+about a mate's axis left out where one of the pair turns against the other on it. A pair with no
+`clearance` asked of it whose gap is less than a position moves it (gears in mesh, a pin in its bore)
+is from then on only tested for meeting (touching, crossing, or one inside the other) at each position, far
+cheaper than measuring how far apart.
+Every position is shown clear, but what happens between two of them is not:
 
 - a pair that overlaps at a position is a collision (`motion.collision`), at that position;
 - a loop that goes no further than a mate's `limits` (it locks at a dead point), or takes a mate
@@ -454,8 +496,8 @@ Every mate of a loop takes its result from the one sweep, with the range it move
 ("moves 77.4 … 141.4° with its loop, driven by base.a ↔ crank.a"), and shares the loop's cause, so a
 loop is one problem.
 
-The report lists each range and what it moves, each set of instances about or along its own axis at
-its own rate, or a loop's positions (at most 400 of those solved), which the panel's motion slider
+The report lists each range and what it moves, each set of instances about or along its own axis by
+samples of its law, or a loop's positions (at most 400 of those solved), which the panel's motion slider
 moves. A pin placed with the slider moved records where it was (`Pin.motion`), and selecting the pin
 shows it there again.
 
@@ -539,8 +581,8 @@ joint expects, a mate others hold still) are listed under their analysis but are
 | `model.step` | the assembly as a STEP product structure, instances named by path (only when every part is B-rep) |
 | `model.blend` | the assembly as one Blender scene, 1 unit = 1 mm, Z up (when a part, a component's included, is a Blender part): each part's objects with their names and materials in a collection of their own (from its `.glb`, whichever backend built it), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
 | `mesh.stl` | the placed assembly as one mesh |
-| `parts/<part>.stl`, `.glb` (its objects' names, materials and colours), `.step` (B-rep parts) | each part once, in its own frame |
-| `view.json` | the 3D view: each part tessellated once through its features, drawn per instance; a B-rep part one `exact` shape whose faces, edges and vertices picks name, a mesh part one shape per colour |
+| `parts/<part>.stl`, `.glb` (its objects' names, materials and colours), `.step` (B-rep parts), `.view` (tessellated for the 3D view) | each part once, in its own frame; its backend writes them all where it builds it, and the part cache keeps them together |
+| `scene.json` | the 3D view: each part's `.view` drawn per instance, named by its path and digest; a B-rep part one `exact` shape whose faces, edges and vertices picks name, a mesh part one shape per colour |
 | `preview.png` | iso, front, right and top renders |
 | the exporters' files | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 | `report.json`, `build.log` | the report, the backends' output |
@@ -548,7 +590,7 @@ joint expects, a mate others hold still) are listed under their analysis but are
 URDF and SDF map placed instances to links (with inertia where the material is known) and mates to
 joints along a tree from `ground`: rigid and fastened fixed, revolute revolute (continuous without
 limits), slider prismatic, cylindrical continuous, planar planar, ball floating (URDF) or ball (SDF),
-a gear relation between two turning joints a URDF `<mimic>`. A mate that would close a loop is left
+a relation of a straight-line law between two moving joints a URDF `<mimic>` (a cam has none). A mate that would close a loop is left
 out; an instance no mate reaches is fixed where it stands.
 
 ## Picks and pins
@@ -639,7 +681,7 @@ names the plugins it needs beyond hitlcad's own in `plugins`. How to write one: 
 
 | Extension point | Kind | A member provides |
 | --- | --- | --- |
-| CAD backend | `CADBackend` / `SubprocessBackend`, hook `hitlcad_backends` | plan and part builds through the model runtime, an authoring guide, `brep` |
+| CAD backend | `CADBackend` and its worker's `runtime.Adapter`, hook `hitlcad_backends` | how its worker starts, how its part values read and export, an authoring guide, `brep` |
 | Connector kind | `Connector`, hook `hitlcad_connectors` | its fields, `measure(features, frame, tol, nominals)`, `round` and `owns` where they apply |
 | Mate type | `Mate`, hook `hitlcad_mates` | its free motion, what it `holds`, and `verify(fa, fb, symmetry, tol)` |
 | Relation type | `Relation`, hook `hitlcad_relations` | the kinds it joins, `verify`, `ratio`, `coordinates` |

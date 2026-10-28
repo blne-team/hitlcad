@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from hitlcad.analysis.base import Analysis, default_analyses
 from hitlcad.backends.registry import BackendRegistry
@@ -47,6 +48,8 @@ class HitlCad:
     explore: ExploreService
     context: ContextFeed
     watcher: FolderWatcher
+    owns_backends: bool  # made from the settings, not given: it closes them
+    stopped: bool = False
 
     @classmethod
     def create(
@@ -58,7 +61,8 @@ class HitlCad:
         analyses: Sequence[Analysis] | None = None,
         exporters: dict[str, Exporter] | None = None,
     ) -> HitlCad:
-        """Defaults come from ``settings``; tests replace the backends, the renderer and the analyses."""
+        """Defaults come from ``settings``; tests replace the backends (theirs to close: they outlive the server),
+        the renderer and the analyses."""
         settings = settings or get_settings()
         pipeline = build_pipeline(settings, registry=registry, renderer=renderer, analyses=analyses,
                                   exporters=exporters)  # fmt: skip
@@ -68,7 +72,7 @@ class HitlCad:
                                    settings.loaded_builds)  # fmt: skip
         builds = BuildService(designs, pipeline, feedback, settings)
         return cls(settings, pipeline.registry, pipeline, designs, builds, feedback, ExploreService(designs, settings),
-                   ContextFeed(designs), FolderWatcher(designs, builds))  # fmt: skip
+                   ContextFeed(designs), FolderWatcher(designs, builds), registry is None)  # fmt: skip
 
     def start(self) -> None:
         for backend in self.registry.all():
@@ -76,8 +80,13 @@ class HitlCad:
         self.watcher.start()
 
     async def shutdown(self) -> None:
+        """Once; again, nothing."""
+        if self.stopped:
+            return
+        self.stopped = True
         await self.watcher.stop()
         await self.builds.stop()
+        folders = [Path(p) for p in self.designs.folders()]
         for backend in self.registry.all():
-            await backend.close()
+            await (backend.close() if self.owns_backends else backend.release(folders))
         self.designs.store.close()

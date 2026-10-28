@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { InspectorTab } from "../lib/designUi";
 import { TABS, type TabContext } from "./InspectorView";
 
@@ -9,8 +8,7 @@ const REVIEW: InspectorTab[] = ["report", "parameters"];
  * The 3D editor's review panel, floating beside the model: the build's results and the design's parameters,
  * the Design view's own tabs, folded to their names (with what needs attention) until one is opened.
  */
-export function ReviewPanel({ ctx }: { ctx: TabContext }) {
-  const [open, setOpen] = useState<InspectorTab | null>(null);
+export function ReviewPanel({ ctx, open, onToggle }: { ctx: TabContext; open: InspectorTab | null; onToggle: (tab: InspectorTab | null) => void }) {
   const tabs = REVIEW.map((id) => TABS.find((t) => t.id === id)!);
   const shown = tabs.find((t) => t.id === open);
   return (
@@ -20,7 +18,7 @@ export function ReviewPanel({ ctx }: { ctx: TabContext }) {
           const count = t.badge?.(ctx) ?? 0;
           return (
             <button key={t.id} type="button" role="tab" aria-selected={t === shown} className={t === shown ? "review-tab on" : "review-tab"}
-              onClick={() => setOpen(t === shown ? null : t.id)}>
+              onClick={() => onToggle(t === shown ? null : t.id)}>
               {t.label}
               {count > 0 && <span className="tab-count">{count}</span>}
             </button>

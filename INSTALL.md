@@ -8,7 +8,7 @@ hitlcad is two pieces, released together:
   view and the commands. It starts the tool when you open a design project.
 
 Both come in one folder, `hitlcad-<version>/`, with an installer. Get
-`hitlcad-<version>.tar.gz` from the [GitHub releases](https://github.com/blne-team/solidwork/releases)
+`hitlcad-<version>.tar.gz` from the [GitHub releases](https://github.com/blne-team/hitlcad/releases)
 and unpack it (the release also attaches the wheel and the `.vsix` on their own).
 
 ## Requirements
@@ -119,14 +119,15 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_BACKENDS` | `["build123d","blender"]` | Enabled CAD backends, of those plugins give |
 | `HITLCAD_DATA_DIR` | `~/.hitlcad` | The design histories (`hitlcad.db`) and every revision's files |
 | `HITLCAD_BLENDER_BINARY` | `blender` | Blender executable |
-| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each build process |
+| `HITLCAD_BUILD_TIMEOUT_S` | `180` | Deadline of each job a build worker runs (the plan, one part file) |
 | `HITLCAD_RENDER_TIMEOUT_S` | `120` | Deadline of each preview render (Blender) |
-| `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build process may use, with everything it starts |
-| `HITLCAD_BUILD_WORKERS` | `4` | Part files built in parallel child processes |
-| `HITLCAD_WARM_BUILDS` | `1` | Build processes each backend keeps started, its libraries loaded (about 400 MB each for build123d); `0` for none |
+| `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build worker may use, with everything it starts; one that ends a job holding more than half of it is replaced |
+| `HITLCAD_WORKERS` | `4` | Build workers each backend keeps, each one design's, its part files built in them in parallel (about 400 MB each for build123d) |
+| `HITLCAD_WORKER_CACHE_MB` | `256` | What a build worker keeps of what it exported, by the shape's content |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
 | `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
 | `HITLCAD_VERIFY_MOTION_STEPS` | `2000` | Most positions motion analysis checks per mate before it reports the motion unverified |
+| `HITLCAD_SOLVER` | `least_squares` | The loop solver closed loops of mates (a four-bar, a planetary) are swept with; empty: they are not swept, only checked as assembled, which builds a design with many loops far faster |
 | `HITLCAD_HOST` / `HITLCAD_PORT` | `127.0.0.1` / `8000` | Where `hitlcad serve` listens |
 | `HITLCAD_PUBLIC_URL` | `http://HOST:PORT` | Base URL that agents and the hook use to reach the server; the server also answers requests addressed to its host |
 | `HITLCAD_CORS_ORIGINS` | `[]` | Web origins besides VS Code's webviews that may call the API and open its event streams |
@@ -156,8 +157,8 @@ Designs stay in your project folders and their history in `~/.hitlcad`.
 
 ## Safety
 
-Model code runs locally in a child process with a memory limit and a timeout, ended together with
-everything it starts, but **without filesystem or network isolation**. Your own coding agent writes it, and that agent can already run
+Model code runs locally in a build worker, one design's, with a memory limit and a timeout, ended together
+with everything it starts, but **without filesystem or network isolation**. Your own coding agent writes it, and that agent can already run
 code on your machine. The server listens on `127.0.0.1`, answers only requests addressed to this
 machine or to `HITLCAD_PUBLIC_URL` (so a web page cannot reach it by rebinding its own domain), and
 has no authentication. Keep it single-user and local.

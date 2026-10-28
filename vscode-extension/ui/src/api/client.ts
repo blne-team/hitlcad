@@ -29,6 +29,8 @@ export const api = {
   revision: (id: string, revision: number) => request<Revision>(`/api/designs/${id}/revisions/${revision}`),
   setSelection: (id: string, revision: number | null, items: Pick[]) =>
     send<{ items: SelectionItem[] }>("PUT", `/api/designs/${id}/selection`, { revision, items }),
+  measure: (id: string, revision: number, items: [Pick, Pick]) =>
+    send<{ text: string }>("POST", `/api/designs/${id}/measure`, { revision, items: items.map(({ point, normal, component }) => ({ point, normal, component })) }),
   addPin: (id: string, pin: Pick & { revision: number | null; note?: string; motion?: PinMotion | null }) =>
     send<Pin>("POST", `/api/designs/${id}/pins`, pin),
   updatePin: (id: string, pinId: string, changes: { note?: string; resolved?: boolean }) =>
@@ -37,8 +39,9 @@ export const api = {
   watchMotion: (id: string, revision: number, key: string) => send<Revision>("POST", `/api/designs/${id}/watched`, { revision, key }),
   unwatchMotion: (id: string, revision: number, key: string) =>
     request<Revision>(`/api/designs/${id}/watched/${key}?revision=${revision}`, { method: "DELETE" }),
-  editParameters: (id: string, values: Record<string, ParamValue>) =>
-    send<Revision>("POST", `/api/designs/${id}/parameters`, { values }),
+  /** Refused (409) where design.json no longer has the `expected` values the edit was made on. */
+  editParameters: (id: string, values: Record<string, ParamValue>, expected: Record<string, ParamValue>) =>
+    send<Revision>("POST", `/api/designs/${id}/parameters`, { values, expected }),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
   structure: (id: string, configuration: string | null) =>
     request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),
@@ -76,7 +79,7 @@ export function subscribe(designId: string, onEvent: (event: DesignEvent) => voi
     };
     socket.onmessage = (msg: MessageEvent<string>) => {
       const event = JSON.parse(msg.data) as DesignEvent;
-      after = event.seq;
+      if (event.seq) after = event.seq; // a live-only event's is 0
       onEvent(event);
     };
     socket.onclose = () => {

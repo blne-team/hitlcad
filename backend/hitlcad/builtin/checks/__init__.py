@@ -10,4 +10,4 @@ def hitlcad_checks() -> list[type]:
     from hitlcad.builtin.checks import checks
 
     return [checks.SizeCheck, checks.FitsWithinCheck, checks.VolumeCheck, checks.MassCheck, checks.HoleCheck,
-            checks.WallCheck, checks.BodiesCheck, checks.ClearanceCheck, checks.StackCheck]  # fmt: skip
+            checks.WallCheck, checks.BodiesCheck, checks.ClearanceCheck, checks.StackCheck, checks.SpanCheck]  # fmt: skip

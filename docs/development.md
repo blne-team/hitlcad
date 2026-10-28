@@ -12,7 +12,10 @@ See `.vscode/launch.json`. The devcontainer has everything a build needs (uv, No
 
 ```bash
 uv sync --extra dev
-uv run pytest                          # all tests, in parallel; -n0 in this process; -m "not geometry" skips builds
+uv run pytest -m "not geometry"         # quick checks without CAD builds; -n0 runs in this process
+uv run pytest -m "not geometry or smoke" # quick checks plus one small CAD build
+uv run pytest -m "not examples"         # includes geometry regressions, skips example/teaching builds
+uv run pytest                          # full suite, including every example configuration, in parallel
 uv run ruff check backend && uv run ruff format backend
 uv run lint-imports                    # hitlcad's own plugins (builtin/) and the rest import each other one way only
 (cd vscode-extension && npm test)      # extension unit tests
@@ -26,6 +29,11 @@ Dependencies resolve with a two-week supply-chain cooldown (`[tool.uv] exclude-n
 forward deliberately when upgrading.
 
 ## Tests and CI
+
+Use `-m "not geometry"` for quick feedback, then `-m "not examples"` when changing build or analysis code.
+The `examples` tests rebuild README examples and installed teaching designs in every configuration; run the
+full suite when changing those assets or before submitting. CI keeps running the full suite on Linux.
+The `smoke` marker selects one small build; the enclosure's export and cache checks remain in the geometry suite.
 
 `.github/workflows/ci.yml` runs on every push and pull request: ruff and ESLint; the full backend suite,
 including real build123d and Blender builds of the test designs and of every design in `examples/`, on

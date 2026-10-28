@@ -38,7 +38,7 @@ test.beforeAll(async () => {
   writeDesign(folder, { parameters, ground: "box", parts: { box: { role: "a box", file: "parts/box.py", material: "PLA" } } },
     { "parts/box.py": MODEL, "assembly.py": ASSEMBLY });
   await api("POST", `/api/designs/${id}/build`);
-  await api("POST", `/api/designs/${id}/parameters`, { values: { height: 15 } });
+  await api("POST", `/api/designs/${id}/parameters`, { values: { height: 15 }, expected: { height: 10 } });
 });
 
 const tab = (page: Page, name: string) => page.locator(".tab", { hasText: name }).click();
@@ -202,6 +202,30 @@ test("the viewer's measure tools own their clicks; Place pins turns them off", a
   await expect.poll(async () => (await state()).pins.length).toBe(1);
 });
 
+test("the grid popup stays open and each plane can be toggled with its label and checkbox", async ({ page }) => {
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  const button = page.locator(".tcv_button_grid");
+  const menu = page.locator(".tcv_grid-content");
+
+  for (const plane of ["xy", "xz", "yz"]) {
+    const checkbox = menu.locator(`.tcv_grid-${plane}`);
+    await button.hover();
+    await expect(menu).toBeVisible();
+    const checked = await checkbox.isChecked();
+    const label = menu.locator("label", { hasText: plane });
+    const box = await label.boundingBox();
+    if (!box) throw new Error(`no grid label for ${plane}`);
+    // Move through the popup as a person would: a forced click would hide overflow/hit-testing bugs.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 10 });
+    await expect(menu).toBeVisible();
+    await label.click();
+    await expect(checkbox).toBeChecked({ checked: !checked });
+    await checkbox.click();
+    await expect(checkbox).toBeChecked({ checked });
+  }
+});
+
 test("every viewer toolbar button and tab works without errors", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -265,7 +289,7 @@ test("every viewer control can be clicked at any editor width: nothing floats ov
     await openPanel(page, { name: "design", id });
     await viewerReady(page);
     const covered = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>(".cad-stage input.tcv_btn, .tcv_shape_filter, .stage-actions button, .review-tab")]
+      [...document.querySelectorAll<HTMLElement>(".cad-stage input.tcv_btn, .tcv_shape_filter, .stage-actions button, .review-tab, .inspection-tools summary")]
         .filter((e) => e.offsetParent !== null)
         .flatMap((e) => {
           const b = e.getBoundingClientRect();

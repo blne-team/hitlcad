@@ -16,7 +16,7 @@ from hitlcad.kernel.errors import NOT_FOUND_GEOMETRY, REQUEST_INVALID
 
 _REF = re.compile(r"^(face|edge|vertex)\s+(\d+)(?:\s+of\s+(\S+))?$", re.IGNORECASE)
 _PART = re.compile(r"^part\s+(\S+)$", re.IGNORECASE)
-_NUMBER = r"\s*(-?\d+(?:\.\d+)?)\s*"
+_NUMBER = r"\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*"
 _POINT = re.compile(rf"^\(?{_NUMBER},{_NUMBER},{_NUMBER}\)?$")
 PARALLEL_DEG = 0.5
 

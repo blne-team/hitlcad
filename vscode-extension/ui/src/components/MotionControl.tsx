@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { DesignState, Revision } from "../api/types";
 import type { MotionAt } from "../lib/designUi";
@@ -13,11 +13,22 @@ interface Props {
   onMove: (at: MotionAt | null) => void;
 }
 
-/** Move what a mate moves through the range the build swept for collisions, in the 3D view: gears it drives too, or
- * the rest of its loop at the positions solved. */
+/** Move what a mate moves through the range the build swept for collisions, in the 3D view: what it drives too, by
+ * their laws, or the rest of its loop at the positions solved. */
 export function MotionControl({ designId, revision, watched, at, onMove }: Props) {
   const motions = revision.report.motions;
   const [picked, setPicked] = useState(0);
+  const control = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const element = control.current;
+    const parent = element?.parentElement;
+    if (!element || !parent) return;
+    const resize = () => parent.style.setProperty("--motion-control-height", `${element.offsetHeight}px`);
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    resize();
+    return () => { observer.disconnect(); parent.style.removeProperty("--motion-control-height"); };
+  }, []);
   const moved = rangeAt(revision, at);
   const range = moved ?? motions[Math.min(picked, motions.length - 1)];
   if (!range) return null;
@@ -26,7 +37,7 @@ export function MotionControl({ designId, revision, watched, at, onMove }: Props
   const [lo, hi] = extent(range);
   const move = (to: number) => onMove(to === range.current ? null : { revision: revision.id, pair: range.pair, kind: range.kind, at: to });
   return (
-    <section className="motion-control" aria-label="Motion">
+    <section ref={control} className="motion-control" aria-label="Motion">
       {motions.length > 1 ? (
         <select aria-label="Mate" value={motions.indexOf(range)} onChange={(e) => {
             setPicked(Number(e.target.value));

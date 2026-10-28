@@ -16,7 +16,7 @@ from typing import Any, Literal, TypeVar
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, TypeAdapter
 from starlette.datastructures import Headers
@@ -127,6 +127,11 @@ class DescribeFilePick(Pick):
     path: str
 
 
+class MeasureSelection(BaseModel):
+    revision: int
+    items: tuple[Pick, Pick]
+
+
 class AddPin(Pick):
     note: str = ""
     revision: int | None = None
@@ -145,6 +150,8 @@ class UpdatePin(BaseModel):
 
 class EditParameters(BaseModel):
     values: dict[str, Any]
+    expected: dict[str, Any] = Field(description="The values the edit was made on, of the parameters it changes: "
+                                     "where design.json now has others, the edit is refused (409)")  # fmt: skip
 
 
 class BuildRequest(BaseModel):
@@ -220,7 +227,7 @@ MESSAGES = {"DesignEvent": Event, "BuildActivity": BuildActivity, "ErrorBody": E
 
 def design_summary(s: DesignState) -> DesignSummary:
     return DesignSummary(id=s.id, path=s.path, name=s.name, backend=s.backend, revisions=len(s.revisions),
-                         open_pins=len(s.open_pins), building=s.building, error=s.error)  # fmt: skip
+                         open_pins=len(s.open_pins), building=s.building is not None, error=s.error)  # fmt: skip
 
 
 def create_app(core: HitlCad | None = None) -> FastAPI:
@@ -305,7 +312,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.websocket("/api/designs/{design_id}/stream")
     async def stream(socket: WebSocket, design_id: str, after: int = 0) -> None:
         """The design's events after `after`, then live ones, one JSON event per message; a client that lost
-        the connection reconnects with the last `seq` it saw."""
+        the connection reconnects with the last `seq` it saw (a live-only event's is 0)."""
         await socket.accept()
         try:
             designs.get(design_id)
@@ -319,8 +326,8 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
                 cursor = event.seq
                 await socket.send_text(event.model_dump_json())
             async for event in _until_gone(socket, queue):
-                if event.seq > cursor:
-                    cursor = event.seq
+                if not event.seq or event.seq > cursor:  # live only (`DesignService.announce`), or not yet sent
+                    cursor = max(cursor, event.seq)
                     await socket.send_text(event.model_dump_json())
         except WebSocketDisconnect:
             pass
@@ -358,7 +365,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.post("/api/designs/{design_id}/parameters", status_code=201)
     async def edit_parameters(design_id: str, body: EditParameters) -> Revision:
-        return await builds.edit_parameters(design_id, body.values)
+        return await builds.edit_parameters(design_id, body.values, body.expected)
 
     @app.get("/api/designs/{design_id}/revisions/{revision_id}")
     async def get_revision(design_id: str, revision_id: int) -> Revision:
@@ -367,15 +374,30 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.get("/api/designs/{design_id}/revisions/{revision_id}/files/{path:path}")
     async def revision_file(design_id: str, revision_id: int, path: str) -> FileResponse:
-        rev = designs.revision(design_id, revision_id)
-        artifact = next((a for a in rev.report.artifacts if a.path == path), None)
-        if artifact is None:
-            raise NOT_FOUND_FILE(f"revision {revision_id} has no file {path}")
-        file = designs.store.revision_dir(design_id, revision_id) / artifact.path
-        return FileResponse(file, media_type=artifact.media_type, filename=artifact.name,
-                            content_disposition_type="inline")  # fmt: skip
+        """A revision's file: one of its artifacts, or a part view its scene draws (its components' included); of
+        the revision being built, its scene once shown (`BuildProgress.scene`) and its part views."""
+        running = designs.get(design_id).building
+        building = running if running is not None and running.revision == revision_id else None
+        rev = None if building else designs.revision(design_id, revision_id)  # raises for one that does not exist
+        root = designs.store.revision_dir(design_id, revision_id).resolve()
+        if building is not None:
+            if path == building.scene:
+                return FileResponse(root / path, media_type="application/json")
+        elif rev is not None:
+            artifact = next((a for a in rev.report.artifacts if a.path == path), None)
+            if artifact is not None:
+                return FileResponse(root / artifact.path, media_type=artifact.media_type, filename=artifact.name,
+                                    content_disposition_type="inline")  # fmt: skip
+        view = (root / path).resolve()
+        if path.endswith(cadview.VIEW_SUFFIX) and view.is_relative_to(root) and view.is_file():
+            return FileResponse(view, media_type="application/octet-stream")
+        raise NOT_FOUND_FILE(f"revision {revision_id} has no file {path}")
 
     # ------------------------------------------------------------------ selection & pins
+
+    @app.post("/api/designs/{design_id}/measure")
+    async def measure_selection(design_id: str, body: MeasureSelection) -> dict[str, str]:
+        return {"text": await feedback.measure(design_id, body.revision, body.items)}
 
     @app.put("/api/designs/{design_id}/selection")
     async def set_selection(design_id: str, body: SetSelection) -> dict[str, list[SelectionItem]]:
@@ -447,16 +469,26 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         return path.resolve()
 
     @app.get("/api/files/cad")
-    async def cad_file(path: str) -> FileResponse:
-        """A model file tessellated for the 3D file viewer (three-cad-viewer's instanced format)."""
+    async def cad_file(path: str) -> RedirectResponse:
+        """A model file tessellated for the 3D file viewer: to its scene, whose part views lie beside it."""
         source = model_file(path)
         try:
-            view = await asyncio.to_thread(cadview.cached_view, source, settings.cache_dir / "cad",
-                                           settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
+            key = await asyncio.to_thread(cadview.cached_scene, source, settings.cache_dir / "cad",
+                                          settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
         except Exception as e:  # any file: its reader's error, whatever its kind, is what the panel shows
             log.exception("could not convert %s", source)
             raise FILE_UNREADABLE(f"could not convert {source.name}: {e}") from None
-        return FileResponse(view, media_type="application/json")
+        return RedirectResponse(f"/api/files/cad/{key}/{cadview.SCENE_FILE}", status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.get("/api/files/cad/{key}/{name}")
+    async def cad_scene_file(key: str, name: str) -> FileResponse:
+        """A file of a model file's scene: the scene, or one of its part views."""
+        file = settings.cache_dir / "cad" / key / name
+        names = rf"{re.escape(cadview.SCENE_FILE)}|\d+{re.escape(cadview.VIEW_SUFFIX)}"
+        if not (re.fullmatch(r"[0-9a-f]{24}", key) and re.fullmatch(names, name) and file.is_file()):
+            raise NOT_FOUND_FILE(f"no scene file {key}/{name}")
+        media = "application/json" if name == cadview.SCENE_FILE else "application/octet-stream"
+        return FileResponse(file, media_type=media)
 
     @app.post("/api/files/describe")
     async def describe_file(body: DescribeFilePick) -> SelectionItem:

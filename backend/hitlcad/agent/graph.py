@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from hitlcad.agent.describe import feedback_text
 from hitlcad.core.address import INTERFACE_PREFIX, End, InstancePath
 from hitlcad.core.design import DESIGN_FILE, DesignSpec
 from hitlcad.core.events import DesignState
@@ -101,6 +102,12 @@ class DesignGraph:
         if d is None:
             return f"Design {s.name!r} at {s.path}: design.json does not load ({self.ctx.design_error})"
         rev = self.ctx.revision
+        limit = min(5, self.ctx.limit)
+
+        def listed(items: list[str]) -> str:
+            text = ", ".join(items[:limit])
+            return text + (f", … {len(items) - limit} more" if len(items) > limit else "")
+
         made = [n for n, p in d.parts.items() if p.catalog is None]
         bought = [n for n, p in d.parts.items() if p.catalog is not None]
         instances = self._instances()
@@ -111,11 +118,11 @@ class DesignGraph:
                 f"{len(d.fasteners)} fastener sets, {len(s.open_pins)} open pins")  # fmt: skip
         lines = [head]
         if self.ctx.used_by:
-            lines.append(f"  used by: {', '.join(self.ctx.used_by)}")
+            lines.append(f"  used by: {listed(self.ctx.used_by)}")
         if d.configurations:
-            lines.append(f"  configurations: {', '.join(d.configurations)}")
+            lines.append(f"  configurations: {listed(list(d.configurations))}")
         if s.building:
-            lines.append("  a build is running")
+            lines.append(f"  a build of revision {s.building.revision} is running: {s.building.doing}")
         if s.error:
             lines.append(f"  stopped: [{s.error.code}] {s.error.message}")
         if self.ctx.design_error:
@@ -123,21 +130,24 @@ class DesignGraph:
                 f"  ✗ {DESIGN_FILE} does not load, so this is rev {rev.id if rev else '?'}'s: {self.ctx.design_error}"
             )
         if self.ctx.stale:
-            lines.append(f"  stale: changed since rev {rev.id if rev else '?'}: {', '.join(self.ctx.stale)}")
+            lines.append(f"  stale: changed since rev {rev.id if rev else '?'}: {listed(self.ctx.stale)}")
         latest = s.current_revision
         if latest and latest.status == "failed" and (why := latest.failure):
             lines.append(f"  ✗ the latest build (rev {latest.id}) failed: {why.subject} [{why.code}]: {why.detail}")
         if self.report:
-            lines += problem_lines(self.results, self.report.problems, self.ctx.limit)
-        lines += self._pins()
-        if s.selection:
-            lines += [f"  selected: {item.label}" for item in s.selection]
+            lines += problem_lines(self.results, self.report.problems, limit)
+        review = self._pins() + [f"  selected: {item.label}" for item in s.selection]
+        lines += review[:limit]
+        if len(review) > limit:
+            lines.append(f"  … {len(review) - limit} more review items: explore_design(path, focus='review')")
         lines.append("  " + (self.report.tally.text if self.report else "not built yet"))
-        lines.append("  parts: " + ", ".join(self._counted(made, instances)) if made else "  parts: none")
+        lines.append("  parts: " + listed(self._counted(made, instances)) if made else "  parts: none")
         if bought:
-            lines.append("  catalog: " + ", ".join(self._counted(bought, instances)))
+            lines.append("  catalog: " + listed(self._counted(bought, instances)))
         if d.components:
-            lines.append("  components: " + ", ".join(f"{n} ({c.design})" for n, c in d.components.items()))
+            lines.append("  components: " + listed([f"{n} ({c.design})" for n, c in d.components.items()]))
+        if len(made) > limit or len(bought) > limit or len(d.components) > limit or len(d.configurations) > limit:
+            lines.append("  Read design.json for all names; explore_design(path, focus) gives details.")
         return "\n".join(lines)
 
     @staticmethod
@@ -149,10 +159,12 @@ class DesignGraph:
     def explore(self, focus: str | None = None) -> str:
         if not focus:
             return self.overview()
+        f = focus.strip()
+        if f == "review":
+            return feedback_text(self.ctx.state)
         d = self.design
         if d is None:
             return self.overview()
-        f = focus.strip()
         if f.startswith("rev "):
             return self._revision(int(f.split()[1]))
         if f.startswith(INTERFACE_PREFIX):

@@ -5,6 +5,14 @@ hitlcad runs each with `p` (parameter values, a read-only dict) and `i` (interfa
 attributes) and records what each reads. Units are millimetres, Z is up. Keep the code
 deterministic: no randomness unless seeded from a parameter.
 
+## Built-in construction
+
+`from hitlcad_build123d import mounting_plate` builds a plate with through holes and optional raised
+bosses, returning the usual `(shape, connectors)` value. See the
+[arguments and connector contract](../hitlcad/reference/builders-build123d.md) and the complete
+[mounting-plate recipe](../hitlcad-design/assets/mounting-plate/design.json). Start from that recipe
+when it matches the brief; the normal catalog hole operations below remain available for fastener fits.
+
 ## interfaces.py
 
 One top-level function per mating value, `def name(p, i)`, returning a number, a string, or a list

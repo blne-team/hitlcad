@@ -247,13 +247,16 @@ class InstanceInfo(Model):
 
 
 class MotionDrive(Model):
-    """Instances that move together through a range: `rate` times as far as the range moves, about or along
-    their own axis."""
+    """Instances that move together through a range, about or along their own axis, by a law of the range's
+    motion."""
 
     kind: Literal["angle", "travel"]
     origin: tuple[float, float, float]
     axis: tuple[float, float, float]
-    rate: float = Field(description="Degrees or mm per unit of the range; negative: against the axis")
+    law: list[tuple[float, float]] = Field(
+        description="(the range's motion from where it sits, theirs) at points ascending over the slider's span, "
+        "straight between them; degrees or mm, negative: against the axis"
+    )
     instances: list[str]
 
 
@@ -419,6 +422,8 @@ class BuildSpec(Model):
         description="Relative path -> text, for interfaces.py, assembly.py, parts/ and lib/"
     )
     assets: dict[str, str] = Field(default_factory=dict, description="Relative path -> sha256 of vendor/ files")
+    checked: dict[str, str] = Field(default_factory=dict, description="Relative path -> sha256 of the files its "
+                                    "requirement checks read (`Check.files`: reference pictures); '' for a missing one")  # fmt: skip
     configuration: str | None = None
     overrides: dict[str, Value] = Field(default_factory=dict, description="Parameter values a parent design binds")
     tolerances: Tolerances

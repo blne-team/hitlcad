@@ -9,10 +9,12 @@ from typing import TypeVar
 from pydantic import Field
 
 from hitlcad.analysis.base import ResultCache
+from hitlcad.analysis.coverage import Link
 from hitlcad.analysis.interference import beyond, overlap
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.analysis.motion.plans import World
 from hitlcad.core import frames as fr
+from hitlcad.core.structure import Tolerances
 from hitlcad.kernel.errors import Unmeasurable
 from hitlcad.kernel.model import Model
 
@@ -27,6 +29,19 @@ class Contact(Model):
     a: str
     b: str
     overlap_mm3: float
+
+
+class Parted(Model):
+    """The first position, moving from where the mate sits towards `end`, at which parts a relation keeps in contact
+    stand apart."""
+
+    kind: str
+    at: float
+    end: float
+    a: str
+    b: str
+    gap_mm: float
+    relation: str
 
 
 class Stop(Model):
@@ -55,6 +70,7 @@ class Findings(Model):
     """What a sweep found that either kind of sweep finds."""
 
     contacts: list[Contact] = Field(default_factory=list)
+    parted: list[Parted] = Field(default_factory=list)
     resting: list[tuple[str, str, float]] = Field(default_factory=list, description="Pairs overlapping where they sit")
     unmeasurable: list[tuple[str, str, str]] = Field(default_factory=list)
     least: list[Least] = Field(default_factory=list)
@@ -63,14 +79,24 @@ class Findings(Model):
 @dataclass
 class Pair:
     """A leaf a sweep moves and another its motion may bring it near, the gap a clearance requirement needs them to
-    keep (`tracked`: one names them), and what they may share where they sit, as a mate allows: more than that is
-    a contact."""
+    keep (`tracked`: one names them), what they may share where they sit, as a mate allows: more than that is a
+    contact; and the relation that keeps them in contact, if one does (`touching`)."""
 
     p: Leaf
     q: Leaf
     need: float
     tracked: bool
     sitting_mm3: float = field(default=0.0, kw_only=True)
+    touching: Link | None = field(default=None, kw_only=True)
+
+    def contact_key(self) -> list[object] | None:
+        """The relation that keeps it in contact, as what its sweep is cached by."""
+        return None if self.touching is None else [self.touching.source.address, self.touching.source.tolerance]
+
+    def parts_at(self, settings: AnalysisSettings, tol: Tolerances) -> float:
+        """The gap beyond which parts kept in contact have parted: the relation's tolerance and both meshes'."""
+        assert self.touching is not None
+        return (self.touching.source.tolerance or tol.position_mm) + 2 * settings.mesh_tolerance_mm
 
 
 P = TypeVar("P", bound=Pair)
@@ -92,6 +118,7 @@ def at_rest(pairs: list[P], world: World, settings: AnalysisSettings, cache: Res
             allowance and not beyond(allowance, pair.p, pair.q, shared, settings, world.tolerances)
         ):
             pair.sitting_mm3 = shared if shared > settings.overlap_mm3 else 0.0
+            pair.touching = world.touching.get(frozenset((pair.p.path, pair.q.path)))
             keep.append(pair)
         else:
             out.resting.append((pair.p.path, pair.q.path, round(shared, 6)))

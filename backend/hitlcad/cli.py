@@ -57,7 +57,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     CI and for backend authors."""
     from hitlcad.agent.graph import revision_summary
     from hitlcad.app import build_pipeline
-    from hitlcad.core.report import Revision
+    from hitlcad.core.report import BuildReport, Revision
     from hitlcad.kernel.errors import HitlcadError, agent_text
     from hitlcad.render.base import NullRenderer
     from hitlcad.workspace.folder import DesignFolder
@@ -71,8 +71,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(agent_text(e.diagnostic), file=sys.stderr)
         return 1
     out = Path(args.out).resolve()
+
+    async def build() -> BuildReport:
+        try:
+            return await pipeline.run(spec, folder.path, out)
+        finally:
+            for backend in pipeline.registry.all():  # its workers end with it
+                await backend.close()
+
     try:
-        report = asyncio.run(pipeline.run(spec, folder.path, out))
+        report = asyncio.run(build())
     except HitlcadError as e:
         print(agent_text(e.diagnostic), file=sys.stderr)
         return 1

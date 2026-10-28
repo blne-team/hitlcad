@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hitlcad.kernel.plugins import BackendFactory, hookimpl
+from hitlcad.kernel.plugins import BackendFactory, ModelPackage, hookimpl
 
 if TYPE_CHECKING:
     from hitlcad.backends.base import CADBackend
@@ -14,11 +15,20 @@ if TYPE_CHECKING:
 def _blender(settings: Settings) -> CADBackend:
     from hitlcad.builtin.blender.backend import BlenderBackend
 
-    return BlenderBackend(binary=settings.blender_binary, timeout_s=settings.build_timeout_s,
-                          memory_mb=settings.build_memory_mb, mesh_tolerance_mm=settings.mesh_tolerance_mm,
-                          mesh_angular_tolerance=settings.mesh_angular_tolerance, warm=settings.warm_builds)  # fmt: skip
+    return BlenderBackend(settings)
 
 
 @hookimpl
 def hitlcad_backends() -> dict[str, BackendFactory]:
     return {"blender": _blender}
+
+
+@hookimpl
+def hitlcad_model_packages() -> list[ModelPackage]:
+    return [ModelPackage(root=Path(__file__).with_name("models"), package="hitlcad_blender", backends=("blender",),
+                         summary="section_form: an open hollow form from height/radius sections, with a closed material boundary")]  # fmt: skip
+
+
+@hookimpl
+def hitlcad_skill_references() -> dict[str, str]:
+    return {"builders-blender.md": Path(__file__).with_name("builders.md").read_text(encoding="utf-8")}

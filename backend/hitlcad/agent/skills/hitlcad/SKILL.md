@@ -6,8 +6,20 @@ description: "Create, edit, build, verify and review the parametric CAD assembli
 # Working on hitlcad designs
 
 The `hitlcad` MCP server builds, verifies and renders the designs of this project; the human reviews
-each build in the hitlcad panel in VS Code and talks to you in your own chat. All hitlcad tools take
-the design folder's absolute path, and every name a tool answers with can be passed back to a tool.
+each build in the hitlcad panel in VS Code and talks to you in your own chat. Tools that address a
+design take its folder's absolute path; every name a tool answers with can be passed back to a tool.
+
+## Design decisions
+
+Use the companion skills when the task needs their judgment. They supplement this operating
+contract and preserve the human's requirements, selections, pins and accepted choices:
+
+- `hitlcad-design`: interpret intent, brainstorm concepts, compare tradeoffs and review an edit.
+- `hitlcad-form`: silhouette, proportions, composition, profile-driven and organic geometry.
+- `hitlcad-dfm`: process choice, part divisions, assembly, hardware and fits.
+- `hitlcad-style`: choose and apply a visual language grounded in use and construction.
+
+Choose references as needed; a local dimension edit does not require a concept or style exercise.
 
 ## What a design is
 
@@ -33,7 +45,7 @@ designs/<name>/
   it as `i.<name>`, so two parts that meet read the same number.
 - **Connector**: a named frame (or pattern of frames) on a part, at a feature another part meets.
 - **Mate**: two connectors held together, with the motion they allow, a fit and limits.
-- **Relation**: coupled motion (gears, rack and pinion, lead screw).
+- **Relation**: coupled motion by a law (gears, rack and pinion, lead screw, a cam and its follower).
 - **Fastener set**: a catalog fastener through clearance holes into a thread or insert.
 - **Component**: another design used as a sub-assembly, its parameters bound by this one.
 - **Configuration**: a named set of parameter values: a product variant.
@@ -45,6 +57,10 @@ item), or scale (too large for one context).
 
 ## Workflow
 
+For an existing design, begin at the relevant checkpoint: inspect its current state and human
+feedback, then choose the action that resolves the uncertainty. The structural, interface and
+verification rules below still apply to changes; already completed setup need not be repeated.
+
 1. `create_design(path, name, backend)` (backends: `list_backends`). For a new or substantially
    changed design, write the `brief` and tell the human your assumptions.
 2. **Structure first.** In design.json declare every part with its `role`, `file`, `material` or
@@ -54,7 +70,9 @@ item), or scale (too large for one context).
    until every reference resolves.
 3. **Interfaces.** Put every value two parts share in interfaces.py: bolt circles, centre
    distances, bore sizes, catalog sizes, the heights where parts sit. Never type a mating value twice.
-4. **Parts.** Read the `hitlcad-<backend>` skill. Build a skeleton first (envelopes with the
+4. **Parts.** Read the `hitlcad-<backend>` skill and its construction helpers below. Start from a
+   matching complete recipe when one fits; change its parameters and brief before changing its topology.
+   Build a skeleton first (envelopes with the
    connector features), then detail one part file at a time and check it with
    `build_design(path, scope="<part>")`. Unchanged part files come from the cache.
 5. **Assembly.** assembly.py places every instance from interface values (or with the SDK's
@@ -68,8 +86,11 @@ item), or scale (too large for one context).
    judge). `[mate.fit]` is the problem's code; the usual fix for it follows (`→ …`) the first time it
    appears, and `Same as revision 6` says your last change did not reach it: look again at the cause
    rather than repeating the fix. [playbook.md](playbook.md) lists every code. The last line counts
-   problems, not checks: `1 problem (2 failing checks), 1 unverified; 130 checks pass`. Look at the
-   preview and the section views.
+   problems, not checks: `1 problem (2 failing checks), 1 unverified; 130 checks pass`.
+   The default response lists up to five problems. Focus `explore_design` on an address or `rev N`
+   for more detail. Request `include_images=True` on `build_design` or `explore_design` when geometry
+   diagnosis or appearance review needs the preview, joint sections or requirement figures;
+   `explore_design` uses an existing build.
    A mate in a closed loop (a four-bar, a planetary) is swept at the positions a loop solver finds:
    `[motion.sampled]` says it is clear at each of them and unchecked between them. Do not call it
    clear: ask the human to watch it move in the panel's motion control. Once they have, it passes
@@ -81,60 +102,36 @@ item), or scale (too large for one context).
    it and what it affects. After a change, `compare_revisions` shows what moved.
 8. Configurations: `build_design(path, configuration="all")` verifies every variant.
 
+## Construction helpers
+
+These packages are supplied to part files by the build process, for the backends listed. Read the
+backend skill for exact keyword arguments, connector names and a complete recipe before calling one.
+Return a helper's `(shape, connectors)` value under your declared part name; preserve the documented
+connector names or explicitly rename them in both code and design.json.
+
+$builders
+
+Use a helper where its construction matches the requested shape. Compose additional geometry with
+the backend API when needed. When a build fails, repair the named input or reported region, rebuild,
+and inspect the preview. Keep the brief and requirement bounds intact unless the human changes them.
+A passing build verifies only its reported checks; judge appearance from the actual views.
+
 ## Reading the human
 
 When the human says "this", "here", "the selected …" or mentions pins, hitlcad's prompt hook has added
 what they point at to their message ("The human is pointing at these in the hitlcad panel"),
-named by instance and connector. `explore_design(path)` repeats it. After addressing pins, call
+named by instance and connector. `explore_design(path, focus="review")` repeats it. After addressing pins, call
 `resolve_pins` with a short reply. Parameter values the human set in the panel are deliberate.
+
+When the human gives a picture of what to make (a photo, a render, a sketch) with what matters in it,
+it becomes a `silhouette` requirement that every build compares the model with:
+[reference/pictures.md](reference/pictures.md) says how to declare it and model against it.
 
 ## design.json reference
 
-**Connectors** (`"connectors": {"name": {...}}` on a part). A frame's origin is where the mating
-connector's origin will be, and its Z points out of the part, so mated connectors face each other;
-X fixes the rotation about Z where it matters (a bolt pattern's clocking), `symmetry` says where it
-does not. `count` (a number or a parameter name) is how many frames a pattern has. Kinds:
-$connectors
-
-**Mates** (`"mates": [...]`). Ends are `part.connector` (every instance of the part),
-`part[k].connector` or `component.export`; patterns pair one-to-one by position. After placement the
-frames must agree in what the type fixes (within `verification`). Optional: `fit`
-(`{"clearance": [min, max]}` diametral mm, negative is interference, or `{"iso": "H7/g6"}`, with hole
-and shaft modelled at one basic size: the result gives the limits for the drawing) between a hole and a
-shaft; `limits` (`{"angle": [lo, hi]}` degrees, `{"travel": [lo, hi]}` mm), swept for
-collisions; `offset` (mm along a's Z); `flip: true` when b's Z runs with a's (a shaft entering a bore
-from the end opposite its declared opening); `overlap: true` when b's part is set into a hole of a's
-part and overlaps its wall (a heat-set insert's knurls, a modelled thread): a has no material on the
-hole's axis where b sits. An interference fit allows the ring its diameters make, no more. Types:
-$mates
-
-**Relations** (`"relations": [...]`), verified from the frames and the connectors' nominal values:
-$relations
-
-**Fastener sets** (`"fasteners": [...]`): seated, the shank clears every through hole, the thread
-engages at least the into part's material minimum (or `engagement` × diameter) without bottoming out:
-$fasteners
-
-**Requirements** (`"requirements": [{"text": "…", "check": {…}}]`). `target` is a part (its own
-frame), an instance or component path (placed), or nothing (the whole design). Checks:
-$checks
-
-**Manufacturing** (`"manufacturing"` on the design, or on a made part). Each made part is checked in
-its own frame:
-$processes
-
-**Components** (`"components": {"name": {"design": "../other", "configuration": …, "bind":
-{"param": "my_param" or "interfaces.value"}, "flexible": false}}`). A component exposes connectors
-through its own `exports` (`{"output": "carrier.output"}`); mate to those, never inside it.
-
-**Plugins** (`"plugins": {"hitlcad-lasercut": ">=0.1"}`): the installed plugins a design needs beyond
-hitlcad's own, for the kinds, types, checks and processes they add (`list_backends` lists those installed).
-Their reference files:
-$references
-
-**Configurations** (`"configurations": {"ratio_5": {"sun_teeth": 12}}`), **verification**
-(`{"position_mm", "angle_deg", "motion_steps"}`, defaults from hitlcad's settings) and **outputs**
-(exporters run on every build: see `list_backends`) complete the file.
+Read [reference/design-json.md](reference/design-json.md) when declaring or changing connectors,
+mates, relations, fastener sets, requirements, manufacturing processes, components or plugins.
+It lists the installed kinds with examples; load the relevant section for the current edit.
 
 ## Rules
 

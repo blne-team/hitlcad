@@ -165,7 +165,7 @@ handhold-fan/
 
 ## 快速开始
 
-1. 下载 [release](https://github.com/blne-team/solidwork/releases)，解压后运行 `./install.sh`。
+1. 下载 [release](https://github.com/blne-team/hitlcad/releases)，解压后运行 `./install.sh`。
    系统要求、Windows、远程工作区和设置等细节见 [INSTALL.md](INSTALL.md)。
 2. 在 VS Code 里运行 **hitlcad: New Design Project**，打开它生成的文件夹。
 3. 让 Agent 给你做点东西。

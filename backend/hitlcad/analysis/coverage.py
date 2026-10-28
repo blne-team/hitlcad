@@ -13,11 +13,11 @@ from hitlcad.analysis.base import Context, pair, result, structural
 from hitlcad.analysis.fasteners import stacks
 from hitlcad.analysis.mates import agree
 from hitlcad.analysis.model import BuiltDesign, PlacedFrame
-from hitlcad.analysis.relations import relation_pairs
+from hitlcad.analysis.relations import relation_ends, relation_pairs
 from hitlcad.core import frames as fr
 from hitlcad.core.address import InstancePath
 from hitlcad.core.report import Cause, Result
-from hitlcad.core.structure import Mate
+from hitlcad.core.structure import Ends, Mate
 from hitlcad.kernel.errors import COVERAGE_FLOATING, COVERAGE_GROUNDED, StructureError
 
 
@@ -30,10 +30,16 @@ class Link:
     kind: str
     source: Any
     role: str = field(default="", metadata={"doc": "In a fastener set: 'through' or 'into'"})
+    design: BuiltDesign | None = field(default=None, metadata={"doc": "The design that declares it"})
 
     @property
     def rigid(self) -> bool:
         return self.kind in ("rigid", "fastener")
+
+    def ends(self) -> Ends:
+        """A relation's ends as assembled, for its type to read."""
+        assert self.design is not None
+        return relation_ends(self.design, self.a, self.b)
 
 
 def links(built: BuiltDesign) -> tuple[list[Link], list[Result]]:
@@ -46,7 +52,7 @@ def links(built: BuiltDesign) -> tuple[list[Link], list[Result]]:
             errors.append(structural(mate.address, e, [mate.a, mate.b]))
     for rel in built.spec.relations:
         try:
-            out += [Link(fa, fb, rel.type, rel) for fa, fb in relation_pairs(built, rel)]
+            out += [Link(fa, fb, rel.type, rel, design=built) for fa, fb in relation_pairs(built, rel)]
         except StructureError as e:
             errors.append(structural(rel.address, e, [rel.a, rel.b]))
     for fs in built.spec.fasteners:

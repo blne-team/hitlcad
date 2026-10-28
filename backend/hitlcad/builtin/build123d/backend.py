@@ -6,10 +6,11 @@ from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
 
-from hitlcad.backends.subprocess_backend import SubprocessBackend
+from hitlcad.backends.base import CADBackend
+from hitlcad.geometry import cadview
 
 
-class Build123dBackend(SubprocessBackend):
+class Build123dBackend(CADBackend):
     name = "build123d"
     title = "build123d (B-rep)"
     summary = (
@@ -21,6 +22,10 @@ class Build123dBackend(SubprocessBackend):
     )
     brep = True
     entry = Path(__file__).with_name("entry.py")
+
+    def code(self) -> list[Path]:
+        """Besides the runtime's, the view its workers tessellate parts for."""
+        return [*super().code(), Path(cadview.__file__)]
 
     def libraries(self) -> dict[str, str | None]:
         return {name: version(name) for name in ("build123d", "bd_warehouse")}
@@ -34,5 +39,5 @@ class Build123dBackend(SubprocessBackend):
         return files("hitlcad.builtin.build123d").joinpath("guide.md").read_text(encoding="utf-8")
 
     def command(self) -> list[str]:
-        # Isolated, writing no bytecode, unbuffered (a stopped build's last words reach its log), in UTF-8 mode.
+        # Isolated, writing no bytecode, unbuffered (a stopped job's last words reach its log), in UTF-8 mode.
         return [sys.executable, "-I", "-B", "-u", "-X", "utf8", str(self.entry)]

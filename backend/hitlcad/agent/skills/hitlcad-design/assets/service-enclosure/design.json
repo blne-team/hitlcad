@@ -1,0 +1,66 @@
+{
+  "hitlcad": 2,
+  "name": "Service enclosure teaching example",
+  "backend": "build123d",
+  "brief": {
+    "title": "A serviceable assembly with a parametric panel",
+    "summary": "An open housing and removable slotted lid teach shared mounting geometry, catalog fasteners and a coherent repeated field.",
+    "features": [
+      "Four lid screws engage catalog inserts; the lid lifts along assembled +Z after removing them.",
+      "Slots keep their width and pitch; the complete field is centered inside protected margins."
+    ],
+    "assumptions": [
+      "PETG FDM is a teaching process choice; no contents, load rating or cooling performance is specified.",
+      "Hardware and feature dimensions in this example are specific to this small assembly."
+    ]
+  },
+  "parameters": [
+    {"name": "width", "label": "Housing width", "value": 64, "min": 48, "max": 96},
+    {"name": "depth", "label": "Housing depth", "value": 48, "min": 36, "max": 72},
+    {"name": "height", "label": "Housing height", "value": 24, "min": 16, "max": 40},
+    {"name": "vent_count", "label": "Slot count", "type": "int", "value": 5, "min": 3, "max": 9, "unit": "count"}
+  ],
+  "ground": "base",
+  "manufacturing": {"process": "fdm"},
+  "parts": {
+    "base": {
+      "role": "Open housing with insert bosses",
+      "file": "parts/shell.py",
+      "material": "PETG",
+      "connectors": {"top": {"kind": "face"}, "inserts": {"kind": "frame", "count": 4}}
+    },
+    "lid": {
+      "role": "Removable panel with a centered slot field",
+      "file": "parts/shell.py",
+      "material": "PETG",
+      "connectors": {"bottom": {"kind": "face"}, "screws": {"kind": "hole", "count": 4}}
+    },
+    "insert": {
+      "role": "Catalog threads for repeated lid removal",
+      "file": "parts/hardware.py",
+      "catalog": {"designation": "McMaster-Carr M3 heat-set insert", "fidelity": "exact"},
+      "connectors": {"placement": {"kind": "frame"}, "thread": {"kind": "hole", "symmetry": "axial"}}
+    },
+    "screw": {
+      "role": "Catalog M3 lid fasteners",
+      "file": "parts/hardware.py",
+      "catalog": {"designation": "ISO 4762 M3 x 8", "fidelity": "exact"},
+      "connectors": {"seat": {"kind": "face", "symmetry": "axial"}}
+    }
+  },
+  "mates": [
+    {"type": "rigid", "a": "base.top", "b": "lid.bottom"},
+    {"type": "rigid", "a": "base.inserts", "b": "insert.placement", "overlap": true}
+  ],
+  "fasteners": [{"fastener": "screw.seat", "through": ["lid.screws"], "into": "insert.thread"}],
+  "requirements": [
+    {"text": "The assembled example fits its declared envelope", "check": {"kind": "fits_within", "box": [96, 72, 48]}},
+    {"text": "The base is one connected manufactured body", "check": {"kind": "bodies", "target": "base", "count": 1}},
+    {"text": "The lid is one connected manufactured body", "check": {"kind": "bodies", "target": "lid", "count": 1}}
+  ],
+  "configurations": {
+    "compact": {"width": 48, "depth": 36, "height": 16, "vent_count": 3},
+    "wide": {"width": 80, "depth": 60, "height": 32, "vent_count": 9}
+  },
+  "outputs": ["bom", "3mf"]
+}

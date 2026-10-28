@@ -82,7 +82,10 @@ def describe_file_pick(path: Path, point: Vec, normal: Vec | None, ref: Componen
         k, where = _nearest([(features, fr.IDENTITY) for _, features in parts], point)
         name = parts[k][1].name
         label = _point_label(f"{where} of {name}" if where else name, point, normal)
-        return SelectionItem(point=point, normal=normal, kind="point", label=label, details={"part": name})
+        instance = parts[k][0].strip("/").split("/", 1)[-1]
+        return SelectionItem(
+            point=point, normal=normal, kind="point", label=label, details={"part": name}, instance=instance
+        )
     hits = [(view_id, f) for view_id, f in parts if view_id.strip("/").split("/", 1)[-1] == ref.instance]
     if len(hits) != 1:
         raise NOT_FOUND_GEOMETRY(f"no part {ref.instance}")

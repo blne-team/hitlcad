@@ -72,7 +72,7 @@ class PartCache:
         staging = target.with_name(f".{key}.tmp")
         shutil.rmtree(staging, ignore_errors=True)
         for part in outcome.parts:
-            for rel in filter(None, (part.mesh, part.step, part.objects)):
+            for rel in part.files():
                 (staging / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(work / rel, staging / rel)
         staging.mkdir(parents=True, exist_ok=True)
@@ -88,6 +88,6 @@ class PartCache:
 
     def restore(self, key: str, outcome: FileOutcome, out: Path) -> None:
         for part in outcome.parts:
-            for rel in filter(None, (part.mesh, part.step, part.objects)):
+            for rel in part.files():
                 (out / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.root / key / rel, out / rel)

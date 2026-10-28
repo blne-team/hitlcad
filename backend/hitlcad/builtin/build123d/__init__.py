@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from hitlcad.kernel.plugins import BackendFactory, hookimpl
+from hitlcad.kernel.plugins import BackendFactory, ModelPackage, hookimpl
 
 if TYPE_CHECKING:
     from hitlcad.backends.base import CADBackend
@@ -14,11 +15,20 @@ if TYPE_CHECKING:
 def _build123d(settings: Settings) -> CADBackend:
     from hitlcad.builtin.build123d.backend import Build123dBackend
 
-    return Build123dBackend(timeout_s=settings.build_timeout_s, memory_mb=settings.build_memory_mb,
-                            mesh_tolerance_mm=settings.mesh_tolerance_mm,
-                            mesh_angular_tolerance=settings.mesh_angular_tolerance, warm=settings.warm_builds)  # fmt: skip
+    return Build123dBackend(settings)
 
 
 @hookimpl
 def hitlcad_backends() -> dict[str, BackendFactory]:
     return {"build123d": _build123d}
+
+
+@hookimpl
+def hitlcad_model_packages() -> list[ModelPackage]:
+    return [ModelPackage(root=Path(__file__).with_name("models"), package="hitlcad_build123d", backends=("build123d",),
+                         summary="mounting_plate: a plate with round through holes and optional raised screw bosses")]  # fmt: skip
+
+
+@hookimpl
+def hitlcad_skill_references() -> dict[str, str]:
+    return {"builders-build123d.md": Path(__file__).with_name("builders.md").read_text(encoding="utf-8")}

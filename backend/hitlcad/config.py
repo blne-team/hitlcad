@@ -23,9 +23,13 @@ class Settings(BaseSettings):
     # CAD backends
     backends: list[str] = Field(default_factory=lambda: [DEFAULT_BACKEND, "blender"])
     blender_binary: str = "blender"
-    build_timeout_s: float = Field(default=180.0, gt=0)
-    build_memory_mb: int = Field(default=4096, gt=0)
-    build_workers: int = Field(default=4, ge=1, description="Part files built in parallel child processes")
+    build_timeout_s: float = Field(default=180.0, gt=0, description="Deadline of each job a build worker runs")
+    build_memory_mb: int = Field(default=4096, gt=0, description="Memory a build worker may use, with everything it "
+                                 "starts; one that ends a job holding more than half of it is replaced")  # fmt: skip
+    workers: int = Field(default=4, ge=1, description="Build workers each backend keeps, each one design's, its part "
+                         "files built in them in parallel: about 400 MB each for build123d, and what they export")  # fmt: skip
+    worker_cache_mb: int = Field(default=256, ge=0, description="What a build worker keeps of what it exported, by "
+                                 "the shape's content, so a part that comes out the same is not exported again")  # fmt: skip
     mesh_tolerance_mm: float = Field(default=0.01, gt=0, description="Chordal deviation of exported meshes")
     mesh_angular_tolerance: float = Field(default=0.1, gt=0, description="Angular deviation of exported meshes, rad")
 
@@ -33,8 +37,8 @@ class Settings(BaseSettings):
     verify_position_mm: float = Field(default=0.01, gt=0)
     verify_angle_deg: float = Field(default=0.05, gt=0)
     verify_motion_steps: int = Field(default=2000, ge=10)
-    solver: str = Field(default="least_squares", description="The loop solver (`hitlcad_solvers`) motion moves closed "
-                        "loops of mates with")  # fmt: skip
+    solver: str = Field(default="sqp", description="The loop solver (`hitlcad_solvers`) motion moves closed "
+                        "loops of mates with; empty: closed loops are not swept, only checked as assembled")  # fmt: skip
     overlap_mm3: float = Field(
         default=1e-3, gt=0, description="Bodies sharing less than this touch; they do not overlap"
     )
@@ -45,8 +49,6 @@ class Settings(BaseSettings):
     section_size: int = Field(default=640, ge=200, description="Pixels of a section view")
     loaded_builds: int = Field(default=8, ge=1, description="Built revisions kept in memory for picks and pins")
     loaded_revisions: int = Field(default=32, ge=1, description="Revisions (spec and report) kept in memory")
-    warm_builds: int = Field(default=1, ge=0, description="Build processes each backend keeps started, its libraries "
-                             "loaded, so a build does not wait for them: about 400 MB each for build123d; 0 for none")  # fmt: skip
 
     # Carrying picks and pins to a new build by geometry
     anchor_reach: float = Field(

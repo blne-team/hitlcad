@@ -7,13 +7,14 @@ of its loop. Motion analysis sweeps such a loop by asking the configured solver 
 hitlcad checks. A position is accepted when
 
 - each mate holds what its type `holds` of b's frame in a's, as assembled, within the verification tolerances;
-- each relation holds b = `ratio` × a along its `coordinates`, from as assembled, turns counted on past a half turn;
+- each relation holds b = `law`(a) along its `coordinates`, from as assembled, turns counted on past a half turn;
 - the driving mate sits where it was asked to;
 - no point has moved more than twice `SAMPLE_MM` since the position before, so the positions show the motion and a
   jump to the loop's other way of closing is refused.
 
 A position is the motion of each moving cluster from where it was assembled; the reference (the cluster the loop
-hangs from, ground or the part nearest it) does not move.
+hangs from, ground or the part nearest it) does not move. What a loop holds is one CasADi graph (`LoopProblem.nlp`):
+a solver minimises its residuals with the exact derivatives CasADi takes of it, and every check measures through it.
 """
 
 from __future__ import annotations
@@ -22,12 +23,16 @@ import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
 from hitlcad.core import frames as fr
+from hitlcad.core.laws import Law
 from hitlcad.core.structure import Mate, Relation, Tolerances
+
+if TYPE_CHECKING:
+    import casadi as ca
 
 SAMPLE_MM = 0.5  # the furthest any point moves between two positions a solver gives, as it aims
 _WEAK = 1e-3  # how hard what no mate holds (a shaft's slide in its bore) is kept where it was
@@ -51,7 +56,7 @@ class LoopMate:
 
 @dataclass(frozen=True)
 class LoopRelation:
-    """A relation of the loop: its ends' clusters and frames as assembled, its ratio, the kinds of a's and b's
+    """A relation of the loop: its ends' clusters and frames as assembled, its law, the kinds of a's and b's
     coordinates ("angle" or "travel") and how far from holding it may be (mm)."""
 
     label: str
@@ -60,7 +65,7 @@ class LoopRelation:
     b: str
     fa: fr.Frame
     fb: fr.Frame
-    ratio: float
+    law: Law
     kinds: tuple[str, str]
     tolerance: float
 
@@ -77,7 +82,7 @@ class Position:
     total: tuple[float, ...]
 
 
-@dataclass
+@dataclass(eq=False)
 class LoopProblem:
     """A loop to move: its moving clusters, its mates and relations, the mate that drives it and along what, the
     points that bound each moving cluster (its leaves' box corners, as assembled), and the tolerances."""
@@ -102,7 +107,8 @@ class LoopProblem:
 
     @cached_property
     def _q0(self) -> list[fr.Frame]:
-        return [np.linalg.inv(m.fa) @ m.fb for m in self.mates]
+        """Each mate's b frame seen in its a frame, as assembled."""
+        return [fr.rigid_inverse(m.fa) @ m.fb for m in self.mates]
 
     @cached_property
     def _periods(self) -> list[bool]:
@@ -117,26 +123,93 @@ class LoopProblem:
         """mm per unit of a coordinate: a degree at the loop's size, or a mm."""
         return math.radians(self.size) if kind == "angle" else 1.0
 
+    # ------------------------------------------------------------------ the graph
+
+    @cached_property
+    def _graph(self) -> _Graph:
+        import casadi as ca
+
+        n = len(self.clusters)
+        x, around = ca.SX.sym("x", 6 * n), ca.SX.sym("around", 12 * n)
+        total0, value = ca.SX.sym("total", len(self._periods)), ca.SX.sym("value")
+        before = _poses(around, n)
+        moved = [
+            *(
+                _stepped(x[6 * i : 6 * i + 6], p, self.centres[c], self.size)
+                for i, (c, p) in enumerate(zip(self.clusters, before[:-1], strict=True))
+            ),
+            before[-1],
+        ]
+        seen0, raw0 = self._measure(before)
+        seen, raw = self._measure(moved)
+        total = [
+            t + fr.wrapped(r - r0) if turn else r
+            for r, r0, t, turn in zip(raw, raw0, ca.vertsplit(total0), self._periods, strict=True)
+        ]
+        hard = [row for m, q, q0 in zip(self.mates, seen, self._q0, strict=True) for p in _PARTS if p in m.holds
+                for row in _part(p, q, q0, self.size)]  # fmt: skip
+        for j, r in enumerate(self.relations):
+            qa, qb = total[2 * len(self.mates) + 2 * j : 2 * len(self.mates) + 2 * j + 2]
+            hard.append((qb - r.law.symbolic(qa)) * self._scale(r.kinds[1]))
+        along = _along(self.kind)
+        weak = [_WEAK * row for i, (m, q, q0) in enumerate(zip(self.mates, seen, seen0, strict=True)) for p in _PARTS
+                if p not in m.holds and not (i == self.driver and p == along) for row in _part(p, q, q0, self.size)]  # fmt: skip
+        driven = total[self._driven] * self._scale(self.kind)
+        residual = ca.vertcat(*hard, driven - value * self._scale(self.kind), *weak)
+        held = ca.vertcat(*hard, driven)
+        flat = ca.vertcat(*(ca.reshape(p[:3, :].T, 12, 1) for p in moved[:-1]))
+        return _Graph(
+            nlp={"x": x, "p": ca.vertcat(around, total0, value), "f": ca.sumsqr(residual) / 2},
+            moved=ca.Function("moved", [x, around], [flat]),
+            measure=ca.Function("measure", [around], [ca.vertcat(*(ca.reshape(q.T, 12, 1) for q in seen0)), ca.vertcat(*raw0)]),
+            held=ca.Function("held", [x, around, total0], [ca.jacobian(held, x)]),
+        )  # fmt: skip
+
+    def _measure(self, poses: list[ca.SX]) -> tuple[list[ca.SX], list[ca.SX]]:
+        """Each mate's b frame seen in its a frame (3 × 4), and every coordinate as measured, at `poses` (the
+        reference's last)."""
+        import casadi as ca
+
+        index = {c: i for i, c in enumerate(self.clusters)}
+        ref = len(self.clusters)
+
+        def at(cluster: str, frame: fr.Frame) -> ca.SX:
+            return ca.mtimes(poses[index.get(cluster, ref)], ca.DM(frame))
+
+        seen, raw = [], []
+        for m in self.mates:
+            a, b = at(m.a, m.fa), at(m.b, m.fb)
+            turn = a[:3, :3].T
+            q = ca.horzcat(turn @ b[:3, :3], turn @ (b[:3, 3] - a[:3, 3]))
+            seen.append(q)
+            raw += [fr.heading(fr.IDENTITY, q[:3, 0]), q[2, 3]]
+        for r in self.relations:
+            raw += r.relation.coordinates(r.fa, r.fb, at(r.a, r.fa), at(r.b, r.fb))
+        return seen, raw
+
+    def nlp(self) -> dict[str, ca.SX]:
+        """What a solver minimises (`f`, half the sum of the residuals' squares, mm²) over `x` (each moving
+        cluster's turn about its middle, as Cayley's vector × `size`, then its shift, from the position before)
+        given `p` (`parameters`): what the mates and relations hold, from as assembled; the driver at its value;
+        and, weakly, what nothing holds, where it was."""
+        return self._graph.nlp
+
+    def parameters(self, value: float, before: Position) -> np.ndarray:
+        """`nlp`'s `p` for the driver at `value`, from the position `before`."""
+        return np.concatenate([_flat(before.poses, self.clusters), before.total, [value]])
+
     # ------------------------------------------------------------------ positions
 
     def start(self) -> Position:
         """Where the loop sits as assembled."""
         poses = {c: fr.IDENTITY for c in self.clusters}
-        raw = self._raw(poses, self._seen(poses))
+        _, raw = self._seen(poses)
         return Position(raw[self._driven], poses, raw, raw)
 
     def moved(self, x: np.ndarray, around: Position) -> dict[str, fr.Frame]:
-        """The poses `x` gives from `around`: per cluster a turn (its rotation vector × `size`) about its middle,
-        then a shift (mm). A solver need not use it."""
-        out = {}
-        for i, c in enumerate(self.clusters):
-            pose = around.poses[c]
-            centre = pose[:3, :3] @ self.centres[c] + pose[:3, 3]
-            step = np.eye(4)
-            step[:3, :3] = _turn(x[6 * i : 6 * i + 3] / self.size)
-            step[:3, 3] = centre - step[:3, :3] @ centre + x[6 * i + 3 : 6 * i + 6]
-            out[c] = step @ pose
-        return out
+        """The poses `x` (as `nlp`'s) gives from `around`."""
+        flat = np.asarray(self._graph.moved(x, _flat(around.poses, self.clusters))).reshape(-1, 3, 4)
+        return {c: np.vstack([f, [0.0, 0.0, 0.0, 1.0]]) for c, f in zip(self.clusters, flat, strict=True)}
 
     def travel(self, a: dict[str, fr.Frame], b: dict[str, fr.Frame]) -> float:
         """The furthest any point of a moving cluster moves from poses `a` to poses `b` (mm)."""
@@ -146,41 +219,28 @@ class LoopProblem:
             out = max(out, float(np.linalg.norm(pb - pa, axis=1).max()))
         return out
 
-    def residuals(self, poses: dict[str, fr.Frame], value: float, before: Position) -> np.ndarray:
-        """How far `poses` are from a position with the driver at `value` (mm): what the mates hold and the
-        relations, from as assembled; the driver; and, weakly, what nothing holds, from `before`."""
-        hard, driven, total = self._held(poses, before)
-        weak = []
-        seen_before = self._seen(before.poses)
-        for i, (m, q, q1) in enumerate(zip(self.mates, self._seen(poses), seen_before, strict=True)):
-            free = [p for p in _PARTS if p not in m.holds and not (i == self.driver and p == _along(self.kind))]
-            weak += [_WEAK * _part(p, q, q1, self.size) for p in free]
-        off = (driven - value) * self._scale(self.kind)
-        return np.concatenate([hard, [off], *weak])
-
     def check(self, poses: dict[str, fr.Frame], value: float, before: Position) -> Position | str:
         """`poses` as the position with the driver at `value` after `before`, or why they are not one."""
         tol = self.tolerances
-        seen = self._seen(poses)
+        seen, raw = self._seen(poses)
         for m, q, q0 in zip(self.mates, seen, self._q0, strict=True):
             for p in sorted(m.holds):
-                off = float(np.abs(_part(p, q, q0, 1.0)).max())
+                off = max(abs(v) for v in _part(p, q, q0, 1.0))
                 if p.startswith("origin") and off > tol.position_mm:
                     return f"{m.label} is off by {off:.3f} mm"
                 if not p.startswith("origin") and math.degrees(off) > tol.angle_deg:
                     return f"{m.label} is off by {math.degrees(off):.3f}°"
-        raw = self._raw(poses, seen)
         total = self._count(raw, before)
         for j, r in enumerate(self.relations):
             qa, qb = total[2 * len(self.mates) + 2 * j : 2 * len(self.mates) + 2 * j + 2]
-            off = abs(qb - r.ratio * qa) * self._scale(r.kinds[1])
+            off = abs(qb - r.law.at(qa)) * self._scale(r.kinds[1])
             if off > r.tolerance:
                 return f"{r.label} is off by {off:.3f} mm"
         if abs(total[self._driven] - value) * self._scale(self.kind) > tol.position_mm:
             return f"{self.mates[self.driver].label} is not at {value:g}"
         if (moved := self.travel(before.poses, poses)) > 2 * SAMPLE_MM:
             return f"it moved {moved:.2f} mm at once"
-        return Position(value, poses, tuple(raw), tuple(total))
+        return Position(value, poses, raw, total)
 
     def coordinate(self, position: Position, mate: int, kind: str) -> float:
         """A mate's angle or travel at a position, counted on from as assembled."""
@@ -194,14 +254,7 @@ class LoopProblem:
         in its bore) without moving anything else is not one."""
         at = self.start()
         n = 6 * len(self.clusters)
-
-        def rows(x: np.ndarray) -> np.ndarray:
-            hard, driven, _ = self._held(self.moved(x, at), at)
-            return np.concatenate([hard, [driven * self._scale(self.kind)]])
-
-        h = 1e-6
-        base = rows(np.zeros(n))
-        jac = np.column_stack([(rows(h * e) - base) / h for e in np.eye(n)])
+        jac = np.asarray(self._graph.held(np.zeros(n), _flat(at.poses, self.clusters), at.total))
         held, with_driver = _rank(jac[:-1]), _rank(jac)
         idle = [v for v in self._alone() if np.linalg.norm(jac @ v) <= 1e-6 * np.linalg.norm(v)]
         return with_driver > held, max(n - with_driver - _rank(np.array(idle)) if idle else n - with_driver, 0)
@@ -222,35 +275,23 @@ class LoopProblem:
 
     # ------------------------------------------------------------------ measuring
 
-    def _seen(self, poses: dict[str, fr.Frame]) -> list[fr.Frame]:
-        """Each mate's b frame, seen in its a frame."""
-        return [np.linalg.inv(poses.get(m.a, fr.IDENTITY) @ m.fa) @ (poses.get(m.b, fr.IDENTITY) @ m.fb)
-                for m in self.mates]  # fmt: skip
-
-    def _raw(self, poses: dict[str, fr.Frame], seen: list[fr.Frame]) -> tuple[float, ...]:
-        out: list[float] = []
-        for q in seen:
-            out += [math.degrees(math.atan2(q[1, 0], q[0, 0])), float(q[2, 3])]
-        for r in self.relations:
-            out += r.relation.coordinates(r.fa, r.fb, poses.get(r.a, fr.IDENTITY) @ r.fa,
-                                          poses.get(r.b, fr.IDENTITY) @ r.fb)  # fmt: skip
-        return tuple(out)
+    def _seen(self, poses: dict[str, fr.Frame]) -> tuple[np.ndarray, tuple[float, ...]]:
+        """Each mate's b frame seen in its a frame (3 × 4), and every coordinate as measured."""
+        seen, raw = self._graph.measure(_flat(poses, self.clusters))
+        return np.asarray(seen).reshape(-1, 3, 4), tuple(np.asarray(raw).ravel().tolist())
 
     def _count(self, raw: tuple[float, ...], before: Position) -> tuple[float, ...]:
         """Turns counted on from `before`'s (each step turns less than half a turn); travels as they are."""
         return tuple(t + fr.reduce_angle(r - r0, None) if turn else r
                      for r, r0, t, turn in zip(raw, before.raw, before.total, self._periods, strict=True))  # fmt: skip
 
-    def _held(self, poses: dict[str, fr.Frame], before: Position) -> tuple[np.ndarray, float, tuple[float, ...]]:
-        """What the mates and relations hold, as residuals (mm); the driver's value; every coordinate."""
-        seen = self._seen(poses)
-        total = self._count(self._raw(poses, seen), before)
-        rows = [_part(p, q, q0, self.size) for m, q, q0 in zip(self.mates, seen, self._q0, strict=True)
-                for p in _PARTS if p in m.holds]  # fmt: skip
-        for j, r in enumerate(self.relations):
-            qa, qb = total[2 * len(self.mates) + 2 * j : 2 * len(self.mates) + 2 * j + 2]
-            rows.append(np.array([(qb - r.ratio * qa) * self._scale(r.kinds[1])]))
-        return np.concatenate(rows) if rows else np.zeros(0), total[self._driven], total
+
+@dataclass(frozen=True)
+class _Graph:
+    nlp: dict[str, Any]
+    moved: Any  # (x, around) -> the moved poses, 3 × 4 by rows each
+    measure: Any  # (poses) -> each mate's b seen in a (3 × 4 by rows each), every coordinate
+    held: Any  # (x, around, total) -> the Jacobian of what the mates and relations hold, and the driver
 
 
 class Solver(Protocol):
@@ -273,25 +314,43 @@ def _along(kind: str) -> str:
     return "clocking" if kind == "angle" else "origin_z"
 
 
-def _part(part: str, q: fr.Frame, ref: fr.Frame, size: float) -> np.ndarray:
-    """How a part of b's frame seen in a's (`q`) differs from `ref`'s: mm, or radians × `size`."""
+def _part(part: str, q: Any, ref: Any, size: float) -> list[Any]:
+    """How a part of b's frame seen in a's (`q`, 3 × 4, numbers or symbols) differs from `ref`'s: mm, or radians
+    × `size`."""
     if part == "origin_xy":
-        return q[:2, 3] - ref[:2, 3]
+        return [q[0, 3] - ref[0, 3], q[1, 3] - ref[1, 3]]
     if part == "origin_z":
-        return q[2:3, 3] - ref[2:3, 3]
+        return [q[2, 3] - ref[2, 3]]
     if part == "axis":
-        return (q[:2, 2] - ref[:2, 2]) * size
-    turned = math.atan2(q[1, 0], q[0, 0]) - math.atan2(ref[1, 0], ref[0, 0])
-    return np.array([math.remainder(turned, math.tau) * size])
+        return [(q[0, 2] - ref[0, 2]) * size, (q[1, 2] - ref[1, 2]) * size]
+    turned = fr.wrapped(fr.heading(fr.IDENTITY, q[:3, 0]) - fr.heading(fr.IDENTITY, ref[:3, 0]))
+    return [math.radians(1) * turned * size]
 
 
-def _turn(w: np.ndarray) -> np.ndarray:
-    """The rotation by rotation vector `w` (radians)."""
-    k = np.array([[0.0, -w[2], w[1]], [w[2], 0.0, -w[0]], [-w[1], w[0], 0.0]])
-    a = float(np.linalg.norm(w))
-    if a < 1e-8:
-        return np.eye(3) + k + k @ k / 2
-    return np.eye(3) + math.sin(a) / a * k + (1 - math.cos(a)) / a**2 * k @ k
+def _poses(flat: ca.SX, n: int) -> list[ca.SX]:
+    """`n` poses, 3 × 4 by rows each, as 4 × 4, and the reference's (still) after them."""
+    import casadi as ca
+
+    last = ca.DM([[0.0, 0.0, 0.0, 1.0]])
+    return [*(ca.vertcat(ca.reshape(flat[12 * i : 12 * i + 12], 4, 3).T, last) for i in range(n)), ca.SX.eye(4)]
+
+
+def _stepped(x: ca.SX, pose: ca.SX, centre: np.ndarray, size: float) -> ca.SX:
+    """`pose` turned by Cayley's rotation of x[:3] / `size` about the cluster's middle, then shifted by x[3:]: a
+    rotation for any x, smooth through none."""
+    import casadi as ca
+
+    w = x[:3] / size
+    k = ca.vertcat(ca.horzcat(0, -w[2], w[1]), ca.horzcat(w[2], 0, -w[0]), ca.horzcat(-w[1], w[0], 0))
+    turn = ca.SX.eye(3) + (k + k @ k / 2) / (1 + ca.dot(w, w) / 4)  # (I − K/2)⁻¹ (I + K/2)
+    middle = ca.mtimes(pose[:3, :3], ca.DM(centre)) + pose[:3, 3]
+    return ca.vertcat(ca.horzcat(turn @ pose[:3, :3], turn @ pose[:3, 3] + middle - turn @ middle + x[3:]),
+                      ca.DM([[0.0, 0.0, 0.0, 1.0]]))  # fmt: skip
+
+
+def _flat(poses: dict[str, fr.Frame], clusters: list[str]) -> np.ndarray:
+    """Poses as `nlp` takes them: each 3 × 4 by rows."""
+    return np.concatenate([poses[c][:3].reshape(-1) for c in clusters])
 
 
 def _rank(m: np.ndarray) -> int:

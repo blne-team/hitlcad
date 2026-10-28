@@ -71,6 +71,23 @@ class FeedbackService:
 
     # ------------------------------------------------------------------ selection & pins
 
+    async def measure(self, design_id: str, revision: int, items: tuple[Pick, Pick]) -> str:
+        """Measure selected topology, or the picked points where there is no exact topology."""
+        from hitlcad.review.measure import measure
+
+        rev = self.built_revision(design_id, revision)
+        built = await asyncio.to_thread(self.built, design_id, rev)
+        refs = []
+        for pick in items:
+            ref = pick.component
+            if ref is None:
+                refs.append(", ".join(str(v) for v in pick.point))
+            elif ref.topo == "solid":
+                refs.append(ref.instance)
+            else:
+                refs.append(f"{ref.topo} {ref.index} of {ref.instance}")
+        return await asyncio.to_thread(measure, built, *refs)
+
     async def set_selection(
         self, design_id: str, picks: list[Pick], revision: int | None = None
     ) -> list[SelectionItem]:

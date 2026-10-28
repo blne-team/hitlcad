@@ -6,7 +6,7 @@ from __future__ import annotations
 from hitlcad.analysis.base import Context, label, member_failed, pair, result, structural
 from hitlcad.analysis.model import BuiltDesign, PlacedFrame
 from hitlcad.core.report import Result
-from hitlcad.core.structure import Relation
+from hitlcad.core.structure import Ends, Relation
 from hitlcad.kernel.errors import RELATION_CHECK, RELATION_UNMEASURED, STRUCTURE_RELATION_KIND, StructureError
 
 
@@ -22,6 +22,11 @@ def relation_pairs(built: BuiltDesign, rel: Relation) -> list[tuple[PlacedFrame,
     if len(a) == 1 or len(b) == 1:
         return [(fa, fb) for fa in a for fb in b]
     return pair(a, b)
+
+
+def relation_ends(built: BuiltDesign, fa: PlacedFrame, fb: PlacedFrame) -> Ends:
+    """A relation's ends as assembled, in `built`, the design that declares it."""
+    return Ends(fa.frame, fb.frame, fa.owner.nominals(fa.spec), fb.owner.nominals(fb.spec), built.nominal)
 
 
 class Relations:
@@ -45,9 +50,8 @@ class Relations:
                     out.append(result(self.name, RELATION_UNMEASURED, rel.address, None, f"{label(fa)} ↔ {label(fb)}: not verified until "
                                       f"{why} measures as declared", about))  # fmt: skip
                     continue
-                na, nb = fa.owner.nominals(fa.spec), fb.owner.nominals(fb.spec)
                 try:
-                    check = rel.verify(fa.frame, fb.frame, na, nb, ctx.tol)
+                    check = rel.verify(relation_ends(ctx.built, fa, fb), ctx.tol)
                 except Exception as e:  # the relation type's own code
                     out.append(member_failed(self.name, rel, f"the {rel.type} relation's check", e, about, rel.address))
                     continue

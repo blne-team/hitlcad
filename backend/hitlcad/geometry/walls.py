@@ -14,6 +14,7 @@ from scipy.spatial import cKDTree
 
 from hitlcad.core import frames as fr
 from hitlcad.geometry.mesh import Probe
+from hitlcad.geometry.sampling import surface_patch
 from hitlcad.kernel.errors import Unmeasurable
 
 #: A wall's far side faces back within this angle; a ray that leaves through anything else crossed a
@@ -43,6 +44,7 @@ KNIFE_SLACK = 1.25
 LINK = 1.5
 #: A failure names this many places, the worst first.
 PLACES = 3
+NO_WALL = "no line through it leaves by a wall: it has no wall to measure"
 
 
 def fmt(p: Any) -> str:
@@ -108,6 +110,8 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
             break
         if all(np.linalg.norm(points[i] - points[j]) > spacing for j in centres):
             centres.append(i)
+    if not centres:
+        raise Unmeasurable(NO_WALL)
     dense, on = _around(mesh, points[centres], spacing, readings[centres] / STEP)
     even = len(points)
     points = np.concatenate([points, dense])
@@ -118,7 +122,7 @@ def wall_thickness(mesh: trimesh.Trimesh, samples: int) -> Walls:
     thin = np.sort(nearby, axis=1)[:, AGREE - 1]
     thick = np.sort(np.where(np.isfinite(nearby), nearby, -np.inf), axis=1)[:, -AGREE]  # of those measured
     if not np.isfinite(thin).any():
-        raise Unmeasurable("no line through it leaves by a wall: it has no wall to measure")
+        raise Unmeasurable(NO_WALL)
     thinnest = int(np.argmin(thin))
     return Walls(points, thin, thick, even, spacing, float(thin[thinnest]), points[thinnest])
 
@@ -205,23 +209,13 @@ def _around(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Points on the surface within `radius` of each centre, about its `spacing` apart (at most PATCH), and the
     faces they lie on."""
-    reach = np.linalg.norm(mesh.triangles - mesh.triangles_center[:, None], axis=2).max(axis=1)
     points, faces = [], []
     for centre, step in zip(centres, spacing, strict=True):
-        near = np.flatnonzero(np.linalg.norm(mesh.triangles_center - centre, axis=1) <= radius + reach)
-        # split into triangles no longer than the radius, so a large face is sampled only where it is near
-        vertices, triangles, index = trimesh.remesh.subdivide_to_size(mesh.vertices, mesh.faces[near], radius,
-                                                                      return_index=True)  # fmt: skip
-        patch = trimesh.Trimesh(vertices, triangles, process=False)
-        # a triangle no longer than the radius that reaches into the circle has its centre within radius / √3 more
-        keep = np.flatnonzero(
-            np.linalg.norm(patch.triangles_center - centre, axis=1) <= radius * (1 + 1 / math.sqrt(3))
-        )
-        patch = patch.submesh([keep], append=True)
+        patch, source = surface_patch(mesh, centre, radius)
         at, face = trimesh.sample.sample_surface_even(patch, int(min(PATCH, np.ceil(patch.area / step**2))), seed=0)
         inside = np.linalg.norm(at - centre, axis=1) <= radius
         points.append(at[inside])
-        faces.append(near[index[keep[face[inside]]]])
+        faces.append(source[face[inside]])
     return np.concatenate(points), np.concatenate(faces)
 
 

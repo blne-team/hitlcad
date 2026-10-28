@@ -41,9 +41,9 @@ def test_hitlcad_s_own_plugins_and_an_installed_one_load_alike() -> None:
     found = registry()
     assert found.failures == []
     own = {p.name for p in found.plugins.values() if p.builtin}
-    assert own == {"joints", "gears", "checks", "processes", "build123d", "blender", "catalogs", "exports", "robot",
-                   "materials", "solvers"}  # fmt: skip
-    assert list(found.solvers) == ["least_squares"]
+    assert own == {"joints", "gears", "cams", "checks", "processes", "build123d", "blender", "catalogs", "exports", "robot",
+                   "materials", "solvers", "pictures"}  # fmt: skip
+    assert list(found.solvers) == ["sqp"]
     assert found.versions() == {"hitlcad-lasercut": "0.1.0"}
     assert "LaserCutProcess" in [p.__name__ for p in found.processes]
     # its process validates in design.json, its kinds are in the catalog, the skills and the playbook name them

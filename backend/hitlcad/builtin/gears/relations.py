@@ -9,7 +9,8 @@ import numpy as np
 from pydantic import Field
 
 from hitlcad.core import frames as fr
-from hitlcad.core.structure import Axis, Relation, RelationCheck
+from hitlcad.core.laws import Linear
+from hitlcad.core.structure import Axis, Ends, Relation, RelationCheck
 
 
 class GearRelation(Relation):
@@ -20,7 +21,8 @@ class GearRelation(Relation):
     example = {"type": "gear", "a": "sun.teeth", "b": "planet.teeth"}
     joins = ("gear", "gear")
 
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
+    def verify(self, ends: Ends, tol: Any) -> RelationCheck:
+        fa, fb, na, nb = ends.fa, ends.fb, ends.na, ends.nb
         limit = self.tolerance or tol.position_mm
         if not math.isclose(na["module"], nb["module"]):
             return RelationCheck(passed=False, detail=f"modules differ: {na['module']:g} and {nb['module']:g}")
@@ -49,13 +51,13 @@ class GearRelation(Relation):
         """Both turns are about a's Z: an external mesh turns them opposite ways."""
         return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("angle", fr.origin(fb), fr.z_axis(fa))
 
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        internal = bool(na.get("internal") or nb.get("internal"))
-        return (1.0 if internal else -1.0) * na["teeth"] / nb["teeth"]
+    def law(self, ends: Ends) -> Linear:
+        internal = bool(ends.na.get("internal") or ends.nb.get("internal"))
+        return Linear((1.0 if internal else -1.0) * ends.na["teeth"] / ends.nb["teeth"])
 
-    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: fr.Frame, fb: fr.Frame) -> tuple[float, float]:
+    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: Any, fb: Any) -> tuple[Any, Any]:
         """Each gear's turn against the line of their centres, about a's Z: on a moving carrier, Willis's."""
-        line0, line = fr.origin(fb0) - fr.origin(fa0), fr.origin(fb) - fr.origin(fa)
+        line0, line = fb0[:3, 3] - fa0[:3, 3], fb[:3, 3] - fa[:3, 3]
         sign = 1.0 if np.dot(fr.z_axis(fa0), fr.z_axis(fb0)) >= 0 else -1.0
         return _turned(fa0, fa, line0, line), sign * _turned(fb0, fb, line0, line)
 
@@ -68,7 +70,8 @@ class RackRelation(Relation):
     example = {"type": "rack", "a": "pinion.teeth", "b": "rack.pitch_line"}
     joins = ("gear", "frame")
 
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
+    def verify(self, ends: Ends, tol: Any) -> RelationCheck:
+        fa, fb, na = ends.fa, ends.fb, ends.na
         limit = self.tolerance or tol.position_mm
         pitch_r = na["module"] * na["teeth"] / 2
         actual = abs(fr.along(fr.origin(fa), fr.origin(fb), fr.z_axis(fb)))
@@ -90,14 +93,14 @@ class RackRelation(Relation):
         sign = float(np.sign(np.dot(np.cross(za, to_pitch_line), xb)))
         return Axis("angle", fr.origin(fa), za), Axis("travel", fr.origin(fb), sign * xb)
 
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        return math.pi * na["module"] * na["teeth"] / 360.0
+    def law(self, ends: Ends) -> Linear:
+        return Linear(math.pi * ends.na["module"] * ends.na["teeth"] / 360.0)
 
-    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: fr.Frame, fb: fr.Frame) -> tuple[float, float]:
+    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: Any, fb: Any) -> tuple[Any, Any]:
         """The pinion's turn against the rack, and the rack's travel past the pinion's axis, the way `axes` has it."""
         sign = float(np.dot(self.axes(fa0, fb0)[1].direction, fr.x_axis(fb0)))
-        along0, along = (float((np.linalg.inv(b) @ [*fr.origin(a), 1.0])[0]) for a, b in ((fa0, fb0), (fa, fb)))
-        return _turned(fa0, fa, fr.x_axis(fb0), fr.x_axis(fb)), -sign * (along - along0)
+        travel = fr.coordinate(fa[:3, 3], fb, 0) - fr.coordinate(fa0[:3, 3], fb0, 0)
+        return _turned(fa0, fa, fb0[:3, 0], fb[:3, 0]), -sign * travel
 
 
 class ScrewRelation(Relation):
@@ -109,7 +112,8 @@ class ScrewRelation(Relation):
     example = {"type": "screw", "a": "leadscrew.axis", "b": "nut.axis", "lead": 8}
     joins = ("frame", "frame")
 
-    def verify(self, fa: fr.Frame, fb: fr.Frame, na: dict[str, float], nb: dict[str, float], tol: Any) -> RelationCheck:
+    def verify(self, ends: Ends, tol: Any) -> RelationCheck:
+        fa, fb = ends.fa, ends.fb
         offset = fr.distance_to_line(fr.origin(fb), fr.origin(fa), fr.z_axis(fa))
         tilt = min(fr.angle_deg(fr.z_axis(fa), fr.z_axis(fb)), fr.angle_deg(fr.z_axis(fa), -fr.z_axis(fb)))
         values = {"axis_offset_mm": offset, "axis_deg": tilt}
@@ -120,21 +124,17 @@ class ScrewRelation(Relation):
     def axes(self, fa: fr.Frame, fb: fr.Frame) -> tuple[Axis, Axis]:
         return Axis("angle", fr.origin(fa), fr.z_axis(fa)), Axis("travel", fr.origin(fb), -fr.z_axis(fa))
 
-    def ratio(self, na: dict[str, float], nb: dict[str, float]) -> float:
-        return self.lead / 360.0
+    def law(self, ends: Ends) -> Linear:
+        return Linear(self.lead / 360.0)
 
-    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: fr.Frame, fb: fr.Frame) -> tuple[float, float]:
+    def coordinates(self, fa0: fr.Frame, fb0: fr.Frame, fa: Any, fb: Any) -> tuple[Any, Any]:
         """The screw's turn against the nut, and the nut's travel back along the screw's Z."""
-        along0, along = (float((np.linalg.inv(a) @ [*fr.origin(b), 1.0])[2]) for a, b in ((fa0, fb0), (fa, fb)))
-        return _turned(fa0, fa, fr.x_axis(fb0), fr.x_axis(fb)), -(along - along0)
+        return _turned(fa0, fa, fb0[:3, 0], fb[:3, 0]), -(
+            fr.coordinate(fb[:3, 3], fa, 2) - fr.coordinate(fb0[:3, 3], fa0, 2)
+        )
 
 
-def _turned(f0: fr.Frame, f: fr.Frame, d0: np.ndarray, d: np.ndarray) -> float:
+def _turned(f0: fr.Frame, f: Any, d0: np.ndarray, d: Any) -> Any:
     """How far a frame has turned about its own Z (degrees, in (-180, 180]) against a direction that went from d0
     to d: the direction, seen from the frame, turns the other way."""
-
-    def heading(frame: fr.Frame, direction: np.ndarray) -> float:
-        x, y, _ = frame[:3, :3].T @ direction
-        return math.degrees(math.atan2(y, x))
-
-    return -fr.reduce_angle(heading(f, d) - heading(f0, d0), None)
+    return -fr.wrapped(fr.heading(f, d) - fr.heading(f0, d0))

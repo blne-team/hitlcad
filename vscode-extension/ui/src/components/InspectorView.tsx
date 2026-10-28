@@ -12,6 +12,7 @@ import { deliveryStatus } from "../lib/delivery";
 import { PinsPanel } from "./PinsPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
+import { inspectionTargets } from "../lib/inspection";
 
 /** What a tab renders from: the design, the revision on screen (in full) and the one it is compared with, and the
  * shared UI state. */
@@ -58,22 +59,28 @@ export const TABS: Tab[] = [
   {
     id: "structure",
     label: "Structure",
-    render: ({ id, state, revision, ui, refresh }) => (
+    render: ({ id, state, revision, ui, setUi, refresh }) => (
       <StructurePanel
         designId={id}
         revision={revision}
         configuration={ui.configuration}
         latest={state.revisions[state.revisions.length - 1]?.id ?? null}
-        onSelected={refresh}
+        onSelected={() => { setUi({ inspection: null }); refresh(); }}
       />
     ),
   },
   {
     id: "parameters",
     label: "Parameters",
-    render: ({ state, revision, ui, setUi }) => (
-      <ParametersPanel key={revision?.id ?? "none"} design={state} revision={revision} configuration={ui.configuration} setConfiguration={(c) => setUi({ configuration: c, revision: null })} />
-    ),
+    render: ({ state, revision, ui, setUi }) => {
+      const instances = inspectionTargets(revision?.id ?? null, ui.inspection, state.selection);
+      return <ParametersPanel key={revision?.id ?? "none"} design={state} revision={revision} configuration={ui.configuration}
+        instances={instances}
+        onFocus={() => {
+          if (revision) setUi({ inspection: { revision: revision.id, instances, action: "focus", sequence: (ui.inspection?.sequence ?? 0) + 1 } });
+        }}
+        setConfiguration={(c) => setUi({ configuration: c, revision: null })} />;
+    },
   },
   {
     id: "changes",
@@ -86,7 +93,10 @@ export const TABS: Tab[] = [
     id: "report",
     label: "Results",
     badge: ({ revision }) => (revision ? revision.report.tally.problems + revision.report.tally.warnings : 0),
-    render: ({ id, revision }) => <ReportPanel designId={id} revision={revision} />,
+    render: ({ id, revision, ui, setUi }) => <ReportPanel designId={id} revision={revision} onInspect={(instances) => setUi({
+      placing: false, motion: null,
+      inspection: { revision: revision!.id, instances, action: "focus", sequence: (ui.inspection?.sequence ?? 0) + 1 },
+    })} />,
   },
   { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },
   { id: "brief", label: "Brief", render: ({ state }) => <BriefPanel brief={state.brief} /> },

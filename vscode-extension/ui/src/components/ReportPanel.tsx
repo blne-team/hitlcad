@@ -3,6 +3,7 @@ import type { AnalysisInfo, ErrorKind, Finding, Problem, Result, Revision } from
 import { useCapabilities } from "../hooks/useCapabilities";
 import { bytes } from "../lib/format";
 import { toExtension } from "../lib/host";
+import { affectedInstances } from "../lib/inspection";
 
 export const MARK = { pass: "✓", fail: "✗", unverified: "?" } as const;
 const WARNING = "!";
@@ -57,9 +58,9 @@ function ResultList({ results }: { results: Result[] }) {
 }
 
 /** One problem: what leads it (folded copies at their pattern indices), what else saw it, and every check in it. */
-type ProblemProps = { problem: Problem; results: Result[]; title: (analysis: string) => string; kind: (code: string) => ErrorKind | undefined };
+type ProblemProps = { problem: Problem; results: Result[]; title: (analysis: string) => string; kind: (code: string) => ErrorKind | undefined; onInspect?: () => void };
 
-function ProblemRow({ problem, results, title, kind }: ProblemProps) {
+function ProblemRow({ problem, results, title, kind, onInspect }: ProblemProps) {
   const [lead, ...also] = problem.findings;
   const first = results[lead!.results[0]!]!;
   const all = problem.findings.flatMap((f) => f.results.map((i) => results[i]!));
@@ -76,6 +77,9 @@ function ProblemRow({ problem, results, title, kind }: ProblemProps) {
           {copies(lead!)}
         </span>
         <span className="muted detail"> {first.detail}</span>
+        {onInspect && (
+          <button type="button" className="link-button inspect-finding" onClick={onInspect}>Inspect in model</button>
+        )}
         {kind(first.code)?.hint && <div className="hint muted">→ {kind(first.code)!.hint}</div>}
         {also.length > 0 && (
           <div className="also muted">
@@ -104,7 +108,7 @@ function ProblemRow({ problem, results, title, kind }: ProblemProps) {
 }
 
 /** A revision's build: what every analysis found, the parts, and the files. */
-export function ReportPanel({ designId, revision }: { designId: string; revision: Revision | null }) {
+export function ReportPanel({ designId, revision, onInspect }: { designId: string; revision: Revision | null; onInspect?: (instances: string[]) => void }) {
   const capabilities = useCapabilities();
   if (!revision) return <p className="muted pad">The build report appears after the first build.</p>;
   const { report } = revision;
@@ -129,9 +133,11 @@ export function ReportPanel({ designId, revision }: { designId: string; revision
 
       {report.problems.length > 0 && (
         <ul className="checks problems">
-          {report.problems.map((p) => (
-            <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} kind={kind} />
-          ))}
+          {report.problems.map((p) => {
+            const instances = affectedInstances(revision, p.findings.flatMap((f) => f.results.flatMap((i) => report.results[i]!.about)));
+            return <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} kind={kind}
+              onInspect={onInspect && instances.length ? () => onInspect(instances) : undefined} />;
+          })}
         </ul>
       )}
 

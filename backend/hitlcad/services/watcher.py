@@ -1,4 +1,5 @@
-"""Rebuild design folders when their files change on disk (saved by a person or an agent)."""
+"""Rebuild design folders when their files change on disk (saved by a person or an agent), and a design first
+opened since the server started when its files changed while nothing watched them."""
 
 from __future__ import annotations
 
@@ -17,18 +18,25 @@ class FolderWatcher:
     def __init__(self, designs: DesignService, builds: BuildService) -> None:
         self.designs = designs
         self.builds = builds
-        self._task: asyncio.Task[None] | None = None
+        self._tasks: list[asyncio.Task[None]] = []
 
     def start(self) -> None:
-        if self._task is None:
-            self._task = asyncio.get_running_loop().create_task(self._watch())
-            self._task.add_done_callback(_ended)
+        if not self._tasks:
+            loop = asyncio.get_running_loop()
+            self._tasks = [loop.create_task(self._watch()), loop.create_task(self._catch_up())]
+            for task in self._tasks:
+                task.add_done_callback(_ended)
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
-            self._task = None
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks = []
+
+    async def _catch_up(self) -> None:
+        """Each design as it is first opened: skipped when its files are its latest build's."""
+        while True:
+            self.builds.schedule_build(await self.designs.first_used.get())
 
     async def _watch(self) -> None:
         from watchfiles import awatch
@@ -38,7 +46,6 @@ class FolderWatcher:
             registered = self.designs.folders()
             folders = [Path(f) for f in registered]
             changed.clear()
-            await self.builds.catch_up()  # new folders, and edits made while nothing watched
             if not folders:
                 await changed.wait()
                 continue

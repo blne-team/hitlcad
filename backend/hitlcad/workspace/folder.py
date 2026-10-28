@@ -6,6 +6,7 @@
       parts/*.py      def build(p, i) -> {part: (shape, connectors)}, in each part's own frame
       lib/*.py        helpers shared by part files
       vendor/         vendor files (STEP), checksummed into each build
+      references/     pictures requirement checks compare the design with, checksummed into each build
       assembly.py     def build(p, i) -> {part or component: [placement, …]}
       build/          outputs of the latest successful build; git-ignored
 
@@ -18,12 +19,13 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from hitlcad.core.design import DESIGN_FILE, DesignSpec
 from hitlcad.core.report import BuildReport, BuildSpec
 from hitlcad.core.structure import Tolerances
-from hitlcad.kernel.errors import BUILD_COMPONENT, DESIGN_INVALID, DesignInvalid, HitlcadError, Location
+from hitlcad.kernel.errors import BUILD_COMPONENT, DESIGN_CHANGED, DESIGN_INVALID, DesignInvalid, HitlcadError, Location
 from hitlcad.kernel.plugins import registry
 
 BUILD_DIR = "build"
@@ -44,13 +46,13 @@ class DesignFolder:
     def exists(self) -> bool:
         return self.design_file.is_file()
 
-    def load(self) -> DesignSpec:
-        """design.json; `DesignInvalid` names each problem where it is (not pydantic's dump of the input). The
-        plugins it names are checked first: without them its members do not validate, and that is not the file's
-        to fix."""
+    def load(self, text: str | None = None) -> DesignSpec:
+        """design.json (or `text`, as read from it); `DesignInvalid` names each problem where it is (not pydantic's
+        dump of the input). The plugins it names are checked first: without them its members do not validate, and
+        that is not the file's to fix."""
         from pydantic import ValidationError
 
-        text = self.design_file.read_text(encoding="utf-8")
+        text = self.design_file.read_text(encoding="utf-8") if text is None else text
         try:
             required = json.loads(text).get("plugins", {})
         except (ValueError, AttributeError):  # not JSON, or not an object: what validating it says
@@ -63,6 +65,16 @@ class DesignFolder:
             problems = [DESIGN_INVALID.diagnostic(err["msg"].removeprefix("Value error, "), Location(
                 file=DESIGN_FILE, address=".".join(map(str, err["loc"])) or None)) for err in e.errors()]  # fmt: skip
             raise DesignInvalid(str(self.design_file), problems) from None
+
+    def edit(self, change: Callable[[DesignSpec], DesignSpec]) -> DesignSpec:
+        """Change design.json as it is now, and write it only over the text the change was made on: one made to it
+        meanwhile (an agent's) is not overwritten, but refused (`DESIGN_CHANGED`)."""
+        text = self.design_file.read_text(encoding="utf-8")
+        changed = change(self.load(text))
+        if self.design_file.read_text(encoding="utf-8") != text:
+            raise DESIGN_CHANGED(f"{DESIGN_FILE} changed while it was being edited")
+        self.save(changed)
+        return changed
 
     def save(self, design: DesignSpec) -> None:
         text = json.dumps(design.model_dump(mode="json", exclude_defaults=True) | {"hitlcad": design.hitlcad},
@@ -84,6 +96,15 @@ class DesignFolder:
         return {f.relative_to(self.path).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
                 for folder in ASSET_DIRS for f in sorted((self.path / folder).rglob("*")) if f.is_file()}  # fmt: skip
 
+    def checked(self, design: DesignSpec) -> dict[str, str]:
+        """The files its requirement checks read (`Check.files`), by content; '' for one not there (the check says so),
+        so that saving it builds again. Part files never read them: the part cache does not depend on them."""
+        out = {}
+        for rel in sorted({f for r in design.requirements if r.check for f in r.check.files()}):
+            path = self.path / rel
+            out[rel] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+        return out
+
     def spec(
         self, defaults: Tolerances, configuration: str | None = None, *, _stack: tuple[Path, ...] = ()
     ) -> BuildSpec:
@@ -102,7 +123,8 @@ class DesignFolder:
                 components[name] = child.spec(defaults, _stack=(*_stack, self.path))
             except HitlcadError as e:
                 raise BUILD_COMPONENT(f"component {name} ({use.design}): {e.diagnostic.message}", where) from None
-        return BuildSpec(design=design, sources=self.sources(), assets=self.assets(), configuration=configuration,
+        return BuildSpec(design=design, sources=self.sources(), assets=self.assets(), checked=self.checked(design),
+                         configuration=configuration,
                          tolerances=design.verification.resolve(defaults), components=components,
                          plugins=registry().versions())  # fmt: skip
 

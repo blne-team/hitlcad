@@ -1,4 +1,5 @@
 import type { SelectionItem } from "../api/types";
+import type { ReactNode } from "react";
 import { copyForChat } from "../lib/selection";
 
 interface Props {
@@ -8,10 +9,11 @@ interface Props {
   onClear: () => void;
   /** For a design's selection: whether the agent has it yet. */
   status?: { sent: boolean; text: string } | null;
+  children?: ReactNode;
 }
 
 /** Compact overlay listing what the human selected, with actions that hand it to the agent's chat. */
-export function SelectionBox({ items, busy, error, onClear, status }: Props) {
+export function SelectionBox({ items, busy, error, onClear, status, children }: Props) {
   if (!items.length && !busy && !error) return null;
   return (
     <section className="selection-box" aria-label="Selection" aria-live="polite">
@@ -34,6 +36,7 @@ export function SelectionBox({ items, busy, error, onClear, status }: Props) {
       )}
       {error && <p className="notice fail">{error}</p>}
       {status && <p className={`delivery tiny${status.sent ? " sent" : ""}`}>{status.text}</p>}
+      {children}
       <div className="actions">
         <button
           type="button"

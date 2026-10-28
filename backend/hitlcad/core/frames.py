@@ -56,6 +56,44 @@ def signed_angle_deg(u: Any, v: Any, about: Any) -> float:
     return math.degrees(math.atan2(float(np.dot(np.cross(u, v), about)), float(np.dot(u, v))))
 
 
+# --------------------------------------------------------------------------- measures a solver compiles
+#
+# What a relation's coordinates are written with (`heading`, `coordinate`, `wrapped`): each takes frames, points and directions as numbers or as CasADi
+# symbols alike, so a loop solver builds them into its compiled graph, and a check measures them on numbers.
+
+
+def _symbolic(*values: Any) -> bool:
+    return any(type(v).__module__.startswith("casadi") for v in values)
+
+
+def heading(f: Any, direction: Any) -> Any:
+    """The angle (degrees) from a rigid frame's X to `direction`, about its Z, of the direction seen across Z."""
+    if _symbolic(f, direction):
+        import casadi as ca
+
+        return ca.atan2(ca.dot(f[:3, 1], direction), ca.dot(f[:3, 0], direction)) * (180 / math.pi)
+    return math.degrees(math.atan2(float(np.dot(f[:3, 1], direction)), float(np.dot(f[:3, 0], direction))))
+
+
+def coordinate(point: Any, f: Any, k: int) -> Any:
+    """`point`'s coordinate in a rigid frame, along its axis `k` (0: X, 1: Y, 2: Z)."""
+    if _symbolic(point, f):
+        import casadi as ca
+
+        return ca.dot(f[:3, k], point - f[:3, 3])
+    return float(np.dot(f[:3, k], np.asarray(point) - f[:3, 3]))
+
+
+def wrapped(degrees: Any) -> Any:
+    """An angle (degrees) as the same turn in (-180, 180]."""
+    if _symbolic(degrees):
+        import casadi as ca
+
+        r = degrees * (math.pi / 180)
+        return ca.atan2(ca.sin(r), ca.cos(r)) * (180 / math.pi)
+    return reduce_angle(degrees, None)
+
+
 def reduce_angle(a: float, symmetry: int | None) -> float:
     """`a` modulo the rotations a symmetric feature cannot tell apart, in (-180/n, 180/n]."""
     period = 360.0 / (symmetry or 1)
@@ -99,6 +137,21 @@ def translation(v: Any) -> Frame:
     m = np.eye(4)
     m[:3, 3] = np.asarray(v, dtype=float)
     return m
+
+
+def rigid_inverse(f: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """The inverse of a rigid frame, or of each of a stack of them."""
+    out = np.zeros_like(f)
+    turn = np.swapaxes(f[..., :3, :3], -1, -2)
+    out[..., :3, :3] = turn
+    out[..., :3, 3] = -np.einsum("...ij,...j->...i", turn, f[..., :3, 3])
+    out[..., 3, 3] = 1.0
+    return out
+
+
+def transform_points(points: Any, f: Frame) -> npt.NDArray[np.float64]:
+    """Points (n × 3) moved by a frame."""
+    return np.asarray(points, dtype=float) @ f[:3, :3].T + f[:3, 3]
 
 
 def across(directions: npt.NDArray[np.float64]) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:

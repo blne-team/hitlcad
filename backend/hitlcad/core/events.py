@@ -39,10 +39,24 @@ class DesignUpdated(_Event):
     brief: DesignBrief | None = None
 
 
-class BuildStarted(_Event):
-    type: Literal["build_started"] = "build_started"
-    origin: str
+class BuildProgress(_Event):
+    """The build running, as far as it has got: the revision it makes, its scene once its parts are placed in it
+    (before anything is checked), and what it does now. Live only, as `BuildStopped` is: published, never kept in
+    the log, since neither says anything once the build ends; the revision or error it ends with is kept."""
+
+    type: Literal["build_progress"] = "build_progress"
+    revision: int
     configuration: str | None = None
+    origin: str
+    started: datetime = Field(description="When it started: one build's files of the revision from another's")
+    scene: str | None = Field(default=None, description="The scene, in the revision's files, once the parts are in it")
+    doing: str = ""
+
+
+class BuildStopped(_Event):
+    """The build running stopped without a revision: newer files replaced it (live only)."""
+
+    type: Literal["build_stopped"] = "build_stopped"
 
 
 class RevisionCreated(_Event):
@@ -88,7 +102,8 @@ class FeedbackDelivered(_Event):
 Event = Annotated[
     DesignOpened
     | DesignUpdated
-    | BuildStarted
+    | BuildProgress
+    | BuildStopped
     | RevisionCreated
     | ErrorRaised
     | SelectionChanged
@@ -111,7 +126,7 @@ class DesignState(Model):
     brief: DesignBrief | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    building: bool = False
+    building: BuildProgress | None = Field(default=None, description="The build running, as far as it has got")
     error: Diagnostic | None = Field(default=None, description="The latest error; cleared by the next revision")
     revisions: list[RevisionInfo] = Field(default_factory=list)
     selection: list[SelectionItem] = Field(default_factory=list)
@@ -154,13 +169,15 @@ class DesignState(Model):
                 self.created_at = event.ts
             case DesignUpdated():
                 self.name, self.backend, self.brief = event.name, event.backend, event.brief
-            case BuildStarted():
-                self.building = True
+            case BuildProgress():
+                self.building = event
+            case BuildStopped():
+                self.building = None
             case RevisionCreated():
                 self.revisions.append(event.revision)
-                self.building, self.error = False, None
+                self.building, self.error = None, None
             case ErrorRaised():
-                self.building, self.error = False, event.diagnostic
+                self.building, self.error = None, event.diagnostic
             case SelectionChanged():
                 self.selection = event.items
             case PinsChanged():

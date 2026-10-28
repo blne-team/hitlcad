@@ -154,10 +154,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Revision File */
+        /**
+         * Revision File
+         * @description A revision's file: one of its artifacts, or a part view its scene draws (its components' included); of
+         *     the revision being built, its scene once shown (`BuildProgress.scene`) and its part views.
+         */
         get: operations["revision_file_api_designs__design_id__revisions__revision_id__files__path__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/designs/{design_id}/measure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Measure Selection */
+        post: operations["measure_selection_api_designs__design_id__measure_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -341,9 +362,29 @@ export interface paths {
         };
         /**
          * Cad File
-         * @description A model file tessellated for the 3D file viewer (three-cad-viewer's instanced format).
+         * @description A model file tessellated for the 3D file viewer: to its scene, whose part views lie beside it.
          */
         get: operations["cad_file_api_files_cad_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/cad/{key}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cad Scene File
+         * @description A file of a model file's scene: the scene, or one of its part views.
+         */
+        get: operations["cad_scene_file_api_files_cad__key___name__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -573,6 +614,51 @@ export interface components {
             mpn: string;
         };
         /**
+         * BuildProgress
+         * @description The build running, as far as it has got: the revision it makes, its scene once its parts are placed in it
+         *     (before anything is checked), and what it does now. Live only, as `BuildStopped` is: published, never kept in
+         *     the log, since neither says anything once the build ends; the revision or error it ends with is kept.
+         */
+        BuildProgress: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "build_progress";
+            /** Revision */
+            revision: number;
+            /** Configuration */
+            configuration: string | null;
+            /** Origin */
+            origin: string;
+            /**
+             * Started
+             * Format: date-time
+             * @description When it started: one build's files of the revision from another's
+             */
+            started: string;
+            /**
+             * Scene
+             * @description The scene, in the revision's files, once the parts are in it
+             */
+            scene: string | null;
+            /**
+             * Doing
+             * @default
+             */
+            doing: string;
+        };
+        /**
          * BuildReport
          * @description A build: what it built and what it found. A build that fails, fails because it cannot produce geometry, and
          *     its results say why.
@@ -651,6 +737,13 @@ export interface components {
             assets: {
                 [key: string]: string;
             };
+            /**
+             * Checked
+             * @description Relative path -> sha256 of the files its requirement checks read (`Check.files`: reference pictures); '' for a missing one
+             */
+            checked: {
+                [key: string]: string;
+            };
             /** Configuration */
             configuration: string | null;
             /**
@@ -678,6 +771,42 @@ export interface components {
          * @enum {string}
          */
         BuildStatus: "succeeded" | "failed";
+        /**
+         * CamRelation
+         * @description A cam (a: Z along its axis, X where its law's angle is 0) lifting a follower (b: at the point its lift is
+         *     given for, a flat face's or a roller's centre, Z along its travel, away from the cam): with the cam turned θ
+         *     about its Z from where its X points along the follower's Z, the follower sits `base` + law(θ) from the cam's
+         *     axis, along its Z. Its law is `lift`, an interface value: [[θ°, lift mm], …] over one turn, ascending in θ. Any part
+         *     turning against a follower is a cam: a rocker arm pressing a valve stem. Verified: the follower's travel
+         *     square to the cam's axis, and its place as assembled the law's, within `tolerance`. In motion the follower
+         *     follows the cam (it cannot drive it back), and the two stay in contact.
+         */
+        CamRelation: {
+            /** A */
+            a: string;
+            /** B */
+            b: string;
+            /**
+             * Tolerance
+             * @description mm; default: verification.position_mm
+             */
+            tolerance: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "cam";
+            /**
+             * Lift
+             * @description The interface value of its lift table, e.g. 'interfaces.intake_lift'
+             */
+            lift: string;
+            /**
+             * Base
+             * @description mm from the cam's axis to the follower's frame at no lift (its base circle, plus a roller's radius), or the parameter or interface value that gives it
+             */
+            base: number | string;
+        };
         /** Capabilities */
         Capabilities: {
             /** Version */
@@ -1084,7 +1213,7 @@ export interface components {
             /** Mates */
             mates: (components["schemas"]["RigidMate"] | components["schemas"]["RevoluteMate"] | components["schemas"]["SliderMate"] | components["schemas"]["CylindricalMate"] | components["schemas"]["PlanarMate"] | components["schemas"]["BallMate"])[];
             /** Relations */
-            relations: (components["schemas"]["GearRelation"] | components["schemas"]["RackRelation"] | components["schemas"]["ScrewRelation"])[];
+            relations: (components["schemas"]["CamRelation"] | components["schemas"]["GearRelation"] | components["schemas"]["RackRelation"] | components["schemas"]["ScrewRelation"])[];
             /** Fasteners */
             fasteners: components["schemas"]["FastenerSet"][];
             /** Requirements */
@@ -1129,11 +1258,8 @@ export interface components {
             created_at: string | null;
             /** Updated At */
             updated_at: string | null;
-            /**
-             * Building
-             * @default false
-             */
-            building: boolean;
+            /** @description The build running, as far as it has got */
+            building: components["schemas"]["BuildProgress"] | null;
             /** @description The latest error; cleared by the next revision */
             error: components["schemas"]["Diagnostic"] | null;
             /** Revisions */
@@ -1205,6 +1331,13 @@ export interface components {
         EditParameters: {
             /** Values */
             values: {
+                [key: string]: unknown;
+            };
+            /**
+             * Expected
+             * @description The values the edit was made on, of the parameters it changes: where design.json now has others, the edit is refused (409)
+             */
+            expected: {
                 [key: string]: unknown;
             };
         };
@@ -1796,6 +1929,16 @@ export interface components {
                 ]
             ];
         };
+        /** MeasureSelection */
+        MeasureSelection: {
+            /** Revision */
+            revision: number;
+            /** Items */
+            items: [
+                components["schemas"]["Pick"],
+                components["schemas"]["Pick"]
+            ];
+        };
         /**
          * Measured
          * @description A connector frame's feature, as measured on the part.
@@ -1854,8 +1997,8 @@ export interface components {
         };
         /**
          * MotionDrive
-         * @description Instances that move together through a range: `rate` times as far as the range moves, about or along
-         *     their own axis.
+         * @description Instances that move together through a range, about or along their own axis, by a law of the range's
+         *     motion.
          */
         MotionDrive: {
             /**
@@ -1876,10 +2019,13 @@ export interface components {
                 number
             ];
             /**
-             * Rate
-             * @description Degrees or mm per unit of the range; negative: against the axis
+             * Law
+             * @description (the range's motion from where it sits, theirs) at points ascending over the slider's span, straight between them; degrees or mm, negative: against the axis
              */
-            rate: number;
+            law: [
+                number,
+                number
+            ][];
             /** Instances */
             instances: string[];
         };
@@ -2332,7 +2478,7 @@ export interface components {
             /** Text */
             text: string;
             /** Check */
-            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"]) | null;
+            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"] | components["schemas"]["SpanCheck"] | components["schemas"]["SilhouetteCheck"]) | null;
         };
         /**
          * ResinProcess
@@ -2695,6 +2841,54 @@ export interface components {
             min_bend_radius_mm: number;
         };
         /**
+         * SilhouetteCheck
+         * @description Looks like a picture from one side: the model's outline seen from `view` against the subject's, cut out of
+         *     the picture (a photo, render or sketch under references/; a PNG with a transparent background as it is cut),
+         *     scaled to `height` mm and placed standing on Z=0, centred across (from top or bottom: centred on the origin).
+         *     Views: front (from −Y, right is +X), back, right (from +X, right is +Y), left, top (from +Z, up is +Y), bottom.
+         *     Measures the share of the two outlines' union they share (`min_overlap`) and how far either strays from the
+         *     other (`max_deviation`, mm). The requirement's text is what the human says about the picture. A failing result
+         *     names what strays, where and which way, with a figure: both outlines over the picture on a millimetre grid.
+         */
+        SilhouetteCheck: {
+            /**
+             * Target
+             * @description A part (its own frame), an instance or component path (placed); default: the whole design
+             */
+            target: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "silhouette";
+            /**
+             * Image
+             * @description The picture, relative to the design folder: references/front.jpg
+             */
+            image: string;
+            /**
+             * View
+             * @enum {string}
+             */
+            view: "front" | "back" | "right" | "left" | "top" | "bottom";
+            /**
+             * Height
+             * @description The subject's extent up the picture, mm
+             */
+            height: number | string;
+            /**
+             * Min Overlap
+             * @description Intersection over union of the outlines, 0 to 1
+             * @default 0.9
+             */
+            min_overlap: number | string;
+            /**
+             * Max Deviation
+             * @description mm
+             */
+            max_deviation: number | string | null;
+        };
+        /**
          * SizeCheck
          * @description The extent along one axis, mm.
          */
@@ -2750,6 +2944,30 @@ export interface components {
              */
             type: "slider";
             limits: components["schemas"]["Limits"] | null;
+        };
+        /**
+         * SpanCheck
+         * @description The length between two connector frames' origins, mm: where they sit and at every position motion moves
+         *     either through (a spring's ends, from its solid height to its free length less the preload it must keep).
+         */
+        SpanCheck: {
+            /** Min */
+            min: number | string | null;
+            /** Max */
+            max: number | string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "span";
+            /**
+             * Between
+             * @description Connector ends, e.g. ['lifter.spring_seat', 'head.spring_seat']
+             */
+            between: [
+                string,
+                string
+            ];
         };
         /**
          * StackCheck
@@ -2963,8 +3181,11 @@ export interface components {
              */
             created_at: string;
         };
-        /** BuildStarted */
-        BuildStarted: {
+        /**
+         * BuildStopped
+         * @description The build running stopped without a revision: newer files replaced it (live only).
+         */
+        BuildStopped: {
             /**
              * Seq
              * @default 0
@@ -2979,14 +3200,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            type: "build_started";
-            /** Origin */
-            origin: string;
-            /**
-             * Configuration
-             * @default null
-             */
-            configuration: string | null;
+            type: "build_stopped";
         };
         /**
          * ComponentRef
@@ -3167,7 +3381,7 @@ export interface components {
             /** Items */
             items: components["schemas"]["SelectionItem"][];
         };
-        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildStarted"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["FeedbackDelivered"];
+        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildProgress"] | components["schemas"]["BuildStopped"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["FeedbackDelivered"];
         /**
          * BuildActivity
          * @description A build that finished, one message of the /api/activity WebSocket.
@@ -3499,6 +3713,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measure_selection_api_designs__design_id__measure_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeasureSelection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -3854,6 +4105,38 @@ export interface operations {
             };
             header?: never;
             path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cad_scene_file_api_files_cad__key___name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                name: string;
+            };
             cookie?: never;
         };
         requestBody?: never;

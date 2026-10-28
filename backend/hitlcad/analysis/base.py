@@ -2,8 +2,8 @@
 
 An analysis reads a built design and returns `Result`s, each naming the kind of check it is (its code, from the
 error catalog) and the addresses it is about. The pipeline runs every analysis in `default_analyses` on every
-build. Costly results are cached by the inputs they depend on (`Context.cache`), so a rebuild only recomputes what
-changed.
+build. Costly results are cached by the inputs they depend on and the code that computes them (`Context.cache`),
+so a rebuild only recomputes what changed.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -24,15 +25,26 @@ from hitlcad.core.report import Result, Severity, Status
 from hitlcad.kernel.errors import Diagnostic, ErrorKind, StructureError
 
 
+@cache
+def analysis_code() -> str:
+    """The analyses, the domain model and geometry they apply and hitlcad's own plugins, by content: what any result
+    computed from the same inputs also depends on."""
+    root = Path(__file__).parents[1]
+    packages = ("analysis", "builtin", "core", "geometry", "kernel")
+    files = sorted(p for package in packages for p in (root / package).rglob("*.py"))
+    return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
+
+
 class ResultCache:
-    """Results of costly checks by the hash of what they depend on, shared across builds."""
+    """Results of costly checks by the hash of what they depend on and of hitlcad's code (`analysis_code`), shared
+    across builds."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
 
     @staticmethod
     def key(*parts: Any) -> str:
-        return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+        return hashlib.sha256(json.dumps([analysis_code(), *parts], sort_keys=True, default=str).encode()).hexdigest()
 
     def get_or(self, key: str, compute: Callable[[], Any]) -> Any:
         path = self.root / key[:2] / f"{key}.json"

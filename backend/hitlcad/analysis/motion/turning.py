@@ -21,6 +21,10 @@ def axis_frame(axis: Axis) -> np.ndarray:
     return fr.on_axis(axis.origin, axis.direction)[:3]
 
 
+#: The grid (mm) a profile's regions are moved out to where it is given no pad.
+GRID_MM = 1e-6
+
+
 def _local(solid: manifold3d.Manifold, frame: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """The solid's vertices in the axis' frame, and its triangles."""
     mesh = solid.to_mesh()
@@ -35,14 +39,20 @@ def radius(solid: manifold3d.Manifold, frame: np.ndarray) -> float:
 
 def profile(solid: manifold3d.Manifold, frame: np.ndarray, pad: float) -> manifold3d.CrossSection:
     """In the plane of distance from the axis (X) and position along it (Y), the region each of the solid's
-    triangles spans: a little more than its surface passes through in a turn. A triangle square to the axis
-    turns within its own plane and spans no region, unless `pad` gives it that much height either way."""
+    triangles spans: a little more than its surface passes through in a turn. Each region's edges are moved out
+    to a grid of `pad` (of `GRID_MM` where `pad` is 0), so a triangle square to the axis, which turns within its
+    own plane, spans one step of it; the triangles of a ring about the axis then span one region, the same one, and
+    the regions are joined once each."""
     import manifold3d
 
     vertices, faces = _local(solid, frame)
     triangles = vertices[faces]
     outer, inner = np.linalg.norm(triangles[..., :2], axis=-1).max(axis=1), _distance_to_origin(triangles[..., :2])
     lo, hi = triangles[..., 2].min(axis=1) - pad, triangles[..., 2].max(axis=1) + pad
+    grid = pad or GRID_MM
+    spans = np.unique(np.column_stack([np.floor(inner / grid), np.ceil(outer / grid), np.floor(lo / grid),
+                                       np.ceil(hi / grid)]), axis=0) * grid  # fmt: skip
+    inner, outer, lo, hi = spans.T
     rects = np.stack([np.stack(c, axis=-1) for c in ((inner, lo), (outer, lo), (outer, hi), (inner, hi))], axis=1)
     return manifold3d.CrossSection(list(rects), manifold3d.FillRule.Positive)
 
