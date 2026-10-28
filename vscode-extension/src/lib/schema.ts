@@ -2090,6 +2090,24 @@ export interface components {
              * @default
              */
             key: string;
+            /**
+             * Stretches
+             * @description What deforms as it moves (springs)
+             */
+            stretches: components["schemas"]["MotionStretch"][];
+        };
+        /**
+         * MotionStretch
+         * @description A part that deforms between two ends (a spring) through a range: its transform from as assembled at each of
+         *     `values`, 3 × 4 by rows, carried with its seat and scaled along the line between its ends.
+         */
+        MotionStretch: {
+            /** Instances */
+            instances: string[];
+            /** Values */
+            values: number[];
+            /** Frames */
+            frames: number[][];
         };
         /** OpenDesign */
         OpenDesign: {
@@ -2234,6 +2252,14 @@ export interface components {
             connectors: {
                 [key: string]: components["schemas"]["GearConnector"] | components["schemas"]["FrameConnector"] | components["schemas"]["FaceConnector"] | components["schemas"]["HoleConnector"] | components["schemas"]["ShaftConnector"];
             };
+            /**
+             * Stretches
+             * @description A part that deforms between two of its connectors (a spring, seat first): modelled at its length as assembled, each end mated to what it sits on; motion moves it with neither end's part, leaves it out of collisions (a `span` requirement keeps its length), and the panel stretches it between its ends
+             */
+            stretches: [
+                string,
+                string
+            ] | null;
         };
         /**
          * Pick

@@ -48,8 +48,27 @@ def build(p, i):
         extrude(amount=HEIGHT)
     foot = Pos(1.5, 0, 0) * Box(3, 16, HEIGHT)
     rod = Pos(3, 0, 0) * UP * Cylinder(4, 40, align=on)
+    length = GUIDE_X - i.follower_at - 3  # from the foot's back to the guide, as assembled
+    spring = Cylinder(4.9, length, align=on) - Cylinder(
+        4.3, length, align=on
+    )  # round the rod, clear of it and the plate
     return {
-        "base": (plate + guide, {"axis": Location((0, 0, 0)), "guide": Location((GUIDE_X, 0, 4)) * UP}),
+        "base": (
+            plate + guide,
+            {
+                "axis": Location((0, 0, 0)),
+                "guide": Location((GUIDE_X, 0, 4)) * UP,
+                "spring_seat": Location((GUIDE_X, 0, 4)) * Rot(0, -90, 0),
+            },
+        ),
         "camshaft": (cam.part, {"axis": Location((0, 0, 0)) * Rot(180, 0, 0), "lobe": Location((0, 0, 0))}),
-        "follower": (foot + rod, {"slide": Location((0, 0, 0)) * Rot(0, -90, 0), "face": Location((0, 0, 0)) * UP}),
+        "follower": (
+            foot + rod,
+            {
+                "slide": Location((0, 0, 0)) * Rot(0, -90, 0),
+                "face": Location((0, 0, 0)) * UP,
+                "spring_top": Location((3, 0, 0)) * UP,
+            },
+        ),
+        "spring": (spring, {"seat": Location((0, 0, 0)) * Rot(180, 0, 0), "top": Location((0, 0, length))}),
     }

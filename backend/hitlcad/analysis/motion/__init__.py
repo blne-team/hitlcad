@@ -26,7 +26,7 @@ from hitlcad.analysis.motion.plans import NAME, Drive, FreeMotion, Plan, plans, 
 from hitlcad.analysis.motion.sweep import Swept, sweep
 from hitlcad.core import frames as fr
 from hitlcad.core.laws import Linear
-from hitlcad.core.report import Cause, MotionDrive, MotionPose, MotionRange, Result
+from hitlcad.core.report import Cause, MotionDrive, MotionPose, MotionRange, MotionStretch, Result
 from hitlcad.core.structure import Mate
 from hitlcad.kernel.errors import (
     MOTION_CLEAR,
@@ -254,7 +254,29 @@ def motions(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache,
             yield plan.link.source.address, {leaf: stacked[c] for leaf, c in moving.items()}
 
 
-def reported(built: BuiltDesign) -> list[MotionRange]:
+def _stretches(plan: Plan, traced: Traced) -> list[MotionStretch]:
+    """What deforms as the plan moves (springs whose ends it carries apart or together), at its positions (at most
+    `REPORTED` of them, evenly picked)."""
+    find, n = plan.world.clusters.find, len(traced.values)
+    if n < 2:
+        return []
+    stacked, still = traced.stacked(), np.broadcast_to(fr.IDENTITY, (n, 4, 4))
+
+    def carried(leaf: str | None) -> np.ndarray:
+        return still if leaf is None else stacked.get(find(leaf), still)
+
+    shown = np.linspace(0, n - 1, min(n, REPORTED)).round().astype(int).tolist()
+    out = []
+    for leaf, s in plan.world.stretched.items():
+        seat, top = carried(s.on_seat), carried(s.on_top)
+        if seat is still and top is still:
+            continue
+        frames = [np.round(s.at(seat[i], top[i])[:3], 6).reshape(-1).tolist() for i in shown]
+        out.append(MotionStretch(instances=[leaf], values=[traced.values[i] for i in shown], frames=frames))
+    return out
+
+
+def reported(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache) -> list[MotionRange]:
     """The ranges of motion a report carries, as swept, for the panel to move: about fixed axes by samples of their
     laws, or a traced motion's positions (at most `REPORTED`, evenly picked, so each one shown was checked)."""
     out = []
@@ -262,7 +284,8 @@ def reported(built: BuiltDesign) -> list[MotionRange]:
         if not isinstance(plan, Plan) or plan.swept is None:
             continue
         common: dict[str, Any] = {"mate": plan.link.source.address, "pair": _pair(plan), "kind": plan.kind,
-                                  "current": plan.rest}  # fmt: skip
+                                  "current": plan.rest,
+                                  "stretches": _stretches(plan, path.positions(plan, settings, cache))}  # fmt: skip
         traced = plan.swept.traced
         if traced is None:
             moved: dict[int, tuple[Drive, set[str]]] = {}  # one drive is shared by every cluster it moves

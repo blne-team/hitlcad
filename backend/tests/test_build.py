@@ -520,9 +520,14 @@ async def test_a_cam_lifts_its_follower_by_its_law_and_stays_on_it(core: HitlCad
     lifted = [d for d in sweep.drives if d.instances == ["follower"]][0].law
     assert max(y for _, y in lifted) - min(y for _, y in lifted) == pytest.approx(6.0, abs=0.05)
     (spring,) = [r for r in results(report, "requirement") if r.status != "unverified"]
-    assert spring.status == "pass" and "19.00 … 25.00 mm through base.axis+camshaft.axis" in spring.detail, (
+    assert spring.status == "pass" and "16.00 … 22.00 mm through base.axis+camshaft.axis" in spring.detail, (
         spring.detail
     )
+    # the spring deforms between its ends: it moves with neither, meets nothing, and the panel stretches it
+    (stretch,) = sweep.stretches
+    assert stretch.instances == ["spring"] and len(stretch.values) == len(stretch.frames)
+    scales = [np.linalg.norm(np.reshape(f, (3, 4))[:3, 0]) for f in stretch.frames]  # along its axis, world X
+    assert min(scales) == pytest.approx(16 / 21.45, abs=0.01) and max(scales) == pytest.approx(22 / 21.45, abs=0.01)
 
     edit_json(folder / "design.json", lambda d: d["parameters"][4].update(value=0.85))  # a profile cut short
     short = await build(core, folder, tmp_path / "b")

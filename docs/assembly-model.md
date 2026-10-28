@@ -156,6 +156,11 @@ file loads; how the names relate is checked by the structure analysis of each bu
 - Every part declares the connectors other parts mate to, catalog parts included. A provider must
   supply the declared ones.
 - Parts in one file share a backend; a design may mix backends.
+- A part that deforms (a spring) names its two end connectors, seat first: `"stretches": ["seat",
+  "top"]`. It is modelled at its length as assembled, each end mated to what it sits on (a rigid mate
+  to the head, another to the retainer). Motion moves it with neither end's part and leaves it out of
+  collisions, its length the `span` requirement between its ends keeps; the panel stretches it between
+  them as they move. Interference checks it where it sits.
 
 ### Connectors
 

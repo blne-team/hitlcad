@@ -109,7 +109,11 @@ def _depth(piece: manifold3d.Manifold) -> float:
     from hitlcad.geometry.walls import wall_thickness
 
     mesh = piece.to_mesh()
-    solid = trimesh.Trimesh(mesh.vert_properties[:, :3], mesh.tri_verts)
+    points = np.asarray(mesh.vert_properties[:, :3], dtype=float)
+    spread = np.linalg.svd(points - points.mean(axis=0), compute_uv=False)
+    if spread[-1] <= 1e-9 * max(float(spread[0]), 1.0):  # flat: a sliver where two faces meet, no box fits it
+        return 0.0
+    solid = trimesh.Trimesh(points, mesh.tri_verts)
     across = float(trimesh.bounds.oriented_bounds(solid)[1].min())
     try:
         walls = wall_thickness(solid, DEPTH_SAMPLES)

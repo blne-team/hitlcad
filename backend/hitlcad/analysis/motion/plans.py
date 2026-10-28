@@ -146,6 +146,7 @@ class World:
     tracked: dict[frozenset[str], float] = field(
         metadata={"doc": "Leaf pairs a clearance requirement names, and the least gap it needs (0: no minimum)"}
     )
+    stretched: dict[str, Stretch] = field(default_factory=dict, metadata={"doc": "Parts that deform, by leaf"})
 
     def leaves_of(self, clusters: set[str]) -> list[str]:
         return [p for p in self.leaves if self.clusters.find(p) in clusters]
@@ -157,6 +158,47 @@ class World:
         for p, leaf in self.leaves.items():
             out.setdefault(self.clusters.find(p), []).append(corners(leaf.bounds))
         return {c: np.vstack(v) for c, v in out.items()}
+
+
+@dataclass(frozen=True)
+class Stretch:
+    """A leaf that deforms between two ends (a spring): each end where it sits, and the leaf whose motion carries it
+    (None: nothing that moves)."""
+
+    seat: fr.Frame
+    top: fr.Frame
+    on_seat: str | None
+    on_top: str | None
+
+    def at(self, seat: fr.Frame, top: fr.Frame) -> fr.Frame:
+        """The leaf's transform from as assembled with its seat moved by `seat` and its top by `top`: carried with
+        its seat, and scaled along the line between its ends as far as they are apart."""
+        a0, b0 = fr.origin(self.seat), fr.origin(self.top)
+        length = float(np.linalg.norm(b0 - a0))
+        a, b = fr.transform_points(a0, seat), fr.transform_points(b0, top)
+        u = (b0 - a0) / length
+        scale = np.eye(4)
+        scale[:3, :3] += (float(np.linalg.norm(b - a)) / length - 1.0) * np.outer(u, u)
+        scale[:3, 3] = a0 - scale[:3, :3] @ a0
+        return seat @ scale
+
+
+def _stretched(leaves: dict[str, Leaf], links: list[Link]) -> dict[str, Stretch]:
+    """Each leaf that deforms between two of its connectors, and what each end is mated to."""
+    out = {}
+    for path, leaf in leaves.items():
+        ends = leaf.part.spec.stretches
+        if not ends:
+            continue
+        found: dict[str, tuple[fr.Frame, str | None]] = {}
+        for k in links:
+            for mine, other in ((k.a, k.b), (k.b, k.a)):
+                if mine.instance == path and mine.connector in ends and isinstance(k.source, Mate):
+                    found[mine.connector] = (mine.frame, other.instance)
+        if len(found) == 2:
+            (seat, on_seat), (top, on_top) = found[ends[0]], found[ends[1]]
+            out[path] = Stretch(seat, top, on_seat, on_top)
+    return out
 
 
 class Clusters:
@@ -215,13 +257,16 @@ def _tracked(built: BuiltDesign) -> dict[frozenset[str], float]:
 
 def plans(built: BuiltDesign) -> list[Plan | Result]:
     """A plan for every input, and the result saying why a mate with a range does not move on its own."""
-    leaves = {leaf.path: leaf for leaf in built.leaves()}
+    every = {leaf.path: leaf for leaf in built.leaves()}
+    leaves = {p: leaf for p, leaf in every.items() if not leaf.part.spec.stretches}
     if not leaves or built.spec.ground is None:
         return []
-    all_links, rigid_groups = nested_links(built, lambda design, name: design.spec.components[name].flexible)
+    found, rigid_groups = nested_links(built, lambda design, name: design.spec.components[name].flexible)
+    stretched = _stretched(every, found)
+    all_links = [k for k in found if k.a.instance in leaves and k.b.instance in leaves]
     clusters = Clusters(leaves)
     for group in rigid_groups:
-        clusters.union_all(group)
+        clusters.union_all([p for p in group if p in leaves])
     for link in all_links:
         if link.rigid:
             clusters.union(link.a.instance, link.b.instance)
@@ -242,7 +287,7 @@ def plans(built: BuiltDesign) -> list[Plan | Result]:
         elif ranges(k.source):
             out.append(_held(k, "held by rigid mates or fasteners as well"))
     world = World(leaves, clusters, ground, moving_links, relations, laws, touching, allowed(all_links),
-                  built.tolerances, _tracked(built))  # fmt: skip
+                  built.tolerances, _tracked(built), stretched)  # fmt: skip
     inputs, held, driven, still = _inputs(world)
     out += [_held(m.link, "held by the rest of its mechanism") for m in still]
     for m in inputs:

@@ -44,6 +44,12 @@ class PartSpec(Model):
     backend: str | None = Field(default=None, description="Overrides the design's backend")
     catalog: Catalog | None = None
     connectors: dict[str, ConnectorSpec] = Field(default_factory=dict)
+    stretches: tuple[str, str] | None = Field(
+        default=None,
+        description="A part that deforms between two of its connectors (a spring, seat first): modelled at its length "
+        "as assembled, each end mated to what it sits on; motion moves it with neither end's part, leaves it out of "
+        "collisions (a `span` requirement keeps its length), and the panel stretches it between its ends",
+    )
 
     @field_validator("file")
     @classmethod

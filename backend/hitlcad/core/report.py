@@ -263,6 +263,15 @@ class MotionPose(Model):
     frames: list[list[float]]
 
 
+class MotionStretch(Model):
+    """A part that deforms between two ends (a spring) through a range: its transform from as assembled at each of
+    `values`, 3 × 4 by rows, carried with its seat and scaled along the line between its ends."""
+
+    instances: list[str]
+    values: list[float]
+    frames: list[list[float]]
+
+
 class MotionRange(Model):
     """A mate's range of motion, for the panel to move what it moves through: about fixed axes (`drives`), or a
     traced motion's positions (`values`, `poses`)."""
@@ -285,6 +294,7 @@ class MotionRange(Model):
         default_factory=list, description="A traced motion's: what moves, at those positions"
     )
     key: str = Field(default="", description="A traced motion's sweep: what a human's watch of it is of")
+    stretches: list[MotionStretch] = Field(default_factory=list, description="What deforms as it moves (springs)")
 
 
 class InterfaceValue(Model):

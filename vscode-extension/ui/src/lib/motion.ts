@@ -31,17 +31,19 @@ export function extent(range: MotionRange): [number, number] {
 }
 
 /** What moves, and where to, with the mate at `value`: each drive about or along its own axis by its law, or a traced motion at
- * the solved position nearest `value` (only what was checked is shown). */
+ * the solved position nearest `value` (only what was checked is shown); and what deforms (a spring), stretched between its
+ * ends at the position nearest `value`. */
 export function movesAt(range: MotionRange, value: number): CadMove[] {
+  const stretched = range.stretches.map((s) => ({ instances: s.instances, matrix: s.frames[nearest(s.values, value)] ?? STILL }));
   if (range.poses.length > 0) {
     const i = nearest(range.values, value);
-    return range.poses.map((p) => ({ instances: p.instances, matrix: p.frames[i] ?? STILL }));
+    return [...range.poses.map((p) => ({ instances: p.instances, matrix: p.frames[i] ?? STILL })), ...stretched];
   }
   const delta = value - range.current;
-  return range.drives.map((d) => {
+  return [...range.drives.map((d) => {
     const moved = along(d.law, delta);
     return { instances: d.instances, matrix: d.kind === "angle" ? turn(d.origin, d.axis, moved) : slide(d.axis, moved) };
-  });
+  }), ...stretched];
 }
 
 /** A drive's law at `x`: straight between its points, held at its ends beyond them. */

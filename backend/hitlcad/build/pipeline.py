@@ -444,7 +444,8 @@ class BuildPipeline:
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
         whole = BuildBodies(built, self.analysis_settings, self.results_cache).whole()
-        return {"motions": motion.reported(built), "parts": parts, "instances": instances,
+        return {"motions": motion.reported(built, self.analysis_settings, self.results_cache), "parts": parts,
+                "instances": instances,
                 "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
     async def _outputs(
