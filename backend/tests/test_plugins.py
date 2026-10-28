@@ -55,9 +55,8 @@ def test_hitlcad_s_own_plugins_and_an_installed_one_load_alike() -> None:
     assert '"process": "laser_cut"' in describe.guide()["processes"]
     assert "- `manufacturing.laser_flat`:" in describe.playbook()
     skill = render([])["hitlcad"]
-    assert (
-        skill["reference/lasercut.md"].startswith("# Laser cutting") and "(reference/lasercut.md)" in skill["SKILL.md"]
-    )
+    assert skill["reference/lasercut.md"].startswith("# Laser cutting")
+    assert "[lasercut.md](lasercut.md)" in skill["reference/design-json.md"]  # listed beside it, as design.json's
 
 
 def test_a_design_names_the_plugins_it_needs(tmp_path: Path) -> None:

@@ -114,7 +114,7 @@ class Spec:
 
     @hookspec
     def hitlcad_solvers(self) -> dict[str, Solver]:
-        """Loop solvers by name: what moves a closed loop of mates for motion analysis (`Settings.solver`)."""
+        """Block solvers by name: what settles the blocks of a motion for motion analysis (`Settings.solver`)."""
 
     @hookspec
     def hitlcad_analyses(self) -> list[Analysis]:
@@ -284,7 +284,7 @@ class Registry:
 
     @cached_property
     def solvers(self) -> dict[str, Solver]:
-        return dict(item for _, item in self._named("hitlcad_solvers", lambda s: s[0], "loop solver"))
+        return dict(item for _, item in self._named("hitlcad_solvers", lambda s: s[0], "block solver"))
 
     @cached_property
     def analyses(self) -> list[Analysis]:

@@ -377,12 +377,12 @@ INTERFERENCE_EXPECTED = define(
 INTERFERENCE_CLEAR = define(code="interference.clear", owner="design", title="No unexpected overlaps")
 MOTION_HELD = define(code="motion.held", owner="design", title="A moving mate held still by rigid ones")
 MOTION_LOOP = define(
-    code="motion.loop", owner="design", title="A mate in a closed loop the loop solver could not move",
-    hint="The message says why: no loop solver, one that cannot move this loop, or a loop that does not move from "
-    "where it sits; nothing to fix unless the loop is a mistake.",
+    code="motion.loop", owner="design", title="A motion its solver could not trace",
+    hint="The message says why: no solver, one that cannot settle a block of it, or a motion that does not move from "
+    "where it sits; nothing to fix unless the mechanism is a mistake.",
 )  # fmt: skip
 MOTION_LOCKED = define(
-    code="motion.locked", owner="design", title="Motion that runs a mate past its limits, or a loop that locks within them",
+    code="motion.locked", owner="design", title="Motion that runs a mate past its limits, or that locks within them",
     hint="Change the limits to where the motion goes (the message gives them), or what drives it, so that they agree.",
 )  # fmt: skip
 MOTION_PARTED = define(
@@ -394,7 +394,7 @@ MOTION_DRIVEN = define(
     code="motion.driven", owner="design", title="A mate another motion drives, checked along that motion's sweep",
 )  # fmt: skip
 MOTION_SAMPLED = define(
-    code="motion.sampled", owner="design", title="A loop's motion, clear at each position solved but not between",
+    code="motion.sampled", owner="design", title="A traced motion, clear at each position solved but not between",
     hint="Ask the human to watch it move in the panel's motion control; watched, it passes.",
 )  # fmt: skip
 MOTION_COLLISION = define(
@@ -407,7 +407,7 @@ MOTION_PARTIAL = define(
     hint="Give the parts the clearance the message names, or fix what kept them from being measured.",
 )  # fmt: skip
 MOTION_WATCHED = define(
-    code="motion.watched", owner="design", title="A loop's motion, clear at each position solved and watched by the human",
+    code="motion.watched", owner="design", title="A traced motion, clear at each position solved and watched by the human",
 )  # fmt: skip
 MOTION_CLEAR = define(code="motion.clear", owner="design", title="Moves through its range without collision")
 REQUIREMENT_UNCHECKED = define(

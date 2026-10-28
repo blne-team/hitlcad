@@ -59,7 +59,7 @@ def signed_angle_deg(u: Any, v: Any, about: Any) -> float:
 # --------------------------------------------------------------------------- measures a solver compiles
 #
 # What a relation's coordinates are written with (`heading`, `coordinate`, `wrapped`): each takes frames, points and directions as numbers or as CasADi
-# symbols alike, so a loop solver builds them into its compiled graph, and a check measures them on numbers.
+# symbols alike, so a block solver builds them into its compiled graph, and a check measures them on numbers.
 
 
 def _symbolic(*values: Any) -> bool:

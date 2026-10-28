@@ -43,8 +43,8 @@ class AnalysisSettings:
     overlap_mm3: float = field(metadata={"doc": "Bodies sharing less than this touch; they do not overlap"})
     mesh_tolerance_mm: float = field(metadata={"doc": "Chordal deviation of the meshes measured"})
     wall_samples: int = field(metadata={"doc": "Surface points probed for wall thickness"})
-    solver: str = field(default="", metadata={"doc": "The loop solver's name (`Settings.solver`)"})
-    loop_solver: Solver | None = field(default=None, metadata={"doc": "That solver, None when no plugin gives it"})
+    solver: str = field(default="", metadata={"doc": "The block solver's name (`Settings.solver`)"})
+    motion_solver: Solver | None = field(default=None, metadata={"doc": "That solver, None when no plugin gives it"})
 
 
 @dataclass
@@ -119,6 +119,24 @@ class PartGeometry:
         return self._not_round[key]
 
     @cached_property
+    def _turned(self) -> dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider]]:
+        return {}
+
+    def turned(self, origin: np.ndarray, direction: np.ndarray, tolerance: float,
+               position_mm: float) -> tuple[manifold3d.Manifold, Collider]:  # fmt: skip
+        """What its solid less its round part about an axis in its own frame (`not_round`) passes through in a full
+        turn about it, to `position_mm`, and that one's collider: made once for every instance that turns about it."""
+        from hitlcad.analysis.motion.turning import profile, revolve
+
+        origin = origin - np.dot(origin, direction) * direction
+        key = (*np.round(origin, 6).tolist(), *np.round(direction, 6).tolist(), tolerance, position_mm)
+        if key not in self._turned:
+            frame = fr.on_axis(origin, direction)[:3]
+            solid = revolve(profile(self.not_round(origin, direction, tolerance)[0], frame, 0.0), frame, position_mm)
+            self._turned[key] = solid, Collider(solid)
+        return self._turned[key]
+
+    @cached_property
     def digest(self) -> str:
         """The part's mesh by content: what cached results about it depend on."""
         return hashlib.sha256(self.mesh_file.read_bytes()).hexdigest()
@@ -158,11 +176,20 @@ class Leaf:
 
     def not_round(self, axis: Axis, tolerance: float) -> tuple[manifold3d.Manifold, Collider | None]:
         """The leaf less its part round about `axis`, placed, and its collider: its part's (`PartGeometry.not_round`)."""
-        inverse = fr.rigid_inverse(self.transform)
-        origin = inverse[:3, :3] @ axis.origin + inverse[:3, 3]
-        direction = inverse[:3, :3] @ (axis.direction / np.linalg.norm(axis.direction))
-        solid, collider = self.part.not_round(origin, direction, tolerance)
+        solid, collider = self.part.not_round(*self._local(axis), tolerance)
         return solid.transform(self.transform[:3, :]), None if collider is None else collider.at(self.transform)
+
+    def turned(self, axis: Axis, tolerance: float, position_mm: float) -> tuple[manifold3d.Manifold, Collider]:
+        """What `not_round` of the leaf passes through in a full turn about `axis`, placed, and its collider: its
+        part's (`PartGeometry.turned`)."""
+        solid, collider = self.part.turned(*self._local(axis), tolerance, position_mm)
+        return solid.transform(self.transform[:3, :]), collider.at(self.transform)
+
+    def _local(self, axis: Axis) -> tuple[np.ndarray, np.ndarray]:
+        """An axis in its part's frame: a point on it, and its direction."""
+        inverse = fr.rigid_inverse(self.transform)
+        direction = axis.direction / np.linalg.norm(axis.direction)
+        return inverse[:3, :3] @ axis.origin + inverse[:3, 3], inverse[:3, :3] @ direction
 
     @cached_property
     def vertices(self) -> np.ndarray:

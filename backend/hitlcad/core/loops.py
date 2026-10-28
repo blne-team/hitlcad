@@ -1,26 +1,24 @@
-"""Closed loops of motion: what a loop solver is given, what every position it gives must hold, and the protocol a
-solver plugin meets.
+"""Blocks of motion: parts that settle together at each position of an input, what each position must hold, and the
+protocol a solver plugin meets.
 
-A mate in a closed loop of mates, or coupled by a relation to parts that cannot follow it, moves only with the rest
-of its loop. Motion analysis sweeps such a loop by asking the configured solver (`hitlcad_solvers`,
-`Settings.solver`) for its positions along one driving mate, and checks every position here: a solver proposes,
-hitlcad checks. A position is accepted when
+An input's motion moves some parts about fixed axes by laws (explicitly), and settles the rest in blocks, each given
+the poses of what moves before it: a four-bar's coupler and rocker given its crank, a valve train given its lifter.
+Motion analysis steps the input through its range and asks the configured solver (`hitlcad_solvers`,
+`Settings.solver`) to settle each block at each position, and checks every position here: a solver proposes, hitlcad
+checks. A position is accepted when
 
 - each mate holds what its type `holds` of b's frame in a's, as assembled, within the verification tolerances;
 - each relation holds b = `law`(a) along its `coordinates`, from as assembled, turns counted on past a half turn;
-- the driving mate sits where it was asked to;
-- no point has moved more than twice `SAMPLE_MM` since the position before, so the positions show the motion and a
-  jump to the loop's other way of closing is refused.
+- the input's mate, where it is the block's, sits where it was asked to.
 
-A position is the motion of each moving cluster from where it was assembled; the reference (the cluster the loop
-hangs from, ground or the part nearest it) does not move. What a loop holds is one CasADi graph (`LoopProblem.nlp`):
-a solver minimises its residuals with the exact derivatives CasADi takes of it, and every check measures through it.
+A pose is the motion of a cluster from where it was assembled; a cluster the block neither settles nor is given
+stays where it sits. What a block holds is one CasADi graph (`Block.nlp`): a solver minimises its residuals with the
+exact derivatives CasADi takes of it, and every check measures through it.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Protocol
@@ -34,15 +32,15 @@ from hitlcad.core.structure import Mate, Relation, Tolerances
 if TYPE_CHECKING:
     import casadi as ca
 
-SAMPLE_MM = 0.5  # the furthest any point moves between two positions a solver gives, as it aims
+SAMPLE_MM = 0.5  # the furthest any point moves between two positions, as stepping aims
 _WEAK = 1e-3  # how hard what no mate holds (a shaft's slide in its bore) is kept where it was
 _PARTS = ("origin_xy", "origin_z", "axis", "clocking")
 _RANK = 1e-7  # singular values below this, × the largest, are none
 
 
 @dataclass(frozen=True)
-class LoopMate:
-    """A moving mate of the loop: the clusters and frames of its ends as assembled, b's as the mate compares it
+class BlockMate:
+    """A mate of the block: the clusters and frames of its ends as assembled, b's as the mate compares it
     (`Mate.facing`), and what it holds (its type's, less clocking where the connectors are round about the axis)."""
 
     label: str
@@ -55,8 +53,8 @@ class LoopMate:
 
 
 @dataclass(frozen=True)
-class LoopRelation:
-    """A relation of the loop: its ends' clusters and frames as assembled, its law, the kinds of a's and b's
+class BlockRelation:
+    """A relation of the block: its ends' clusters and frames as assembled, its law, the kinds of a's and b's
     coordinates ("angle" or "travel") and how far from holding it may be (mm)."""
 
     label: str
@@ -72,9 +70,9 @@ class LoopRelation:
 
 @dataclass(frozen=True)
 class Position:
-    """Where a loop is: the driving mate's value, each moving cluster's motion from as assembled, and every
-    coordinate the loop has (each mate's angle and travel, each relation's a and b) as last measured (`raw`) and
-    counted on from as assembled (`total`)."""
+    """Where a block is: the input's value, each settled cluster's motion from as assembled, and every coordinate the
+    block has (each mate's angle and travel, each relation's a and b) as last measured (`raw`) and counted on from as
+    assembled (`total`)."""
 
     value: float
     poses: dict[str, fr.Frame]
@@ -83,21 +81,24 @@ class Position:
 
 
 @dataclass(eq=False)
-class LoopProblem:
-    """A loop to move: its moving clusters, its mates and relations, the mate that drives it and along what, the
-    points that bound each moving cluster (its leaves' box corners, as assembled), and the tolerances."""
+class Block:
+    """Clusters that settle together: their mates and relations (to each other, to what is given, to what stays),
+    the clusters whose poses each position gives (`given`), the input's mate where it is one of them (`driver`) and
+    which of its motions, the points that bound each settled cluster (its leaves' box corners, as assembled), and the
+    tolerances."""
 
     clusters: list[str]
-    mates: list[LoopMate]
-    relations: list[LoopRelation]
-    driver: int
+    given: list[str]
+    mates: list[BlockMate]
+    relations: list[BlockRelation]
+    driver: int | None
     kind: str
     corners: dict[str, np.ndarray]
     tolerances: Tolerances
 
     @cached_property
     def size(self) -> float:
-        """How far the moving clusters reach from their middle (mm): what turns are weighed against."""
+        """How far the settled clusters reach from their middle (mm): what turns are weighed against."""
         points = np.vstack(list(self.corners.values()))
         return max(float(np.linalg.norm(points - points.mean(axis=0), axis=1).max()), 1.0)
 
@@ -117,10 +118,11 @@ class LoopProblem:
 
     @property
     def _driven(self) -> int:
+        assert self.driver is not None
         return 2 * self.driver + (0 if self.kind == "angle" else 1)
 
     def _scale(self, kind: str) -> float:
-        """mm per unit of a coordinate: a degree at the loop's size, or a mm."""
+        """mm per unit of a coordinate: a degree at the block's size, or a mm."""
         return math.radians(self.size) if kind == "angle" else 1.0
 
     # ------------------------------------------------------------------ the graph
@@ -129,52 +131,49 @@ class LoopProblem:
     def _graph(self) -> _Graph:
         import casadi as ca
 
-        n = len(self.clusters)
-        x, around = ca.SX.sym("x", 6 * n), ca.SX.sym("around", 12 * n)
+        n, g = len(self.clusters), len(self.given)
+        x, before = ca.SX.sym("x", 6 * n), ca.SX.sym("before", 12 * n)
+        given0, given = ca.SX.sym("given0", 12 * g), ca.SX.sym("given", 12 * g)
         total0, value = ca.SX.sym("total", len(self._periods)), ca.SX.sym("value")
-        before = _poses(around, n)
-        moved = [
-            *(
-                _stepped(x[6 * i : 6 * i + 6], p, self.centres[c], self.size)
-                for i, (c, p) in enumerate(zip(self.clusters, before[:-1], strict=True))
-            ),
-            before[-1],
-        ]
-        seen0, raw0 = self._measure(before)
-        seen, raw = self._measure(moved)
-        total = [
-            t + fr.wrapped(r - r0) if turn else r
-            for r, r0, t, turn in zip(raw, raw0, ca.vertsplit(total0), self._periods, strict=True)
-        ]
+        settled0 = _poses(before, n)
+        settled = [_stepped(x[6 * i : 6 * i + 6], p, self.centres[c], self.size)
+                   for i, (c, p) in enumerate(zip(self.clusters, settled0, strict=True))]  # fmt: skip
+        seen0, raw0 = self._measure([*settled0, *_poses(given0, g), ca.SX.eye(4)])
+        seen, raw = self._measure([*settled, *_poses(given, g), ca.SX.eye(4)])
+        total = [t + fr.wrapped(r - r0) if turn else r
+                 for r, r0, t, turn in zip(raw, raw0, ca.vertsplit(total0), self._periods, strict=True)]  # fmt: skip
         hard = [row for m, q, q0 in zip(self.mates, seen, self._q0, strict=True) for p in _PARTS if p in m.holds
                 for row in _part(p, q, q0, self.size)]  # fmt: skip
         for j, r in enumerate(self.relations):
             qa, qb = total[2 * len(self.mates) + 2 * j : 2 * len(self.mates) + 2 * j + 2]
             hard.append((qb - r.law.symbolic(qa)) * self._scale(r.kinds[1]))
-        along = _along(self.kind)
+        along = None if self.driver is None else _along(self.kind)
         weak = [_WEAK * row for i, (m, q, q0) in enumerate(zip(self.mates, seen, seen0, strict=True)) for p in _PARTS
                 if p not in m.holds and not (i == self.driver and p == along) for row in _part(p, q, q0, self.size)]  # fmt: skip
-        driven = total[self._driven] * self._scale(self.kind)
-        residual = ca.vertcat(*hard, driven - value * self._scale(self.kind), *weak)
-        held = ca.vertcat(*hard, driven)
-        flat = ca.vertcat(*(ca.reshape(p[:3, :].T, 12, 1) for p in moved[:-1]))
+        driven = [] if self.driver is None else [total[self._driven] * self._scale(self.kind)]
+        target = [d - value * self._scale(self.kind) for d in driven]
+        coordinates = ca.vertcat(*(raw[2 * i + k] * (self._scale("angle") if k == 0 else 1.0)
+                                   for i in range(len(self.mates)) for k in (0, 1)))  # fmt: skip
+        inputs = [x, before, given0, given, total0]
         return _Graph(
-            nlp={"x": x, "p": ca.vertcat(around, total0, value), "f": ca.sumsqr(residual) / 2},
-            moved=ca.Function("moved", [x, around], [flat]),
-            measure=ca.Function("measure", [around], [ca.vertcat(*(ca.reshape(q.T, 12, 1) for q in seen0)), ca.vertcat(*raw0)]),
-            held=ca.Function("held", [x, around, total0], [ca.jacobian(held, x)]),
+            nlp={"x": x, "p": ca.vertcat(before, given0, given, total0, value),
+                 "f": ca.sumsqr(ca.vertcat(*hard, *target, *weak)) / 2},
+            moved=ca.Function("moved", [x, before], [ca.vertcat(*(ca.reshape(p[:3, :].T, 12, 1) for p in settled))]),
+            measure=ca.Function("measure", [before, given0],
+                                [ca.vertcat(*(ca.reshape(q.T, 12, 1) for q in seen0)), ca.vertcat(*raw0)]),
+            held=ca.Function("held", inputs, [ca.jacobian(ca.vertcat(*hard, *driven), x)]),
+            rates=ca.Function("rates", inputs, [ca.jacobian(coordinates, x)]),
         )  # fmt: skip
 
     def _measure(self, poses: list[ca.SX]) -> tuple[list[ca.SX], list[ca.SX]]:
-        """Each mate's b frame seen in its a frame (3 × 4), and every coordinate as measured, at `poses` (the
-        reference's last)."""
+        """Each mate's b frame seen in its a frame (3 × 4), and every coordinate as measured, at `poses` (the settled
+        clusters', the given ones', and last what stays)."""
         import casadi as ca
 
-        index = {c: i for i, c in enumerate(self.clusters)}
-        ref = len(self.clusters)
+        index = {c: i for i, c in enumerate([*self.clusters, *self.given])}
 
         def at(cluster: str, frame: fr.Frame) -> ca.SX:
-            return ca.mtimes(poses[index.get(cluster, ref)], ca.DM(frame))
+            return ca.mtimes(poses[index.get(cluster, len(poses) - 1)], ca.DM(frame))
 
         seen, raw = [], []
         for m in self.mates:
@@ -188,41 +187,38 @@ class LoopProblem:
         return seen, raw
 
     def nlp(self) -> dict[str, ca.SX]:
-        """What a solver minimises (`f`, half the sum of the residuals' squares, mm²) over `x` (each moving
-        cluster's turn about its middle, as Cayley's vector × `size`, then its shift, from the position before)
-        given `p` (`parameters`): what the mates and relations hold, from as assembled; the driver at its value;
-        and, weakly, what nothing holds, where it was."""
+        """What a solver minimises (`f`, half the sum of the residuals' squares, mm²) over `x` (each settled
+        cluster's turn about its middle, as Cayley's vector × `size`, then its shift, from the position before) given
+        `p` (`parameters`): what the mates and relations hold, from as assembled; the input's mate at its value,
+        where it is the block's; and, weakly, what nothing holds, where it was."""
         return self._graph.nlp
 
-    def parameters(self, value: float, before: Position) -> np.ndarray:
-        """`nlp`'s `p` for the driver at `value`, from the position `before`."""
-        return np.concatenate([_flat(before.poses, self.clusters), before.total, [value]])
+    def parameters(self, value: float, before: Position, given0: dict[str, fr.Frame],
+                   given: dict[str, fr.Frame]) -> np.ndarray:  # fmt: skip
+        """`nlp`'s `p` for the input at `value`, from the position `before`, the given clusters where they were
+        (`given0`) and where they are."""
+        return np.concatenate([_flat(before.poses, self.clusters), _flat(given0, self.given),
+                               _flat(given, self.given), before.total, [value]])  # fmt: skip
 
     # ------------------------------------------------------------------ positions
 
     def start(self) -> Position:
-        """Where the loop sits as assembled."""
+        """Where the block sits as assembled."""
         poses = {c: fr.IDENTITY for c in self.clusters}
-        _, raw = self._seen(poses)
-        return Position(raw[self._driven], poses, raw, raw)
+        _, raw = self._seen(poses, dict.fromkeys(self.given, fr.IDENTITY))
+        return Position(raw[self._driven] if self.driver is not None else 0.0, poses, raw, raw)
 
-    def moved(self, x: np.ndarray, around: Position) -> dict[str, fr.Frame]:
-        """The poses `x` (as `nlp`'s) gives from `around`."""
-        flat = np.asarray(self._graph.moved(x, _flat(around.poses, self.clusters))).reshape(-1, 3, 4)
+    def moved(self, x: np.ndarray, before: Position) -> dict[str, fr.Frame]:
+        """The poses `x` (as `nlp`'s) gives from `before`."""
+        flat = np.asarray(self._graph.moved(x, _flat(before.poses, self.clusters))).reshape(-1, 3, 4)
         return {c: np.vstack([f, [0.0, 0.0, 0.0, 1.0]]) for c, f in zip(self.clusters, flat, strict=True)}
 
-    def travel(self, a: dict[str, fr.Frame], b: dict[str, fr.Frame]) -> float:
-        """The furthest any point of a moving cluster moves from poses `a` to poses `b` (mm)."""
-        out = 0.0
-        for c, points in self.corners.items():
-            pa, pb = (points @ p[:3, :3].T + p[:3, 3] for p in (a[c], b[c]))
-            out = max(out, float(np.linalg.norm(pb - pa, axis=1).max()))
-        return out
-
-    def check(self, poses: dict[str, fr.Frame], value: float, before: Position) -> Position | str:
-        """`poses` as the position with the driver at `value` after `before`, or why they are not one."""
+    def check(self, poses: dict[str, fr.Frame], value: float, before: Position,
+              given: dict[str, fr.Frame]) -> Position | str:  # fmt: skip
+        """`poses` as the position with the input at `value` after `before`, the given clusters at `given`, or why
+        they are not one."""
         tol = self.tolerances
-        seen, raw = self._seen(poses)
+        seen, raw = self._seen(poses, given)
         for m, q, q0 in zip(self.mates, seen, self._q0, strict=True):
             for p in sorted(m.holds):
                 off = max(abs(v) for v in _part(p, q, q0, 1.0))
@@ -236,10 +232,8 @@ class LoopProblem:
             off = abs(qb - r.law.at(qa)) * self._scale(r.kinds[1])
             if off > r.tolerance:
                 return f"{r.label} is off by {off:.3f} mm"
-        if abs(total[self._driven] - value) * self._scale(self.kind) > tol.position_mm:
+        if self.driver is not None and abs(total[self._driven] - value) * self._scale(self.kind) > tol.position_mm:
             return f"{self.mates[self.driver].label} is not at {value:g}"
-        if (moved := self.travel(before.poses, poses)) > 2 * SAMPLE_MM:
-            return f"it moved {moved:.2f} mm at once"
         return Position(value, poses, raw, total)
 
     def coordinate(self, position: Position, mate: int, kind: str) -> float:
@@ -248,19 +242,28 @@ class LoopProblem:
 
     # ------------------------------------------------------------------ freedoms
 
-    def freedoms(self) -> tuple[bool, int]:
-        """Whether the driver can move the loop where it sits, and how many more ways it can move with the
-        driver held: what a part can do alone about or along an axis it is mated on (a shaft turning or sliding
-        in its bore) without moving anything else is not one."""
+    def jacobians(self) -> tuple[np.ndarray, np.ndarray]:
+        """Where the block sits as assembled, how what its mates and relations hold (and its driver, last) moves
+        with `x`, and how each mate's angle (× size, mm) and travel do."""
         at = self.start()
-        n = 6 * len(self.clusters)
-        jac = np.asarray(self._graph.held(np.zeros(n), _flat(at.poses, self.clusters), at.total))
-        held, with_driver = _rank(jac[:-1]), _rank(jac)
-        idle = [v for v in self._alone() if np.linalg.norm(jac @ v) <= 1e-6 * np.linalg.norm(v)]
-        return with_driver > held, max(n - with_driver - _rank(np.array(idle)) if idle else n - with_driver, 0)
+        still = _flat(dict.fromkeys(self.given, fr.IDENTITY), self.given)
+        args = (np.zeros(6 * len(self.clusters)), _flat(at.poses, self.clusters), still, still, at.total)
+        return np.asarray(self._graph.held(*args)), np.asarray(self._graph.rates(*args))
 
-    def _alone(self) -> list[np.ndarray]:
-        """A turn about and a slide along each axis a moving cluster is mated on, of that cluster alone (as `x`)."""
+    def freedoms(self) -> tuple[bool, int]:
+        """Whether its driver, where it has one, can move the block where it sits, and how many more ways it can move
+        with the driver and what is given held: what a part can do alone about or along an axis it is mated on (a
+        shaft turning or sliding in its bore) without moving anything else is not one."""
+        jac, _ = self.jacobians()
+        n = 6 * len(self.clusters)
+        held = rank(jac[:-1] if self.driver is not None else jac)
+        with_driver = rank(jac)
+        idle = [v for v in self.alone() if np.linalg.norm(jac @ v) <= 1e-6 * np.linalg.norm(v)]
+        free = n - with_driver - (rank(np.array(idle)) if idle else 0)
+        return self.driver is None or with_driver > held, max(free, 0)
+
+    def alone(self) -> list[np.ndarray]:
+        """A turn about and a slide along each axis a settled cluster is mated on, of that cluster alone (as `x`)."""
         out = []
         for i, c in enumerate(self.clusters):
             for m in self.mates:
@@ -275,9 +278,9 @@ class LoopProblem:
 
     # ------------------------------------------------------------------ measuring
 
-    def _seen(self, poses: dict[str, fr.Frame]) -> tuple[np.ndarray, tuple[float, ...]]:
+    def _seen(self, poses: dict[str, fr.Frame], given: dict[str, fr.Frame]) -> tuple[np.ndarray, tuple[float, ...]]:
         """Each mate's b frame seen in its a frame (3 × 4), and every coordinate as measured."""
-        seen, raw = self._graph.measure(_flat(poses, self.clusters))
+        seen, raw = self._graph.measure(_flat(poses, self.clusters), _flat(given, self.given))
         return np.asarray(seen).reshape(-1, 3, 4), tuple(np.asarray(raw).ravel().tolist())
 
     def _count(self, raw: tuple[float, ...], before: Position) -> tuple[float, ...]:
@@ -289,24 +292,24 @@ class LoopProblem:
 @dataclass(frozen=True)
 class _Graph:
     nlp: dict[str, Any]
-    moved: Any  # (x, around) -> the moved poses, 3 × 4 by rows each
-    measure: Any  # (poses) -> each mate's b seen in a (3 × 4 by rows each), every coordinate
-    held: Any  # (x, around, total) -> the Jacobian of what the mates and relations hold, and the driver
+    moved: Any  # (x, before) -> the settled poses, 3 × 4 by rows each
+    measure: Any  # (settled poses, given poses) -> each mate's b seen in a (3 × 4 by rows each), every coordinate
+    held: Any  # (x, before, given0, given, total) -> the Jacobian of what the mates and relations hold, the driver
+    rates: Any  # (x, before, given0, given, total) -> the Jacobian of each mate's angle (× size, mm) and travel
 
 
 class Solver(Protocol):
-    """A loop solver, contributed through `hitlcad_solvers` by name. It proposes positions; `LoopProblem.check`
-    decides which are."""
+    """A block solver, contributed through `hitlcad_solvers` by name. It proposes where a block settles; `Block.check`
+    decides whether it has."""
 
     name: str
     version: str  # part of what a sweep is cached by, and of what a human's watch of it is for
 
-    def supports(self, problem: LoopProblem) -> str:
-        """Why it cannot move this loop (a relation type it does not know), or ''."""
+    def supports(self, block: Block) -> str:
+        """Why it cannot settle this block (a relation type it does not know), or ''."""
 
-    def trace(self, problem: LoopProblem, start: Position, end: float, budget: int) -> Iterator[Position]:
-        """Positions from `start` towards the driver at `end`, each `problem.check`'s, until it gets there or can
-        go no further, at most `budget` of them."""
+    def settle(self, block: Block, guess: np.ndarray, parameters: np.ndarray) -> np.ndarray | None:
+        """`x` (as `block.nlp()`'s) where the block settles given `parameters`, from `guess`; None where it does not."""
 
 
 def _along(kind: str) -> str:
@@ -328,11 +331,11 @@ def _part(part: str, q: Any, ref: Any, size: float) -> list[Any]:
 
 
 def _poses(flat: ca.SX, n: int) -> list[ca.SX]:
-    """`n` poses, 3 × 4 by rows each, as 4 × 4, and the reference's (still) after them."""
+    """`n` poses, 3 × 4 by rows each, as 4 × 4."""
     import casadi as ca
 
     last = ca.DM([[0.0, 0.0, 0.0, 1.0]])
-    return [*(ca.vertcat(ca.reshape(flat[12 * i : 12 * i + 12], 4, 3).T, last) for i in range(n)), ca.SX.eye(4)]
+    return [ca.vertcat(ca.reshape(flat[12 * i : 12 * i + 12], 4, 3).T, last) for i in range(n)]
 
 
 def _stepped(x: ca.SX, pose: ca.SX, centre: np.ndarray, size: float) -> ca.SX:
@@ -350,10 +353,11 @@ def _stepped(x: ca.SX, pose: ca.SX, centre: np.ndarray, size: float) -> ca.SX:
 
 def _flat(poses: dict[str, fr.Frame], clusters: list[str]) -> np.ndarray:
     """Poses as `nlp` takes them: each 3 × 4 by rows."""
-    return np.concatenate([poses[c][:3].reshape(-1) for c in clusters])
+    return np.concatenate([poses[c][:3].reshape(-1) for c in clusters]) if clusters else np.zeros(0)
 
 
-def _rank(m: np.ndarray) -> int:
+def rank(m: np.ndarray) -> int:
+    """How many independent rows `m` has, to `_RANK` of its largest singular value."""
     if m.size == 0:
         return 0
     s = np.linalg.svd(m, compute_uv=False)

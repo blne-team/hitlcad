@@ -96,7 +96,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
 
 
 @pytest.mark.geometry
-async def test_a_loop_the_human_watched_passes_until_it_changes(core: HitlCad, tmp_path: Path) -> None:
+async def test_a_traced_motion_the_human_watched_passes_until_it_changes(core: HitlCad, tmp_path: Path) -> None:
     state, _ = core.designs.open(copy_design("linkage", tmp_path / "linkage"))
     rev = await core.builds.build(state.id)
 
@@ -114,7 +114,7 @@ async def test_a_loop_the_human_watched_passes_until_it_changes(core: HitlCad, t
         state.id, {"coupler_l": 41}, {"coupler_l": 40}
     )  # another loop: watched no more
     assert crank(longer).code == "motion.sampled"
-    with pytest.raises(HitlcadError, match="has no loop motion"):
+    with pytest.raises(HitlcadError, match="has no traced motion"):
         await core.builds.watch_motion(state.id, longer.id, loop.key)
     again = await core.builds.watch_motion(state.id, rev.id, loop.key, watched=False)
     assert again.summary == "Unwatched base.a ↔ crank.a" and core.designs.get(state.id).watched == []

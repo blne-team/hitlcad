@@ -24,11 +24,11 @@ a code, whose it is to fix and the usual fix, which the build summary, the tools
 and which the skills' playbook lists. A failed build is a revision whose results say why, at the
 file and line.
 
-A closed loop of mates (a four-bar, a planetary) moves with the rest of its loop: a loop solver
-plugin gives its positions, hitlcad checks each, and the human watches the motion in the panel to
-pass what is clear at every position but unchecked between them. Motion follows a mechanism's inputs,
-and relations couple motions by laws: a cam lifts its follower by a table the design's code computes,
-and the two must stay in contact.
+Motion follows a mechanism's inputs: each input's sweep places what it moves stage by stage, about
+fixed axes by laws (swept exactly), or in blocks a solver plugin settles at each position (a four-bar's
+coupler and rocker, a planetary's planets), which hitlcad checks and the human watches in the panel to
+pass what is clear at every position but unchecked between them. Relations couple motions by laws: a
+cam lifts its follower by a table the design's code computes, and the two must stay in contact.
 
 A picture of what a design should look like (a photo, a render, a sketch, saved under `references/`) is a
 `silhouette` requirement whose text is what the human says about it: every build cuts its subject out,
@@ -50,28 +50,23 @@ supersedes the build running for them: it stops at its next stage, and what its 
 built reaches the part cache for the newer one. hitlcad tessellates parts itself, every face and edge in
 the order picks number them, so a face the mesher cannot mesh no longer shifts the faces after it.
 Motion measures gaps with FCL (python-fcl) on a tree of each part's triangles built once for all its instances, a turning
-solid's round part is found from its triangles' distinct rings, a loop is one compiled CasADi graph
-solved with exact derivatives, and a loop's pair already within a step of contact, with no clearance asked
+solid's round part is found from its triangles' distinct rings, a block is one compiled CasADi graph
+solved with exact derivatives, and a traced sweep's pair already within a step of contact, with no clearance asked
 of it (gears in mesh), is only tested for meeting: the gearbox's motion analysis takes 5 s, from 73 s.
 The panel draws a build as soon as its parts are placed, before anything is checked, and says which
 analysis is running; its results, picks and motion come with its revision.
 
 ## Next: motion that scales
 
-Motion follows a mechanism's inputs: a mate an input already moves is driven, not swept again, and a
-relation couples two motions by a law (gears at a ratio, a cam by its lift table, its follower kept in
-contact). A loop is one CasADi graph, solved by CasADi's SQP method with exact derivatives. The V8
-engine's motion takes 15 s of a 36 s build: 6 s solving its 17 loops, 7.5 s checking them for collisions.
+Motion follows a mechanism's inputs, placing what each moves stage by stage: about fixed axes by laws
+where it can, else in small blocks settled in order, each a CasADi graph solved by CasADi's SQP method
+with exact derivatives. Relations couple motions by laws (gears at a ratio, a cam by its lift table, its
+follower kept in contact).
 
-- **Loops solved in stages.** A loop is found as a block of the undirected graph of mates and
-  relations, so a cam's follower joins its valve train, the camshaft, the crankshaft and every piston
-  into one block. Solved along the drive instead (the crankshaft, each piston's loop, the camshaft by
-  its gear, each lifter by its cam, each valve train's loop, each valve by its rocker), every loop
-  stays small, and one input moves the whole engine.
-- **Steps predicted.** The solver starts each step from the last one's motion; the parts' velocities
-  at each position give a better start, and fewer iterations.
+- **Steps predicted.** Each block starts a step from its last step's motion; the parts' velocities at
+  each position give a better start, and fewer iterations.
 - **The V8 engine on the new motion.** Its valve train declared as cams (lobe to lifter, rocker to
-  valve), its springs as `span` requirements.
+  valve) and its springs as `span` requirements, so one input, the crankshaft, moves the whole engine.
 
 Done when the V8 engine's whole cycle is one input's sweep, every valve lifting by its cam, in under
 5 s of motion analysis.
@@ -181,20 +176,21 @@ that changed for small models.
 
 **Motion**
 
-- **Speeds and loads.** The loop solver keeps each part's velocity per unit of the driver at every
-  position (exact sweeps have their rates). With the parts' masses, that gives requirement checks:
+- **Speeds and loads.** Each part's velocity per unit of the input at every position: an exact
+  sweep's from its laws' slopes, a traced one's from its positions. With the parts' masses, that gives requirement checks:
   each part's speed at a driver speed, and the torque or force the driver needs against gravity and
   inertia over the range ("the motor's rated torque covers the worst torque, ×2"). Joint forces and
   friction only as labelled estimates: an overconstrained mechanism's joint forces are indeterminate
   without its compliance, and friction coefficients are unknown. Simulating how a mechanism moves
   under forces is left to the URDF and SDF exports and the tools that read them.
-- **Gear-only loops, exactly.** A loop closed only by gears on parallel axes (a planetary) moves each
-  part by turns at fixed rates, so it could keep the exact sweep's guarantee, needing no watch.
+- **Gear-only blocks, exactly.** A block closed only by gears on parallel axes (a planetary's carrier
+  and planets) moves each part by turns at fixed rates, so it could be placed by laws and keep the exact
+  sweep's guarantee, needing no watch.
 
 **Open questions**
 
-- **Proving what sampling leaves open.** A loop is checked at the positions solved. An interval or
-  SMT solver (dReal, Z3) could prove small claims about the loop itself: that it locks where it
+- **Proving what sampling leaves open.** A traced sweep is checked at the positions solved. An interval
+  or SMT solver (dReal, Z3) could prove small claims about a block itself: that it locks where it
   says, that only one branch of its closing lies between two positions, how many ways it can move.
   Collisions between positions stay the human's to watch.
 - **Change points.** Where two branches of a linkage's closing meet (a parallelogram folding over),

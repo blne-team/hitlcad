@@ -1,10 +1,10 @@
 import type { BuildReport, Revision } from "../api/types";
 import type { MotionAt } from "./designUi";
 
-/** A range of motion as the build swept it: about fixed axes (`drives`), or a loop's solved positions (`poses`). */
+/** A range of motion as the build swept it: about fixed axes (`drives`), or a traced motion's solved positions (`poses`). */
 export type MotionRange = BuildReport["motions"][number];
 
-/** A rigid motion from as built, 3 × 4 by rows, as a report gives a loop's poses. */
+/** A rigid motion from as built, 3 × 4 by rows, as a report gives a traced motion's poses. */
 export type Rigid = number[];
 
 /** Instances moved together by one rigid motion. */
@@ -30,7 +30,7 @@ export function extent(range: MotionRange): [number, number] {
   return range.continuous && range.poses.length === 0 ? [range.current, range.current + 360] : [range.start, range.end];
 }
 
-/** What moves, and where to, with the mate at `value`: each drive about or along its own axis by its law, or a loop at
+/** What moves, and where to, with the mate at `value`: each drive about or along its own axis by its law, or a traced motion at
  * the solved position nearest `value` (only what was checked is shown). */
 export function movesAt(range: MotionRange, value: number): CadMove[] {
   if (range.poses.length > 0) {

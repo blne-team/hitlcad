@@ -2031,7 +2031,7 @@ export interface components {
         };
         /**
          * MotionPose
-         * @description Instances that move together through a loop's positions: their motion from as assembled at each, 3 × 4 by
+         * @description Instances that move together through a traced motion's positions: their motion from as assembled at each, 3 × 4 by
          *     rows.
          */
         MotionPose: {
@@ -2043,7 +2043,7 @@ export interface components {
         /**
          * MotionRange
          * @description A mate's range of motion, for the panel to move what it moves through: about fixed axes (`drives`), or a
-         *     loop's solved positions (`values`, `poses`).
+         *     traced motion's positions (`values`, `poses`).
          */
         MotionRange: {
             /** Mate */
@@ -2076,17 +2076,17 @@ export interface components {
             drives: components["schemas"]["MotionDrive"][];
             /**
              * Values
-             * @description A loop's: the driving mate at each solved position shown, ascending
+             * @description A traced motion's: the input at each position shown, ascending
              */
             values: number[];
             /**
              * Poses
-             * @description A loop's: what moves, at those positions
+             * @description A traced motion's: what moves, at those positions
              */
             poses: components["schemas"]["MotionPose"][];
             /**
              * Key
-             * @description A loop's sweep: what a human's watch of it is of
+             * @description A traced motion's sweep: what a human's watch of it is of
              * @default
              */
             key: string;
@@ -3301,7 +3301,7 @@ export interface components {
         };
         /**
          * MotionsWatched
-         * @description The loop motions the human has watched move, all of them.
+         * @description The traced motions the human has watched move, all of them.
          */
         MotionsWatched: {
             /**

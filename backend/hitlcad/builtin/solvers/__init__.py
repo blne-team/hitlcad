@@ -1,4 +1,4 @@
-"""Loop solvers: hitlcad's own, CasADi's SQP method on the problem's compiled graph."""
+"""Block solvers: hitlcad's own, CasADi's SQP method on the block's compiled graph."""
 
 from __future__ import annotations
 

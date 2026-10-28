@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     verify_position_mm: float = Field(default=0.01, gt=0)
     verify_angle_deg: float = Field(default=0.05, gt=0)
     verify_motion_steps: int = Field(default=2000, ge=10)
-    solver: str = Field(default="sqp", description="The loop solver (`hitlcad_solvers`) motion moves closed "
-                        "loops of mates with; empty: closed loops are not swept, only checked as assembled")  # fmt: skip
+    solver: str = Field(default="sqp", description="The block solver (`hitlcad_solvers`) motion settles what "
+                        "an input moves in blocks with; empty: such motion is not swept, only checked as assembled")  # fmt: skip
     overlap_mm3: float = Field(
         default=1e-3, gt=0, description="Bodies sharing less than this touch; they do not overlap"
     )

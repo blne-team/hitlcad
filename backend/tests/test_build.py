@@ -487,14 +487,15 @@ async def test_the_gearbox_finds_its_one_real_fit_problem(core: HitlCad, tmp_pat
     assert "closed mesh" in [r.detail for r in results(report, "part") if r.subject == "bearing"]
     (sun,) = [r for r in results(report, "connector") if r.subject == "sun.teeth"]
     assert sun.status == "pass" and sun.detail == "external gear m1.25, 18 teeth, 10 mm wide: tip Ø25.000"
-    # A planetary is a closed loop: solved, clear at every position, and the human's to watch between them
+    # A planetary settles its carrier and planets in a block: traced, clear at every position, the human's to watch
     motion = [r for r in results(report, "motion") if r.code != "motion.held"]
-    assert {r.code for r in motion} == {"motion.sampled"}, [r.detail for r in motion]
-    (rotor,) = [r for r in motion if r.subject == "motor.spindle+rotor.axis"]
+    (rotor,) = [r for r in motion if r.code == "motion.sampled"]
+    assert rotor.subject == "motor.spindle+rotor.axis", [r.detail for r in motion]
     assert rotor.detail.startswith("motor.spindle ↔ rotor.axis moves a full turn: clear at ")
     assert "more way" not in rotor.detail  # the sun and planets sliding on their shafts move nothing else
+    assert {r.code for r in motion if r is not rotor} == {"motion.driven"}
     (carrier,) = [r for r in motion if r.subject == "housing.axis+carrier.axis"]
-    assert "moves -45.0 … 45.0° with its loop" in carrier.detail  # Willis: 18 / (18 + 54) of the sun's turn
+    assert "moves -45.0 … 45.0°, driven by motor.spindle ↔ rotor.axis" in carrier.detail  # Willis: 18 / (18 + 54)
     (loop,) = report.motions
     assert loop.continuous and len(loop.values) == len(loop.poses[0].frames) and loop.key
     (stack,) = [r for r in results(report, "requirement") if "axial gap" in r.subject]
@@ -548,10 +549,9 @@ async def test_a_four_bar_moves_with_its_loop_and_says_what_it_checked(core: Hit
     crank, rocker = motion["base.a+crank.a"], motion["base.d+rocker.d"]
     assert (crank.code, crank.status) == ("motion.sampled", "unverified")
     assert crank.detail.startswith("base.a ↔ crank.a moves a full turn: clear at ")
-    assert "with its loop, driven by base.a ↔ crank.a" in rocker.detail
+    assert rocker.code == "motion.driven" and ", driven by base.a ↔ crank.a" in rocker.detail
     lo, hi = map(float, re.search(r"moves (-?[\d.]+) … (-?[\d.]+)°", rocker.detail).groups())
     assert hi - lo == pytest.approx(64.0, abs=0.15)  # a crank-rocker 15/40/30/40 swings its rocker 64.0°
-    assert len({r.cause for r in motion.values()}) == 1  # one loop, one problem
     (loop,) = report.motions
     assert loop.continuous and len(loop.poses) == 3 and loop.key
     edit_json(folder / "design.json", lambda d: d["parameters"][8].update(value=3))  # a post in the rocker's way
@@ -567,7 +567,7 @@ async def test_a_four_bar_moves_with_its_loop_and_says_what_it_checked(core: Hit
     edit_json(folder / "design.json", locks)
     locked = await build(core, folder, tmp_path / "c")
     (crank,) = [r for r in results(locked, "motion") if r.subject == "base.a+crank.a"]
-    assert crank.code == "motion.locked" and "the loop goes no further than 124." in crank.detail, crank.detail
+    assert crank.code == "motion.locked" and "it goes no further than 124." in crank.detail, crank.detail
     assert "limits.angle [0, 180] run past it; make them [0, 124." in crank.detail
     assert 124.2 <= crank.values["angle"] <= 124.8  # to within what the joints' position tolerance lets it stretch
 

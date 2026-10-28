@@ -1,20 +1,15 @@
-"""hitlcad's loop solver: each step solved by CasADi's SQP method (its QP by qrqp) on the problem's compiled graph,
-with the exact derivatives CasADi takes of it, started from the last step's motion scaled to this one; a step the
-problem does not take is halved, and where halving gets nowhere the loop goes no further (it locks, or the solver
-loses it)."""
+"""hitlcad's block solver: CasADi's SQP method (its QP by qrqp) on the block's compiled graph, with the exact
+derivatives CasADi takes of it."""
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterator
 from typing import Any
 from weakref import WeakKeyDictionary
 
 import numpy as np
 
-from hitlcad.core.loops import SAMPLE_MM, LoopProblem, Position
+from hitlcad.core.loops import Block
 
-_FINEST = 1e-3  # of a first step: the smallest step tried before giving up
 _OPTIONS = {
     "qpsol": "qrqp",
     "qpsol_options": {"print_iter": False, "print_header": False, "print_info": False, "error_on_fail": False},
@@ -25,45 +20,19 @@ _OPTIONS = {
 
 class Sqp:
     name = "sqp"
-    version = "1"
+    version = "2"
 
     def __init__(self) -> None:
-        self._solvers: WeakKeyDictionary[LoopProblem, Any] = WeakKeyDictionary()
+        self._solvers: WeakKeyDictionary[Block, Any] = WeakKeyDictionary()
 
-    def supports(self, problem: LoopProblem) -> str:
+    def supports(self, block: Block) -> str:
         return ""
 
-    def trace(self, problem: LoopProblem, start: Position, end: float, budget: int) -> Iterator[Position]:
-        solve = self._solver(problem)
-        sign = math.copysign(1.0, end - start.value)
-        first = SAMPLE_MM if problem.kind == "travel" else math.degrees(SAMPLE_MM / problem.size)
-        at, step, rate = start, first, np.zeros(6 * len(problem.clusters))
-        for _ in range(budget):
-            left = abs(end - at.value)
-            if left <= 1e-9:
-                return
-            while True:
-                h = min(step, left)
-                value = at.value + sign * h
-                x = np.asarray(solve(x0=rate * h, p=problem.parameters(value, at))["x"]).ravel()
-                found = (
-                    problem.check(problem.moved(x, at), value, at) if solve.stats()["success"] else "it did not settle"
-                )
-                if isinstance(found, Position):
-                    break
-                step = h / 2
-                if step < first * _FINEST:
-                    return
-            moved = problem.travel(at.poses, found.poses)
-            step = min(max(h * SAMPLE_MM / max(moved, 1e-9), h / 2), 2 * h)
-            rate = x / h
-            at = found
-            yield found
-
-    def _solver(self, problem: LoopProblem) -> Any:
-        """The problem's SQP solver, made once."""
+    def settle(self, block: Block, guess: np.ndarray, parameters: np.ndarray) -> np.ndarray | None:
         import casadi as ca
 
-        if problem not in self._solvers:
-            self._solvers[problem] = ca.nlpsol("loop", "sqpmethod", problem.nlp(), _OPTIONS)
-        return self._solvers[problem]
+        if block not in self._solvers:
+            self._solvers[block] = ca.nlpsol("block", "sqpmethod", block.nlp(), _OPTIONS)
+        solve = self._solvers[block]
+        x = np.asarray(solve(x0=guess, p=parameters)["x"]).ravel()
+        return x if solve.stats()["success"] else None

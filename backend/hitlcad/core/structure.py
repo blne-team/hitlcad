@@ -206,7 +206,7 @@ class Mate(Model):
     free_motion: ClassVar[tuple[str, ...]] = ()  # "angle", "travel": what sampling moves along
     #: What of b's frame, seen in a's, stays as assembled while it moves: "origin_xy" and "origin_z" (b's
     #: origin across and along a's Z), "axis" (b's Z) and "clocking" (b's X about it, up to the connectors'
-    #: symmetry). A loop solver holds these; what is not named moves freely.
+    #: symmetry). A block solver holds these; what is not named moves freely.
     holds: ClassVar[frozenset[str]]
 
     @field_validator("a", "b")

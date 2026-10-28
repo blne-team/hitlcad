@@ -156,7 +156,7 @@ class BuildPipeline:
         self.analysis_settings = AnalysisSettings(overlap_mm3=settings.overlap_mm3,
                                                   mesh_tolerance_mm=settings.mesh_tolerance_mm,
                                                   wall_samples=settings.wall_samples, solver=settings.solver,
-                                                  loop_solver=plugins.registry().solvers.get(settings.solver) if settings.solver else None)  # fmt: skip
+                                                  motion_solver=plugins.registry().solvers.get(settings.solver) if settings.solver else None)  # fmt: skip
 
     # ------------------------------------------------------------------ entry points
 

@@ -457,47 +457,53 @@ disagree), sharing volume a collision. Motion is kinematic: forces (whether a fo
 speed, a spring's preload) are not checked; a `span` requirement keeps a spring's ends between its
 lengths wherever motion takes them.
 
-### Loops
+### Stages and blocks
 
-A block of mates and relations that moves only together is a loop: a closed loop of mates (a
-four-bar, a slider-crank), or a relation no turn about a fixed axis can hold (a planet on a moving
-carrier meshing with a fixed ring). A loop is swept once, by a loop solver (`hitlcad_solvers`;
-`HITLCAD_SOLVER`, hitlcad's own `sqp` by default: CasADi's SQP method on the loop's compiled graph; empty, and no loop is swept: each of its
-pairs is unverified, "no loop solver is set", and checked as assembled only), driven by one of its mates: the first
-with `limits`, through them; else the first whose full turn the solver completes; else the first.
-The solver proposes positions; hitlcad checks every one: each mate still holds what its type
-`holds` of b's frame in a's, each relation its coupling from as assembled, within the verification
-tolerances, and no point has moved more than 0.5 mm since the position before, so the positions show
-the motion and a jump to the loop's other way of closing is refused. A part that only slides along
-or turns about its own axis without moving anything else (a gear sliding on its shaft) is held
-where it sits, and not counted as a freedom.
+Every free motion of a moving mate is an input, held, or driven: in order (those with a range, a
+follower's own motion after the rest, then those without a range), a motion the mates, relations and the
+motions before it do not already determine, where they sit as assembled, is an input when it has a range
+and is held where it sits when it has none; one they do determine is driven, by the input that moves it
+most. An input's sweep holds the other inputs and the held motions where they sit, and places what it
+moves stage by stage: about or along a fixed axis by a law of the input (the input's own side, a gear its
+relation drives, a follower its cam lifts), carried where it sits on what an earlier stage places, or
+settled in a block, given the poses of what moves before it (a four-bar's coupler and rocker given its
+crank, a planetary's carrier and planets given its sun, each valve train given its lifter). A sweep whose
+stages all move by laws is exact; one with blocks is traced.
 
-At each position every pair the loop moves is measured as the exact sweep measures it, round parts
-about a mate's axis left out where one of the pair turns against the other on it. A pair with no
-`clearance` asked of it whose gap is less than a position moves it (gears in mesh, a pin in its bore)
-is from then on only tested for meeting (touching, crossing, or one inside the other) at each position, far
-cheaper than measuring how far apart.
-Every position is shown clear, but what happens between two of them is not:
+A traced sweep steps the input from where it sits towards each end, and settles each block at each
+position by the block solver (`hitlcad_solvers`; `HITLCAD_SOLVER`, hitlcad's own `sqp` by default:
+CasADi's SQP method on the block's compiled graph; empty, and nothing with a block is swept: it is
+unverified, "no solver is set", and checked as assembled only). The solver proposes; hitlcad checks every
+position: each mate still holds what its type `holds` of b's frame in a's, each relation its law from as
+assembled, within the verification tolerances, and no point has moved more than 0.5 mm since the position
+before, so the positions show the motion and a jump to a block's other way of closing is refused. A part
+that only slides along or turns about its own axis without moving anything else (a gear sliding on its
+shaft) is held where it sits, and not counted as a freedom.
+
+At each traced position every pair the input moves is measured as the exact sweep measures it, round
+parts about a mate's axis left out where one of the pair turns against the other on it. A pair with no
+`clearance` asked of it whose gap is less than a position moves it (gears in mesh, a pin in its bore) is
+from then on only tested for meeting (touching, crossing, or one inside the other), far cheaper than
+measuring how far apart. Every position is shown clear, but what happens between two of them is not:
 
 - a pair that overlaps at a position is a collision (`motion.collision`), at that position;
-- a loop that goes no further than a mate's `limits` (it locks at a dead point), or takes a mate
-  past its own, fails (`motion.locked`): "the loop goes no further than 124.5° on the way to 180°:
-  limits.angle [0, 180] run past it; make them [0, 124.4]". Without limits a lock is just how far
-  the loop goes;
-- a loop clear at every position is `motion.sampled` (unverified): "base.a ↔ crank.a moves a full
+- an input whose blocks go no further than its `limits` (they lock at a dead point) fails
+  (`motion.locked`): "it goes no further than 124.5° on the way to 180°: limits.angle [0, 180] run past
+  it; make them [0, 124.4]". Without limits a lock is just how far it goes;
+- a traced sweep clear at every position is `motion.sampled` (unverified): "base.a ↔ crank.a moves a full
   turn: clear at 243 solved positions, no point moving more than 0.51 mm between them; between them
   unchecked". The human watches it move in the panel and says so; the build that follows passes it
   (`motion.watched`, "watched in the panel on revision 3"). The watch is of the sweep: any change to
-  the loop, or to what it moves past, leaves it unwatched;
-- a loop the solver cannot move from where it sits, or a solver that cannot take it (no solver
-  installed, a relation type it does not know), is `motion.loop` (unverified), saying why.
+  what it moves, or to what it moves past, leaves it unwatched;
+- an input its blocks hold where it sits is `motion.held`; one the solver cannot move from where it sits,
+  or a solver that cannot settle a block (no solver installed, a relation type it does not know), is
+  `motion.loop` (unverified), saying why.
 
-Every mate of a loop takes its result from the one sweep, with the range it moves through
-("moves 77.4 … 141.4° with its loop, driven by base.a ↔ crank.a"), and shares the loop's cause, so a
-loop is one problem.
+A driven motion with a range takes its result from its input's sweep, with the range it moves through
+("base.d ↔ rocker.d moves 77.4 … 141.4°, driven by base.a ↔ crank.a: checked along its sweep").
 
 The report lists each range and what it moves, each set of instances about or along its own axis by
-samples of its law, or a loop's positions (at most 400 of those solved), which the panel's motion slider
+samples of its law, or a traced sweep's positions (at most 400 of those solved), which the panel's motion slider
 moves. A pin placed with the slider moved records where it was (`Pin.motion`), and selecting the pin
 shows it there again.
 
@@ -513,7 +519,7 @@ shows it there again.
 | Fastener sets | each stack | coaxial, seated, ISO 273 clearance, thread size, engagement, free space past the tip |
 | Coverage | the instances | floating instances |
 | Interference | each pair of placed instances | overlap volume, and where it is (pieces, box, depth), except where a mate (`overlap`, an interference fit) or a fastener set (its thread in `into`) expects it, and within what the mate allows; pairs inside a component are its own build's |
-| Motion | each mate with a range | the first contact each way and the limit to change; a loop's at the positions solved, which the human watches; or why it is not analysed |
+| Motion | each input, and each motion it drives | the first contact each way and the limit to change; a traced sweep's at the positions solved, which the human watches; or why it is not analysed |
 | Manufacturing | each made part, in its own frame | the process's checks: FDM (walls; overhangs, each region bridged between two supports up to `max_bridge_mm` or held at its edge, reported, not failed, with `supports`; bed contact, the base's outline against the part's seen from above and its height against the base's narrowest width, unless `brim`), resin (walls, hollows without a drain at least `min_drain_mm` across), CNC milling (inside corners against the tool, pocket depth against the cutter that finishes each corner, faces with no clear path up), sheet metal (thickness, the inside radius of each bend), injection molding (draft, undercuts along the pull, thick sections against the median wall); each failure lists where |
 | Requirements | as declared | pass, fail or unverified |
 
@@ -548,7 +554,6 @@ about, and the report (`BuildReport.problems`) groups the results that do not pa
 | `overlap:A\|B` | instances A and B share volume where they sit | interference (an overlap nothing expects, or more than a joint allows); motion (a range left unchecked only because of it); a `clearance` requirement between A and B; a mate whose fit measures the shaft larger than its hole; a fastener that bottoms out against B |
 | `contact:M:A\|B` | moving mate M brings A against B | motion (its first contacts, when all are A and B); a `clearance` requirement that comes to no gap through M |
 | `mate:M:A\|B` | mate M's frames on A and B disagree | mates; interference, for an overlap of the one M puts elsewhere (the end further from ground) |
-| `loop:L1,L2,…` | those mates (by their frames) close a loop of motion, swept as one | motion, for each mate in the loop |
 
 Instances are named by their top-level instance, so a component's leaves meet the requirements
 that name the component. An overlap of a fastener in the host of the insert it is threaded into,

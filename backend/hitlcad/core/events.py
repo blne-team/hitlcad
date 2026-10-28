@@ -83,7 +83,7 @@ class PinsChanged(_Event):
 
 
 class MotionsWatched(_Event):
-    """The loop motions the human has watched move, all of them."""
+    """The traced motions the human has watched move, all of them."""
 
     type: Literal["motions_watched"] = "motions_watched"
     watched: list[WatchedMotion]

@@ -91,10 +91,11 @@ verification rules below still apply to changes; already completed setup need no
    for more detail. Request `include_images=True` on `build_design` or `explore_design` when geometry
    diagnosis or appearance review needs the preview, joint sections or requirement figures;
    `explore_design` uses an existing build.
-   A mate in a closed loop (a four-bar, a planetary) is swept at the positions a loop solver finds:
-   `[motion.sampled]` says it is clear at each of them and unchecked between them. Do not call it
-   clear: ask the human to watch it move in the panel's motion control. Once they have, it passes
-   (`[motion.watched]`) until the loop or anything it moves past changes.
+   An input that moves a closed loop of mates (a four-bar's crank, a planetary's sun) is swept at the
+   positions the solver settles the loop in: `[motion.sampled]` says it is clear at each of them and
+   unchecked between them. Do not call it clear: ask the human to watch it move in the panel's motion
+   control. Once they have, it passes (`[motion.watched]`) until what it moves, or anything it moves
+   past, changes. A mate an input moves is `[motion.driven]`, checked along that input's sweep.
    A build that fails (the code raised, design.json does not validate) reports why the same way, at
    the file and line, and a tool error names its code too: an error whose code is `hitlcad.bug` is
    hitlcad's, not the design's; tell the human and do not work around it.

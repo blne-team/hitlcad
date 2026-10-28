@@ -14,7 +14,7 @@ interface Props {
 }
 
 /** Move what a mate moves through the range the build swept for collisions, in the 3D view: what it drives too, by
- * their laws, or the rest of its loop at the positions solved. */
+ * their laws, or what it settles at the positions solved. */
 export function MotionControl({ designId, revision, watched, at, onMove }: Props) {
   const motions = revision.report.motions;
   const [picked, setPicked] = useState(0);
@@ -61,14 +61,14 @@ export function MotionControl({ designId, revision, watched, at, onMove }: Props
       <button type="button" className="link-button" disabled={value === range.current} onClick={() => onMove(null)}>
         As built
       </button>
-      {range.key && <LoopReview designId={designId} revision={revision} range={range} on={watched.find((w) => w.key === range.key)?.revision} />}
+      {range.key && <MotionReview designId={designId} revision={revision} range={range} on={watched.find((w) => w.key === range.key)?.revision} />}
     </section>
   );
 }
 
-/** A loop is checked only at the positions it was solved at: the human watches it move, and says so, to pass it
+/** A traced motion is checked only at the positions it was solved at: the human watches it move, and says so, to pass it
  * (a new build, whose result rests on that); or takes it back. */
-function LoopReview({ designId, revision, range, on }: { designId: string; revision: Revision; range: MotionRange; on: number | undefined }) {
+function MotionReview({ designId, revision, range, on }: { designId: string; revision: Revision; range: MotionRange; on: number | undefined }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const result = revision.report.results.find((r) => r.analysis === "motion" && r.subject === range.mate);

@@ -1,5 +1,5 @@
-"""Loops of motion without a build: what relations count as moved, the loop solver on four-bars whose motion is
-known in closed form, and the gaps motion measures between solids."""
+"""Motion without a build: what relations count as moved, the block solver on four-bars whose motion is known in
+closed form, and the gaps motion measures between solids."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from hitlcad.builtin.gears.relations import GearRelation, RackRelation, ScrewRel
 from hitlcad.builtin.joints.mates import RevoluteMate
 from hitlcad.builtin.solvers.sqp import Sqp
 from hitlcad.core import frames as fr
-from hitlcad.core.loops import LoopMate, LoopProblem
+from hitlcad.core.loops import Block, BlockMate, Position
 from hitlcad.core.structure import Ends, Tolerances
 from hitlcad.geometry.mesh import Collider
 
@@ -62,7 +62,7 @@ def test_a_nut_travels_its_lead_per_turn_of_the_screw() -> None:
     assert (qa, qb) == pytest.approx((90.0, 2.0))
 
 
-def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> LoopProblem:
+def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> Block:
     """A planar four-bar in XY with the crank at 90°, every pivot a revolute about Z: overconstrained, as CAD has it."""
     b = (0.0, crank)
     dx, dy = ground - b[0], -b[1]
@@ -77,40 +77,54 @@ def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> Loop
 
     holds = frozenset({"origin_xy", "origin_z", "axis"})
     pivots = [("A", "g", "c", (0.0, 0.0)), ("B", "c", "k", b), ("C", "k", "r", c), ("D", "g", "r", (ground, 0.0))]
-    mates = [LoopMate(name, RevoluteMate(type="revolute", a=f"{a}.x", b=f"{m}.x"), a, m, at(p), at(p, True), holds)
+    mates = [BlockMate(name, RevoluteMate(type="revolute", a=f"{a}.x", b=f"{m}.x"), a, m, at(p), at(p, True), holds)
              for name, a, m, p in pivots]  # fmt: skip
 
     def bar(u: tuple[float, float], v: tuple[float, float]) -> np.ndarray:
         return np.array([[*u, -1.0], [*u, 1.0], [*v, -1.0], [*v, 1.0]])
 
     corners = {"c": bar((0.0, 0.0), b), "k": bar(b, c), "r": bar(c, (ground, 0.0))}
-    return LoopProblem(["c", "k", "r"], mates, [], 0, "angle", corners, TOL)
+    return Block(["c", "k", "r"], [], mates, [], 0, "angle", corners, TOL)
 
 
-def trace(problem: LoopProblem, end: float) -> list[float]:
-    start = problem.start()
-    return [start.value] + [p.value for p in Sqp().trace(problem, start, end, TOL.motion_steps)]
+def trace(block: Block, end: float) -> list[Position]:
+    """The block's positions from where it sits towards its driver at `end`, a step at most half a degree, halved
+    where it does not settle, until halving gets nowhere."""
+    solver, at, out = Sqp(), block.start(), []
+    sign, step, rate = math.copysign(1.0, end - block.start().value), 0.5, np.zeros(18)
+    while abs(end - at.value) > 1e-9 and step > 1e-4:
+        h = min(step, abs(end - at.value))
+        value = at.value + sign * h
+        x = solver.settle(block, rate * h, block.parameters(value, at, {}, {}))
+        found = None if x is None else block.check(block.moved(x, at), value, at, {})
+        if not isinstance(found, Position):
+            step = h / 2
+            continue
+        assert x is not None
+        at, rate, step = found, x / h, 0.5
+        out.append(found)
+    return out
 
 
 def test_a_crank_rocker_turns_its_crank_a_full_turn_and_swings_its_rocker_as_it_must() -> None:
-    problem = four_bar(15, 40, 30, 40)
-    assert problem.freedoms() == (True, 0)
-    start, swing = problem.start(), []
+    block = four_bar(15, 40, 30, 40)
+    assert block.freedoms() == (True, 0)
+    start, swing = block.start(), []
     for end in (start.value + 180, start.value - 180):
-        positions = list(Sqp().trace(problem, start, end, TOL.motion_steps))
+        positions = trace(block, end)
         assert positions[-1].value == pytest.approx(end)
-        swing += [problem.coordinate(p, 3, "angle") - problem.coordinate(start, 3, "angle") for p in positions]
+        swing += [block.coordinate(p, 3, "angle") - block.coordinate(start, 3, "angle") for p in positions]
     assert (min(swing), max(swing)) == pytest.approx((-18.11, 45.90), abs=0.02)  # in closed form
 
 
 def test_a_linkage_that_cannot_turn_its_crank_locks_where_it_must() -> None:
     """15/20/30/40: the crank locks where B is coupler + rocker from D, 124.23° from the ground line, 34.23° on from
     where it sits; the joints' position tolerance lets it go a little further, never less far."""
-    problem = four_bar(15, 20, 30, 40)
-    start = problem.start()
-    up = trace(problem, start.value + 180)[-1] - start.value
+    block = four_bar(15, 20, 30, 40)
+    start = block.start()
+    up = trace(block, start.value + 180)[-1].value - start.value
     assert 34.23 <= up <= 34.8
-    assert trace(problem, start.value - 180)[-1] == pytest.approx(start.value - 180)  # the other way it turns on
+    assert trace(block, start.value - 180)[-1].value == pytest.approx(start.value - 180)  # the other way it turns on
 
 
 def test_a_solid_wholly_inside_another_is_no_distance_from_it() -> None:

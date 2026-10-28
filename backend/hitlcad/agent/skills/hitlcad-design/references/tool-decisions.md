@@ -60,6 +60,6 @@ Use pins to identify a local change; if they conflict with a required mounting f
 concrete conflict and seek the missing priority while continuing independent work.
 
 After building an addressed pin, call `resolve_pins` with its actual `pin_ids` and a concise `reply`.
-Do not resolve unrelated feedback or claim the human accepted the appearance. A closed-loop motion
+Do not resolve unrelated feedback or claim the human accepted the appearance. A traced motion
 result marked sampled still requires the human's motion review through the existing workflow.
 Framework bugs and missing capabilities are not reasons to bypass its build pipeline.

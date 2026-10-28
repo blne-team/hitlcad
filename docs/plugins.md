@@ -23,8 +23,8 @@ exactly one of, and whatever makes the results of different plugins comparable.
 | `Check.files()`: design files it reads | a requirement check (silhouette: its picture) | the build spec, which checksums them, so a changed one builds again |
 | `Check.figure(build)`: a PNG of what it measured | a requirement check (silhouette: both outlines on a grid) | `build_design`, which shows it to the agent with a failing result |
 | `Process.allowance("hole" or "shaft")` | a process | fits, fastener clearance |
-| `Mate.holds`: what of b's frame stays as assembled in a's | a mate type | a loop's solver and the check of its every position |
-| `Relation.coordinates(fa0, fb0, fa, fb)`: how far each end moved, against what holds the coupling | a relation type | motion: the rate a driven gear turns at, and each position of a loop |
+| `Mate.holds`: what of b's frame stays as assembled in a's | a mate type | the block solver and the check of its every position |
+| `Relation.coordinates(fa0, fb0, fa, fb)`: how far each end moved, against what holds the coupling, written with `frames.heading`, `coordinate` and `wrapped` so a solver compiles it; `Relation.law(ends)`: b's coordinate as a function of a's | a relation type | motion: what a part a relation drives does, and each position of a block |
 
 ### What a plugin contributes
 
@@ -35,13 +35,13 @@ A package may contribute any number of each.
 | --- | --- | --- |
 | `hitlcad_connectors` | `Connector` subclasses with a `kind` literal | `joints`: frame, face, hole, shaft; `gears`: gear |
 | `hitlcad_mates` | `Mate` subclasses with a `type` literal | `joints`: rigid, revolute, slider, cylindrical, planar, ball |
-| `hitlcad_relations` | `Relation` subclasses with a `type` literal | `gears`: gear, rack, screw |
+| `hitlcad_relations` | `Relation` subclasses with a `type` literal | `gears`: gear, rack, screw; `cams`: cam |
 | `hitlcad_checks` | `Check` subclasses with a `kind` literal and a `hint` | `checks`: size, fits within, volume, mass, hole, wall, bodies, clearance, stack; `pictures`: silhouette |
 | `hitlcad_processes` | `Process` subclasses with a `process` literal and `findings` | `processes`: fdm, resin, cnc_milling, sheet_metal, injection_molding |
 | `hitlcad_backends` | factories by name, each taking the settings | `build123d`, `blender` |
 | `hitlcad_catalogs` | `CatalogProvider`s | `catalogs`: bd_warehouse, step |
 | `hitlcad_exporters` | `Exporter`s | `exports`: bom, 3mf; `robot`: urdf, sdf |
-| `hitlcad_solvers` | `Solver`s by name: positions of a loop of mates, which motion checks (`Settings.solver`) | `solvers`: sqp |
+| `hitlcad_solvers` | `Solver`s by name: where a block of an input's motion settles at each position, which motion checks (`Settings.solver`) | `solvers`: sqp |
 | `hitlcad_analyses` | `Analysis` objects, each at a `stage` | none: hitlcad's analyses are core |
 | `hitlcad_materials` | `materials.json` paths | `materials` |
 | `hitlcad_model_packages` | `ModelPackage`s: code part files import, by backend | `catalogs` |
@@ -74,13 +74,14 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 | --- | --- |
 | `joints` | frame, face, hole and shaft connectors; the six mate types |
 | `gears` | the gear connector; gear, rack and screw relations |
+| `cams` | the cam relation: a follower lifted by a table the design's code computes, kept in contact |
 | `checks` | the requirement checks |
 | `processes` | the five processes and their checks |
 | `build123d`, `blender` | a backend, its entry script, its authoring guide |
 | `catalogs` | bd_warehouse and step, and their model package (`hitlcad.builtin.catalogs`) |
 | `exports` | bom, 3mf |
 | `robot` | urdf, sdf |
-| `solvers` | sqp: a loop's positions by CasADi's SQP method on the loop's compiled graph (`LoopProblem.nlp`), with exact derivatives, each step from the last |
+| `solvers` | sqp: where a block settles, by CasADi's SQP method on the block's compiled graph (`Block.nlp`), with exact derivatives |
 | `materials` | the built-in materials |
 | `pictures` | the silhouette check (a model against a reference picture, cut out with OpenCV), and its skill reference |
 

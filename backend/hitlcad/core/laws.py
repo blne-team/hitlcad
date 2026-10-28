@@ -31,7 +31,7 @@ class Law(Protocol):
         """What it is, as plain values: what a sweep that moves by it is cached by."""
 
     def symbolic(self, a: Any) -> Any:
-        """`at` of a CasADi symbol: what a loop solver compiles."""
+        """`at` of a CasADi symbol: what a block solver compiles."""
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,7 @@ from hitlcad.kernel.errors import Location
 from hitlcad.kernel.model import Model
 
 Status = Literal["pass", "fail", "unverified"]
-#: What made a revision: files saved, the panel's parameters, or a review (the human watched a loop's motion)
+#: What made a revision: files saved, the panel's parameters, or a review (the human watched a traced motion)
 Origin = Literal["file", "parameter_edit", "review"]
 Severity = Literal["error", "warning", "info"]
 
@@ -45,7 +45,6 @@ class Cause:
         overlap:A|B      A and B share volume where they sit
         contact:M:A|B    moving mate M brings A against B
         mate:M:A|B       mate M's frames on A and B disagree: one of them is not where M puts it
-        loop:L1,L2,…     those mates (links, by their frames) close a loop of motion, swept as one
     """
 
     @staticmethod
@@ -59,10 +58,6 @@ class Cause:
     @staticmethod
     def mate(mate: str, a: str, b: str) -> str:
         return f"mate:{mate}:{_pair(a, b)}"
-
-    @staticmethod
-    def loop(mates: list[str]) -> str:
-        return "loop:" + ",".join(sorted(set(mates)))
 
 
 def _pair(a: str, b: str) -> str:
@@ -261,7 +256,7 @@ class MotionDrive(Model):
 
 
 class MotionPose(Model):
-    """Instances that move together through a loop's positions: their motion from as assembled at each, 3 × 4 by
+    """Instances that move together through a traced motion's positions: their motion from as assembled at each, 3 × 4 by
     rows."""
 
     instances: list[str]
@@ -270,7 +265,7 @@ class MotionPose(Model):
 
 class MotionRange(Model):
     """A mate's range of motion, for the panel to move what it moves through: about fixed axes (`drives`), or a
-    loop's solved positions (`values`, `poses`)."""
+    traced motion's positions (`values`, `poses`)."""
 
     mate: str
     pair: str = Field(description="Which frames of a pattern, e.g. 'base.hinge ↔ lid.pin'")
@@ -284,10 +279,12 @@ class MotionRange(Model):
         description="What moves: the mate's moving side, then what relations drive from it (a gear on its own axis)",
     )
     values: list[float] = Field(
-        default_factory=list, description="A loop's: the driving mate at each solved position shown, ascending"
+        default_factory=list, description="A traced motion's: the input at each position shown, ascending"
     )
-    poses: list[MotionPose] = Field(default_factory=list, description="A loop's: what moves, at those positions")
-    key: str = Field(default="", description="A loop's sweep: what a human's watch of it is of")
+    poses: list[MotionPose] = Field(
+        default_factory=list, description="A traced motion's: what moves, at those positions"
+    )
+    key: str = Field(default="", description="A traced motion's sweep: what a human's watch of it is of")
 
 
 class InterfaceValue(Model):

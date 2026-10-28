@@ -234,12 +234,12 @@ class BuildService:
         await asyncio.gather(*self._tasks, return_exceptions=True)
 
     async def watch_motion(self, design_id: str, revision: int, key: str, watched: bool = True) -> Revision:
-        """The human watched a loop's motion move in the panel (`MotionRange.key` of `revision`), or takes that back:
+        """The human watched a traced motion move in the panel (`MotionRange.key` of `revision`), or takes that back:
         record it, and rebuild that configuration so that its results say so."""
         rev = self.designs.revision(design_id, revision)
         motion = next((m for m in rev.report.motions if m.key and m.key == key), None)
         if motion is None:
-            raise REQUEST_INVALID(f"revision {revision} has no loop motion {key!r} to watch")
+            raise REQUEST_INVALID(f"revision {revision} has no traced motion {key!r} to watch")
         others = [w for w in self.designs.get(design_id).watched if w.key != key]
         mine = [WatchedMotion(key=key, pair=motion.pair, revision=revision)] if watched else []
         self.designs.emit(design_id, MotionsWatched(watched=others + mine))
