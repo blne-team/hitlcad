@@ -154,6 +154,12 @@ class EditParameters(BaseModel):
                                      "where design.json now has others, the edit is refused (409)")  # fmt: skip
 
 
+class EditOutputs(BaseModel):
+    outputs: list[str] = Field(description="What each build is to write: design.json `outputs`")
+    expected: list[str] = Field(description="The outputs the edit was made on: where design.json now has others, "
+                                "the edit is refused (409)")  # fmt: skip
+
+
 class BuildRequest(BaseModel):
     configuration: str | None = Field(
         default=None, description="A named configuration; default: the parameters as written"
@@ -171,12 +177,19 @@ class AnalysisInfo(BaseModel):
     summary: str
 
 
+class OutputInfo(BaseModel):
+    name: str = Field(description="What design.json `outputs` calls it")
+    title: str = Field(description="What its files are, for the panel's file list; empty for the preview")
+    summary: str
+
+
 class Capabilities(BaseModel):
     version: str
     plugins: list[Plugin] = Field(description="Every plugin loaded, hitlcad's own among them")
     plugin_problems: list[Diagnostic] = Field(description="Plugins that did not load, failed or clash")
     backends: list[BackendInfo]
     analyses: list[AnalysisInfo] = Field(description="In the order they run: cause before effect")
+    outputs: list[OutputInfo] = Field(description="What a build writes when design.json `outputs` names it")
     error_kinds: list[ErrorKind] = Field(
         description="Every result's and error's kind, by code: its title and usual fix"
     )
@@ -287,10 +300,13 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.get("/api/capabilities")
     async def capabilities() -> Capabilities:
         analyses = [AnalysisInfo(name=a.name, title=a.title, summary=a.summary) for a in core.pipeline.analyses]
+        outputs = [
+            OutputInfo(name=n, title=title, summary=summary) for n, (title, summary) in core.pipeline.outputs.items()
+        ]
         kinds = sorted(catalog().values(), key=lambda k: k.code)
         found = registry()
         return Capabilities(version=version("hitlcad"), plugins=list(found.plugins.values()), plugin_problems=found.failures,
-                            backends=core.registry.describe(), analyses=analyses, error_kinds=kinds,
+                            backends=core.registry.describe(), analyses=analyses, outputs=outputs, error_kinds=kinds,
                             python=sys.executable)  # fmt: skip
 
     # ------------------------------------------------------------------ designs
@@ -366,6 +382,10 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.post("/api/designs/{design_id}/parameters", status_code=201)
     async def edit_parameters(design_id: str, body: EditParameters) -> Revision:
         return await builds.edit_parameters(design_id, body.values, body.expected)
+
+    @app.post("/api/designs/{design_id}/outputs", status_code=201)
+    async def edit_outputs(design_id: str, body: EditOutputs) -> Revision:
+        return await builds.edit_outputs(design_id, body.outputs, body.expected)
 
     @app.get("/api/designs/{design_id}/revisions/{revision_id}")
     async def get_revision(design_id: str, revision_id: int) -> Revision:

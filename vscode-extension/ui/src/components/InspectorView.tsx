@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import type { DesignState, Revision } from "../api/types";
+import type { BuildProgress, DesignState, Revision } from "../api/types";
 import { useCapabilities } from "../hooks/useCapabilities";
 import { useDesign } from "../hooks/useDesign";
 import { useShown } from "../hooks/useRevision";
-import { type DesignUi, type InspectorTab, useDesignUi } from "../lib/designUi";
+import { type DesignUi, type InspectorTab, shownBuild, useDesignUi } from "../lib/designUi";
 import { BomPanel } from "./BomPanel";
 import { BriefPanel } from "./BriefPanel";
 import { ChangesPanel } from "./ChangesPanel";
@@ -14,12 +14,13 @@ import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
 import { inspectionTargets } from "../lib/inspection";
 
-/** What a tab renders from: the design, the revision on screen (in full) and the one it is compared with, and the
- * shared UI state. */
+/** What a tab renders from: the design, the revision on screen (in full) and the one it is compared with, the build
+ * running when it is on screen instead, and the shared UI state. */
 export interface TabContext {
   id: string;
   state: DesignState;
   revision: Revision | null;
+  building: BuildProgress | null;
   base: Revision | null;
   ui: DesignUi;
   setUi: ReturnType<typeof useDesignUi>[1];
@@ -92,8 +93,11 @@ export const TABS: Tab[] = [
   {
     id: "report",
     label: "Results",
-    badge: ({ revision }) => (revision ? revision.report.tally.problems + revision.report.tally.warnings : 0),
-    render: ({ id, revision, ui, setUi }) => <ReportPanel designId={id} revision={revision} onInspect={(instances) => setUi({
+    badge: ({ revision, building }) => {
+      const tally = building?.tally ?? revision?.report.tally;
+      return tally ? tally.problems + tally.warnings : 0;
+    },
+    render: ({ id, revision, building, ui, setUi }) => <ReportPanel designId={id} revision={revision} building={building} onInspect={(instances) => setUi({
       placing: false, motion: null,
       inspection: { revision: revision!.id, instances, action: "focus", sequence: (ui.inspection?.sequence ?? 0) + 1 },
     })} />,
@@ -119,7 +123,7 @@ export function InspectorView({ id }: { id: string }) {
     );
   }
 
-  const ctx: TabContext = { id, state, revision, base, ui, setUi, refresh: live.refresh };
+  const ctx: TabContext = { id, state, revision, building: shownBuild(state.building, ui), base, ui, setUi, refresh: live.refresh };
   const active = TABS.find((t) => t.id === ui.tab) ?? TABS[0]!;
 
   return (

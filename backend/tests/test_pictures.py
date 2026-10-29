@@ -122,7 +122,7 @@ async def test_a_build_is_compared_with_its_picture_and_a_new_picture_builds_aga
 
 
 def check_figure(core: HitlCad, report: BuildReport, spec: BuildSpec, folder: Path, out: Path) -> bytes:
-    built = load_built(report, spec, folder, out)
+    built = load_built(report, spec, folder, out, core.pipeline.shapes)
     bodies = BuildBodies(built, core.pipeline.analysis_settings, core.pipeline.results_cache)
     figure = spec.design.requirements[0].check.figure(bodies)  # type: ignore[union-attr]
     assert figure is not None

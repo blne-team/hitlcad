@@ -9,7 +9,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from hitlcad.analysis.model import BuiltDesign
+from hitlcad.analysis.model import BuiltDesign, Shapes
 from hitlcad.core.events import PinsChanged, SelectionChanged
 from hitlcad.core.report import Revision
 from hitlcad.core.types import Pick, Pin, PinMotion, SelectionItem
@@ -19,10 +19,11 @@ from hitlcad.services.designs import DesignService
 
 
 class FeedbackService:
-    def __init__(self, designs: DesignService, anchors: AnchorSettings, loaded: int) -> None:
+    def __init__(self, designs: DesignService, anchors: AnchorSettings, loaded: int, shapes: Shapes) -> None:
         self.designs = designs
         self.anchors = anchors
         self.loaded = loaded  # built revisions kept in memory: picks and carries reload the same few
+        self.shapes = shapes  # the builds' part shapes: a revision loaded back shares those its files hold
         self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
         self._lock = threading.Lock()  # built() runs in worker threads
 
@@ -50,7 +51,7 @@ class FeedbackService:
         if built is None:  # loaded outside the lock: other builds stay available meanwhile
             assert rev.spec is not None  # a revision that built
             built = load_built(rev.report, rev.spec, Path(self.designs.get(design_id).path),
-                               self.revision_dir(design_id, rev))  # fmt: skip
+                               self.revision_dir(design_id, rev), self.shapes)  # fmt: skip
         with self._lock:
             self._loaded[key] = built
             self._loaded.move_to_end(key)

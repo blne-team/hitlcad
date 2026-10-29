@@ -30,6 +30,7 @@ from hitlcad.kernel.errors import (
     DESIGN_CHANGED,
     DESIGN_UNREADABLE,
     EXPORT_FAILED,
+    OUTPUT_UNKNOWN,
     PARAMETER_INVALID,
     REQUEST_INVALID,
     DesignInvalid,
@@ -272,6 +273,25 @@ class BuildService:
         return await self.build(design_id, "Parameter edit: " + ", ".join(f"{k}={v}" for k, v in changed.items()),
                                 "parameter_edit")  # fmt: skip
 
+    async def edit_outputs(self, design_id: str, outputs: list[str], expected: list[str]) -> Revision:
+        """The human chose in the panel what each build writes, from the `expected` outputs it showed: write them to
+        design.json `outputs` and rebuild, its parts from the cache. An edit made on outputs design.json no longer
+        has is refused (`DESIGN_CHANGED`), as a parameter edit is."""
+        if unknown := [name for name in outputs if name not in self.pipeline.outputs]:
+            raise OUTPUT_UNKNOWN(
+                f"no output {', '.join(map(repr, unknown))}; outputs: {', '.join(self.pipeline.outputs)}"
+            )
+
+        def change(design: DesignSpec) -> DesignSpec:
+            if design.outputs != expected:
+                raise DESIGN_CHANGED(f"{DESIGN_FILE} changed since the panel showed it: its outputs are now "
+                                     f"{', '.join(design.outputs) or 'none'}")  # fmt: skip
+            return design.model_copy(update={"outputs": outputs})
+
+        async with self._edits[design_id]:
+            await asyncio.to_thread(self.designs.folder(design_id).edit, change)
+        return await self.build(design_id, "Outputs: " + (", ".join(outputs) or "none"), "outputs_edit")
+
 
 class _Progress:
     """A build's progress (`pipeline.Progress`) as live events of its design, announced in order on the event loop's
@@ -292,8 +312,12 @@ class _Progress:
     def doing(self, what: str) -> None:
         self._say(doing=what)
 
+    def found(self, results: list[Result]) -> None:
+        if results:
+            self._say(results=[*self._now.results, *results])
+
     def _say(self, **update: Any) -> None:
-        self._now = self._now.model_copy(update={**update, "ts": utcnow()})
+        self._now = BuildProgress(**{**dict(self._now), **update, "ts": utcnow()})  # its problems follow its results
         self._loop.call_soon_threadsafe(self._announce, self._now)
 
     def _announce(self, now: BuildProgress) -> None:

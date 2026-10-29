@@ -115,7 +115,11 @@ class DesignSpec(Model):
     requirements: list[Requirement] = Field(default_factory=list)
     manufacturing: Manufacturing | None = Field(default=None, description="Default process for made parts")
     verification: Verification = Field(default_factory=Verification)
-    outputs: list[str] = Field(default_factory=list, description="Exporters to run on every successful build")
+    outputs: list[str] = Field(
+        default_factory=list,
+        description="What each successful build writes beside what review needs (its parts' own files and 3D view): "
+        "`step`, `stl`, `native`, `preview` and the exporters' names; list_backends lists them",
+    )
     brief: DesignBrief | None = None
 
     @field_validator("exports")

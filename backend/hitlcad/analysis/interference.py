@@ -77,15 +77,28 @@ def boxes_touch(a: np.ndarray, b: np.ndarray, pad: float) -> bool:
     return bool(np.all(a[0] - pad <= b[1]) and np.all(b[0] - pad <= a[1]))
 
 
-def overlap(cache: ResultCache, a: Leaf, ta: fr.Frame, b: Leaf, tb: fr.Frame) -> float:
-    """Volume (mm³) two leaves share after moving them by ta and tb; cached by what it depends on."""
-    ma, mb = ta @ a.transform, tb @ b.transform
-    key = cache.key("overlap", a.part.digest, b.part.digest, np.round(ma, 6).tolist(), np.round(mb, 6).tolist())
+def touching(boxes: list[np.ndarray], pad: float) -> list[list[int]]:
+    """For each box, the later ones (by index, in order) it touches within `pad`. The boxes are swept along x, so
+    only those whose x extents meet are compared."""
+    near: list[list[int]] = [[] for _ in boxes]
+    active: list[int] = []  # boxes whose x extent may still reach the next one's
+    for k in sorted(range(len(boxes)), key=lambda k: float(boxes[k][0][0])):
+        active = [m for m in active if boxes[m][1][0] >= boxes[k][0][0] - pad]
+        for m in active:
+            if boxes_touch(boxes[m], boxes[k], pad):
+                near[min(m, k)].append(max(m, k))
+        active.append(k)
+    return [sorted(js) for js in near]
+
+
+def overlap(cache: ResultCache, a: Leaf, b: Leaf) -> float:
+    """Volume (mm³) two leaves share where they sit; cached by their parts and where b sits from a, so a pair that
+    moved together (a subassembly placed elsewhere) is not measured again."""
+    relative = fr.rigid_inverse(a.transform) @ b.transform
+    key = cache.key("overlap", a.part.digest, b.part.digest, np.round(relative, 6).tolist())
 
     def compute() -> float:
-        sa = a.part.manifold.transform(ma[:3, :])
-        sb = b.part.manifold.transform(mb[:3, :])
-        return float((sa ^ sb).volume())
+        return float((a.part.manifold ^ b.part.manifold.transform(relative[:3, :])).volume())
 
     return float(cache.get_or(key, compute))
 
@@ -138,13 +151,14 @@ class Interference:
         unset: dict[frozenset[str], str] = {}  # a part set into a hole that is not cut, and its host: their cause
         checked = 0
         pad = ctx.tol.position_mm
+        near = touching([leaf.bounds for leaf in leaves], pad)
         for i, a in enumerate(leaves):
-            for b in leaves[i + 1 :]:
-                if top(a.path) == top(b.path) or not boxes_touch(a.bounds, b.bounds, pad):
+            for b in (leaves[j] for j in near[i]):
+                if top(a.path) == top(b.path):
                     continue
                 checked += 1
                 try:
-                    shared = overlap(ctx.cache, a, fr.IDENTITY, b, fr.IDENTITY)
+                    shared = overlap(ctx.cache, a, b)
                 except Unmeasurable as e:  # an open mesh
                     out.append(
                         result(

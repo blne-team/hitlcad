@@ -10,9 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import Field, TypeAdapter
+from pydantic import Field, TypeAdapter, model_validator
 
-from hitlcad.core.report import RevisionInfo
+from hitlcad.core.report import Problem, Result, RevisionInfo, Tally, problems, tally
 from hitlcad.core.types import DesignBrief, Pin, SelectionItem, WatchedMotion, utcnow
 from hitlcad.kernel.errors import Diagnostic
 from hitlcad.kernel.model import Model
@@ -41,8 +41,9 @@ class DesignUpdated(_Event):
 
 class BuildProgress(_Event):
     """The build running, as far as it has got: the revision it makes, its scene once its parts are placed in it
-    (before anything is checked), and what it does now. Live only, as `BuildStopped` is: published, never kept in
-    the log, since neither says anything once the build ends; the revision or error it ends with is kept."""
+    (before anything is checked), what it does now, and what the analyses that have finished found. Live only, as
+    `BuildStopped` is: published, never kept in the log, since neither says anything once the build ends; the
+    revision or error it ends with is kept."""
 
     type: Literal["build_progress"] = "build_progress"
     revision: int
@@ -51,6 +52,17 @@ class BuildProgress(_Event):
     started: datetime = Field(description="When it started: one build's files of the revision from another's")
     scene: str | None = Field(default=None, description="The scene, in the revision's files, once the parts are in it")
     doing: str = ""
+    results: list[Result] = Field(default_factory=list, description="What the analyses that have finished found, "
+                                  "in the order they ran")  # fmt: skip
+    problems: list[Problem] = Field(default_factory=list, description="Those that do not pass, by cause, as a "
+                                    "report groups them")  # fmt: skip
+    tally: Tally = Field(default_factory=Tally)
+
+    @model_validator(mode="after")
+    def _grouped(self) -> BuildProgress:
+        self.problems = problems(self.results)
+        self.tally = tally(self.results, self.problems)
+        return self
 
 
 class BuildStopped(_Event):

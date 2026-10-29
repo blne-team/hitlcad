@@ -90,8 +90,8 @@ def four_bar(crank: float, coupler: float, rocker: float, ground: float) -> Bloc
 def trace(block: Block, end: float) -> list[Position]:
     """The block's positions from where it sits towards its driver at `end`, a step at most half a degree, halved
     where it does not settle, until halving gets nowhere."""
-    solver, at, out = Sqp(), block.start(), []
-    sign, step, rate = math.copysign(1.0, end - block.start().value), 0.5, np.zeros(18)
+    solver, at, out = Sqp(), block.start, []
+    sign, step, rate = math.copysign(1.0, end - block.start.value), 0.5, np.zeros(18)
     while abs(end - at.value) > 1e-9 and step > 1e-4:
         h = min(step, abs(end - at.value))
         value = at.value + sign * h
@@ -109,7 +109,7 @@ def trace(block: Block, end: float) -> list[Position]:
 def test_a_crank_rocker_turns_its_crank_a_full_turn_and_swings_its_rocker_as_it_must() -> None:
     block = four_bar(15, 40, 30, 40)
     assert block.freedoms() == (True, 0)
-    start, swing = block.start(), []
+    start, swing = block.start, []
     for end in (start.value + 180, start.value - 180):
         positions = trace(block, end)
         assert positions[-1].value == pytest.approx(end)
@@ -121,7 +121,7 @@ def test_a_linkage_that_cannot_turn_its_crank_locks_where_it_must() -> None:
     """15/20/30/40: the crank locks where B is coupler + rocker from D, 124.23° from the ground line, 34.23° on from
     where it sits; the joints' position tolerance lets it go a little further, never less far."""
     block = four_bar(15, 20, 30, 40)
-    start = block.start()
+    start = block.start
     up = trace(block, start.value + 180)[-1].value - start.value
     assert 34.23 <= up <= 34.8
     assert trace(block, start.value - 180)[-1].value == pytest.approx(start.value - 180)  # the other way it turns on

@@ -112,7 +112,7 @@ itself, directly or through its components.
   "requirements": [ /* {"text": "…", "check": {…}} */ ],
   "manufacturing": {"process": "fdm"},       // default process of made parts
   "verification": {"position_mm": 0.01, "angle_deg": 0.05, "motion_steps": 2000},
-  "outputs": ["bom", "3mf", "urdf", "sdf"],  // exporters run on every successful build
+  "outputs": ["step", "bom", "3mf"],         // what each successful build writes beyond review's own files
   "brief": { /* title, summary, key_dimensions, features, assumptions, open_questions */ }
 }
 ```
@@ -584,18 +584,25 @@ joint expects, a mate others hold still) are listed under their analysis but are
 
 ## Outputs
 
-`build/` after a successful build of the default configuration:
+`build/` after a successful build of the default configuration. Every build writes what review needs:
 
 | File | Contents |
 | --- | --- |
-| `model.step` | the assembly as a STEP product structure, instances named by path (only when every part is B-rep) |
-| `model.blend` | the assembly as one Blender scene, 1 unit = 1 mm, Z up (when a part, a component's included, is a Blender part): each part's objects with their names and materials in a collection of their own (from its `.glb`, whichever backend built it), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
-| `mesh.stl` | the placed assembly as one mesh |
 | `parts/<part>.stl`, `.glb` (its objects' names, materials and colours), `.step` (B-rep parts), `.view` (tessellated for the 3D view) | each part once, in its own frame; its backend writes them all where it builds it, and the part cache keeps them together |
 | `scene.json` | the 3D view: each part's `.view` drawn per instance, named by its path and digest; a B-rep part one `exact` shape whose faces, edges and vertices picks name, a mesh part one shape per colour |
-| `preview.png` | iso, front, right and top renders |
-| the exporters' files | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 | `report.json`, `build.log` | the report, the backends' output |
+
+The rest it writes when design.json `outputs` names it, so a save that nobody exports from writes none of
+it. The agent adds a name there, or the human ticks it in the panel's Results, and the build that follows
+(its parts from the cache) writes it:
+
+| Output | Files |
+| --- | --- |
+| `step` | `model.step`: the assembly as a STEP product structure, instances named by path; a failing `output.unavailable` result when a part is a mesh, not B-rep |
+| `stl` | `mesh.stl`: the placed assembly as one mesh |
+| `native` | `model.blend` (when a part, a component's included, is a Blender part): the assembly as one Blender scene, 1 unit = 1 mm, Z up, each part's objects with their names and materials in a collection of their own (from its `.glb`, whichever backend built it), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
+| `preview` | `preview.png`: iso, front, right and top renders, which the panel shows with the results; the agent's `include_images` renders them for any revision without it |
+| the exporters' | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 
 URDF and SDF map placed instances to links (with inertia where the material is known) and mates to
 joints along a tree from `ground`: rigid and fastened fixed, revolute revolute (continuous without
@@ -637,7 +644,7 @@ agent's own tools (reviewed as diffs); no tool edits them.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_backends()` | backends, materials, catalog providers, exporters |
+| `list_backends()` | backends, materials, catalog providers, outputs |
 | `create_design(path, name, backend)` | scaffold the folder |
 | `search_catalog(query, limit)` | standard parts: designation, call, sizes, connectors |
 | `build_design(path, scope, configuration, summary)` | `scope="structure"`: the plan check, no geometry, in seconds. `scope="<address>"`: a build (unchanged part files come from the cache) answered for that address. `configuration`: one variant, or `"all"`. Its problems (below), what changed, a tally; images: the preview, and a section through the failing mate, relation or fastener set that leads each problem, along its axis |

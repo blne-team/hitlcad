@@ -358,6 +358,8 @@
     }
   ],
   "outputs": [
+    "step",
+    "stl",
     "bom",
     "3mf",
     "urdf"

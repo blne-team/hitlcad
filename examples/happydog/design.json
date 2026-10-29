@@ -281,6 +281,7 @@
     }
   ],
   "outputs": [
+    "native",
     "bom",
     "3mf"
   ],

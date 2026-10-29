@@ -1,9 +1,10 @@
 import { fileUrl } from "../api/client";
-import type { AnalysisInfo, ErrorKind, Finding, Problem, Result, Revision } from "../api/types";
+import type { AnalysisInfo, BuildProgress, ErrorKind, Finding, Problem, Result, Revision } from "../api/types";
 import { useCapabilities } from "../hooks/useCapabilities";
 import { bytes } from "../lib/format";
 import { toExtension } from "../lib/host";
 import { affectedInstances } from "../lib/inspection";
+import { OutputsChoice } from "./OutputsChoice";
 
 export const MARK = { pass: "✓", fail: "✗", unverified: "?" } as const;
 const WARNING = "!";
@@ -107,47 +108,31 @@ function ProblemRow({ problem, results, title, kind, onInspect }: ProblemProps) 
   );
 }
 
-/** A revision's build: what every analysis found, the parts, and the files. */
-export function ReportPanel({ designId, revision, onInspect }: { designId: string; revision: Revision | null; onInspect?: (instances: string[]) => void }) {
+type Found = { results: Result[]; problems: Problem[]; inspect?: (problem: Problem) => (() => void) | undefined };
+
+/** What the analyses found: the problems, then every check by analysis. */
+function Findings({ results, problems, inspect }: Found) {
   const capabilities = useCapabilities();
-  if (!revision) return <p className="muted pad">The build report appears after the first build.</p>;
-  const { report } = revision;
-  const m = report.metrics;
-  const preview = report.artifacts.find((a) => a.role === "preview");
   const analyses = capabilities?.analyses ?? [];
   const title = (name: string) => analyses.find((a) => a.name === name)?.title ?? name;
   const kind = (code: string) => capabilities?.error_kinds.find((k) => k.code === code);
   return (
-    <div className="report">
-      <p>
-        <strong className={report.status === "succeeded" ? "ok" : "fail"}>
-          Revision {revision.id} {report.status === "succeeded" ? "built" : "failed"}
-        </strong>{" "}
-        <span className="muted">
-          in {report.duration_s.toFixed(1)} s{report.configuration ? `, configuration ${report.configuration}` : ""}
-          {revision.origin === "parameter_edit" ? ", from your parameter edit" : ""}
-        </span>
-      </p>
-      {report.results.length > 0 && <p className="tally">{report.tally.text}</p>}
-      {revision.summary && <p>{revision.summary}</p>}
-
-      {report.problems.length > 0 && (
+    <>
+      {problems.length > 0 && (
         <ul className="checks problems">
-          {report.problems.map((p) => {
-            const instances = affectedInstances(revision, p.findings.flatMap((f) => f.results.flatMap((i) => report.results[i]!.about)));
-            return <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={report.results} title={title} kind={kind}
-              onInspect={onInspect && instances.length ? () => onInspect(instances) : undefined} />;
-          })}
+          {problems.map((p) => (
+            <ProblemRow key={p.findings[0]!.results[0]} problem={p} results={results} title={title} kind={kind} onInspect={inspect?.(p)} />
+          ))}
         </ul>
       )}
 
-      {report.results.length > 0 && (
+      {results.length > 0 && (
         <details className="all-checks">
           <summary>Every check, by analysis</summary>
-          {byAnalysis(report.results, analyses).map(([analysis, results]) => {
-            const bad = results.filter((r) => r.status !== "pass").length;
-            const noted = results.filter((r) => r.severity === "info").length; // listed, but no checks
-            const checks = results.length - noted;
+          {byAnalysis(results, analyses).map(([analysis, group]) => {
+            const bad = group.filter((r) => r.status !== "pass").length;
+            const noted = group.filter((r) => r.severity === "info").length; // listed, but no checks
+            const checks = group.length - noted;
             return (
               <details key={analysis} className="result-group">
                 <summary title={analyses.find((a) => a.name === analysis)?.summary}>
@@ -158,12 +143,58 @@ export function ReportPanel({ designId, revision, onInspect }: { designId: strin
                     {noted ? `, ${noted} noted` : ""}
                   </span>
                 </summary>
-                <ResultList results={results} />
+                <ResultList results={group} />
               </details>
             );
           })}
         </details>
       )}
+    </>
+  );
+}
+
+/** The build running: what the analyses that have finished found, before its revision comes. */
+function Checking({ building }: { building: BuildProgress }) {
+  return (
+    <div className="report">
+      <p>
+        <strong>Revision {building.revision}, being checked</strong>
+        {building.doing && <span className="muted"> {building.doing}</span>}
+      </p>
+      {building.results.length > 0 && <p className="tally">So far: {building.tally.text}</p>}
+      <Findings results={building.results} problems={building.problems} />
+    </div>
+  );
+}
+
+/** A revision's build: what every analysis found, the parts, and the files; while one runs, what it has found. */
+export function ReportPanel({ designId, revision, building, onInspect }: {
+  designId: string; revision: Revision | null; building: BuildProgress | null; onInspect?: (instances: string[]) => void;
+}) {
+  if (building) return <Checking building={building} />;
+  if (!revision) return <p className="muted pad">The build report appears after the first build.</p>;
+  const { report } = revision;
+  const m = report.metrics;
+  const preview = report.artifacts.find((a) => a.role === "preview");
+  const inspect = (p: Problem) => {
+    const instances = affectedInstances(revision, p.findings.flatMap((f) => f.results.flatMap((i) => report.results[i]!.about)));
+    return onInspect && instances.length ? () => onInspect(instances) : undefined;
+  };
+  return (
+    <div className="report">
+      <p>
+        <strong className={report.status === "succeeded" ? "ok" : "fail"}>
+          Revision {revision.id} {report.status === "succeeded" ? "built" : "failed"}
+        </strong>{" "}
+        <span className="muted">
+          in {report.duration_s.toFixed(1)} s{report.configuration ? `, configuration ${report.configuration}` : ""}
+          {revision.origin === "parameter_edit" ? ", from your parameter edit" : revision.origin === "outputs_edit" ? ", from your choice of outputs" : ""}
+        </span>
+      </p>
+      {report.results.length > 0 && <p className="tally">{report.tally.text}</p>}
+      {revision.summary && <p>{revision.summary}</p>}
+
+      <Findings results={report.results} problems={report.problems} inspect={inspect} />
 
       {m && (
         <table className="metrics">
@@ -221,7 +252,7 @@ export function ReportPanel({ designId, revision, onInspect }: { designId: strin
       {preview && (
         <figure className="preview">
           <img src={fileUrl(designId, revision.id, preview.path)} alt={`Rendered views of revision ${revision.id}`} />
-          <figcaption className="muted tiny">Renders your agent sees after each build: iso, front, right and top.</figcaption>
+          <figcaption className="muted tiny">Iso, front, right and top views, written while Rendered views is chosen below.</figcaption>
         </figure>
       )}
 
@@ -237,6 +268,7 @@ export function ReportPanel({ designId, revision, onInspect }: { designId: strin
           </li>
         ))}
       </ul>
+      <OutputsChoice designId={designId} revision={revision} />
 
       <details>
         <summary>Source code</summary>

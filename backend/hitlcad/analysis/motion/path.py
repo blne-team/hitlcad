@@ -7,6 +7,7 @@ where halving gets nowhere the motion goes no further (it locks, or the solver l
 from __future__ import annotations
 
 import math
+from functools import cached_property
 
 import numpy as np
 from pydantic import Field
@@ -54,12 +55,18 @@ class Traced(Model):
         """The ways it ended short because the motion goes no further."""
         return [h for h in self.halts if not h.why]
 
-    def stacked(self) -> dict[str, np.ndarray]:
-        """Each moving cluster's motion at every position, as a stack of frames."""
+    @cached_property
+    def _stack(self) -> dict[str, np.ndarray]:
         flat = np.asarray(self.poses, dtype=float).reshape(len(self.values), len(self.clusters), 3, 4)
         last = np.broadcast_to([[[[0.0, 0.0, 0.0, 1.0]]]], (*flat.shape[:2], 1, 4))
         frames = np.concatenate([flat, last], axis=2)
+        frames.setflags(write=False)
         return {c: frames[:, k] for k, c in enumerate(self.clusters)}
+
+    def stacked(self) -> dict[str, np.ndarray]:
+        """Each moving cluster's motion at every position, as a stack of frames: made once, read by every check of
+        the motion (so none may change it)."""
+        return self._stack
 
 
 def positions(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Traced:
@@ -99,10 +106,10 @@ def _trace(plan: Plan, solver: Solver) -> Traced:
     out = Traced(clusters=plan.moving, rest=plan.rest, freedoms=sum(f for _, f in freedoms))
     if not all(moves for moves, _ in freedoms):
         return out.model_copy(update={"held": True})
-    corners = {c: plan.world.corners[c] for c in plan.moving}
-    reach = max(float(np.linalg.norm(p - fr.origin(plan.link.a.frame), axis=1).max()) for p in corners.values())
+    corners = _Corners({c: plan.world.corners[c] for c in plan.moving})
+    reach = float(np.linalg.norm(corners.points - fr.origin(plan.link.a.frame), axis=1).max())
     first = SAMPLE_MM if plan.kind == "travel" else math.degrees(SAMPLE_MM / max(reach, 1.0))
-    start = {id(s): s.block.start() for s in blocks if s.block}
+    start = {id(s): s.block.start for s in blocks if s.block}
     still = dict.fromkeys(plan.moving, fr.IDENTITY)
     ways: list[list[tuple[float, dict[str, fr.Frame]]]] = []
     for end in plan.ends():
@@ -112,7 +119,7 @@ def _trace(plan: Plan, solver: Solver) -> Traced:
         while len(found) < plan.world.tolerances.motion_steps and abs(end - value) > 1e-9:
             h = min(step, abs(end - value))
             placed = _place(plan, value + sign * h, h, poses, at, rates, solver)
-            if isinstance(placed, str) or (moved := _travel(corners, poses, placed[0])) > 2 * SAMPLE_MM:
+            if isinstance(placed, str) or (moved := corners.travel(poses, placed[0])) > 2 * SAMPLE_MM:
                 step = h / 2
                 if step < first * _FINEST:
                     out.halts.append(Halt(at=value, end=end))
@@ -126,7 +133,7 @@ def _trace(plan: Plan, solver: Solver) -> Traced:
     up = [w for w, end in zip(ways, plan.ends(), strict=True) if end > plan.rest]
     down = [w for w, end in zip(ways, plan.ends(), strict=True) if end < plan.rest]
     traced = [*reversed(down[0] if down else []), (plan.rest, still), *(up[0] if up else [])]
-    steps = [_travel(corners, a, b) for (_, a), (_, b) in zip(traced, traced[1:], strict=False)]
+    steps = [corners.travel(a, b) for (_, a), (_, b) in zip(traced, traced[1:], strict=False)]
     return out.model_copy(update={
         "values": [v for v, _ in traced],
         "poses": [[np.round(p[c][:3], 9).reshape(-1).tolist() for c in plan.moving] for _, p in traced],
@@ -158,7 +165,7 @@ def _settle(stage: Stage, rest: float, value: float, h: float, before: dict[str,
     block = stage.block
     assert block is not None
     was = at[id(stage)]
-    target = block.start().value + value - rest
+    target = block.start.value + value - rest
     given0, given = ({g: p[g] for g in block.given} for p in (before, poses))
     x = solver.settle(block, rates[id(stage)] * h, block.parameters(target, was, given0, given))
     if x is None:
@@ -169,10 +176,19 @@ def _settle(stage: Stage, rest: float, value: float, h: float, before: dict[str,
     return found
 
 
-def _travel(corners: dict[str, np.ndarray], a: dict[str, fr.Frame], b: dict[str, fr.Frame]) -> float:
-    """The furthest any point of a moving cluster moves from poses `a` to poses `b` (mm)."""
-    return max((float(np.linalg.norm(fr.transform_points(p, b[c]) - fr.transform_points(p, a[c]), axis=1).max())
-                for c, p in corners.items()), default=0.0)  # fmt: skip
+class _Corners:
+    """The moving clusters' leaves' box corners, as one array, each with its cluster."""
+
+    def __init__(self, corners: dict[str, np.ndarray]) -> None:
+        self.clusters = list(corners)
+        self.points = np.vstack(list(corners.values()))
+        self.of = np.repeat(np.arange(len(corners)), [len(p) for p in corners.values()])
+
+    def travel(self, a: dict[str, fr.Frame], b: dict[str, fr.Frame]) -> float:
+        """The furthest any of them moves from poses `a` to poses `b` (mm): each by its cluster's change of frame."""
+        change = np.stack([b[c] - a[c] for c in self.clusters])[self.of]
+        moved = np.einsum("nij,nj->ni", change[:, :3, :3], self.points) + change[:, :3, 3]
+        return float(np.linalg.norm(moved, axis=1).max())
 
 
 def _key(plan: Plan, solver: Solver, cache: ResultCache) -> str:

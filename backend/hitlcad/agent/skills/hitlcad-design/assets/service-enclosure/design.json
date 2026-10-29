@@ -62,5 +62,5 @@
     "compact": {"width": 48, "depth": 36, "height": 16, "vent_count": 3},
     "wide": {"width": 80, "depth": 60, "height": 32, "vent_count": 9}
   },
-  "outputs": ["bom", "3mf"]
+  "outputs": ["step", "bom", "3mf"]
 }

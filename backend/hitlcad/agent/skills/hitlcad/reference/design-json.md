@@ -44,4 +44,6 @@ $references
 
 **Configurations** (`"configurations": {"ratio_5": {"sun_teeth": 12}}`), **verification**
 (`{"position_mm", "angle_deg", "motion_steps"}`, defaults from hitlcad's settings) and **outputs**
-(exporters run on every build: see `list_backends`) complete the file.
+complete the file. Every build writes each part's own STEP and STL; `outputs` names what else it writes
+(`step` for the assembly as one STEP, `stl`, `native`, `preview`, the exporters: see `list_backends`).
+When the human asks for a file, add it there; the next build takes its parts from the cache.

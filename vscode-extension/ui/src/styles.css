@@ -777,6 +777,18 @@ code {
 .check-name {
   font-weight: 500;
 }
+.outputs {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.outputs legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
 .preview {
   margin: 0;
 }

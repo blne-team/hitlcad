@@ -69,7 +69,7 @@ class HitlCad:
         designs = DesignService(SqliteStore(settings.data_dir), pipeline.registry, settings.loaded_revisions)
         feedback = FeedbackService(designs, AnchorSettings(reach=settings.anchor_reach, tie=settings.anchor_tie,
                                                            aligned_deg=settings.anchor_aligned_deg),
-                                   settings.loaded_builds)  # fmt: skip
+                                   settings.loaded_builds, pipeline.shapes)  # fmt: skip
         builds = BuildService(designs, pipeline, feedback, settings)
         return cls(settings, pipeline.registry, pipeline, designs, builds, feedback, ExploreService(designs, settings),
                    ContextFeed(designs), FolderWatcher(designs, builds), registry is None)  # fmt: skip

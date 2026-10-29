@@ -53,8 +53,18 @@ Motion measures gaps with FCL (python-fcl) on a tree of each part's triangles bu
 solid's round part is found from its triangles' distinct rings, a block is one compiled CasADi graph
 solved with exact derivatives, and a traced sweep's pair already within a step of contact, with no clearance asked
 of it (gears in mesh), is only tested for meeting: the gearbox's motion analysis takes 5 s, from 73 s.
-The panel draws a build as soon as its parts are placed, before anything is checked, and says which
-analysis is running; its results, picks and motion come with its revision.
+The panel draws a build as soon as its parts are placed, before anything is checked, says which
+analysis is running, and shows each analysis's results as it finishes; picks and motion come with its
+revision. The report says how long each step took. A part's manufacturing findings are kept by what they
+read of it, so an edit checks only the parts it changed; interference compares only instances whose boxes
+meet along x and keeps each overlap by where one part sits from the other, so a subassembly moved whole is
+not measured again. Each part's loaded geometry (its mesh, solid, B-rep features, metrics and colliders) is
+kept in the server by its files' content, so a build, or a revision loaded back, loads and measures only
+the parts an edit changed: on the V8 engine, a part file touched without changing its shape builds in 6 s.
+A build writes what review needs (each part's own files, the 3D view, the report);
+the assembly's STEP and mesh, the Blender scene, the rendered views and the exporters' files only when
+design.json `outputs` names them, which the agent edits or the human ticks in the panel, and the agent's
+images render the views of any revision without them.
 
 ## Next: motion that scales
 
@@ -63,8 +73,19 @@ where it can, else in small blocks settled in order, each a CasADi graph solved 
 with exact derivatives. Relations couple motions by laws (gears at a ratio, a cam by its lift table, its
 follower kept in contact).
 
-- **Steps predicted.** Each block starts a step from its last step's motion; the parts' velocities at
-  each position give a better start, and fewer iterations.
+- **Close pairs that slide past each other.** On the V8 engine, half of a cold sweep (8 s of 16 s) goes to
+  two kinds of pair that move along a 0.3 mm running gap: a piston along its bore, a pushrod's ball in its
+  rocker's cup. A step is bounded by how far any point travels, not by how fast the gap closes, so each
+  0.3 mm of travel costs an exact distance between two closely fitting meshes (7 ms each). Collision
+  libraries bound a step by the approach along the direction that separates the two, inside their trees of
+  triangles, in compiled code; none does it for meshes from Python. python-fcl's continuous collision does
+  not work on meshes (a box moved straight through another reads clear; a box shape against a mesh
+  crashes the process), and coal, hpp-fcl's successor, has none, and measures these pairs no faster than
+  FCL (the same distances, 7 ms each; its lower bound reads 0.001 mm at the 0.3 mm gap). What remains is
+  that bound written in compiled code over FCL's or coal's trees. Tried and set aside: checking a slide's solid
+  dragged along its stroke, and what a ball joint keeps in place, once per pair (their Minkowski sums cost
+  more than the distances they saved: 75 s from 41 s). Each block solve already settles in two SQP
+  iterations, so a better starting guess saves nothing; tracing's time is CasADi's per call.
 - **The V8 engine on the new motion.** Its valve train declared as cams (lobe to lifter, rocker to
   valve) and its springs as `span` requirements, so one input, the crankshaft, moves the whole engine.
 
@@ -76,29 +97,22 @@ Done when the V8 engine's whole cycle is one input's sweep, every valve lifting 
 A V8 engine of 53 parts and 258 instances took 939 s from save to anything in the panel. A cold
 build of it now takes 120 s, its parts drawn once its part files are built (6 s), but its results
 still wait for every analysis (105 s: manufacturing 53 s, motion 40 s, interference 11 s) and every
-output, and every build reloads every part for its analyses. A viewer such as ocp-viewer-core shows
-the same parts at once because it tessellates in a process that already holds the shapes, keeps what
+output, and every build reloads every part for its analyses. Parts' geometry, manufacturing and
+interference now keep what an edit did not touch, results come as each analysis finishes, and outputs are written only when
+asked; the rest is below. A viewer such as ocp-viewer-core shows the same parts at once because it
+tessellates in a process that already holds the shapes, keeps what
 it tessellated, and measures only when the human picks. hitlcad keeps verifying every build, after
 showing it, and keeps what an edit did not touch.
 
-- **State kept in the server.** Each part's loaded geometry (its mesh, its solid, its B-rep features)
-  is kept by the digest of its files, so analyses of a build reuse what an earlier build loaded for
-  every part it did not change.
-- **Results as they come.** Each analysis's results reach the panel as it finishes, into the build
-  already on screen, and each part file's view as it builds or comes from the cache, so a part that
-  takes long does not hold back the others.
-- **Outputs when asked.** The assembly STEP, the whole mesh, 3MF and the Blender scene are exporters,
-  written when design.json's `outputs`, an export tool or the human asks for them, not on every save.
+- **Parts as they come.** Each part file's view reaches the build on screen as it builds or comes
+  from the cache, so a part that takes long does not hold back the others.
 - **Meshes the size of the part.** The analysis mesh's deflection scales with the part, as the view's
   does (0.01 mm on a 224 mm camshaft is 644 000 triangles where 50 000 show it); what needs precision
   keeps reading the B-rep, and a fit's facet allowance follows the mesh it is measured on.
-- **Interference that checks what moved.** Interference pairs instances by sorted boxes and caches
-  each pair by the two parts' relative placement, so moving a subassembly checks nothing again.
-- **Where the time goes.** The report gives each stage's duration.
 
 Done when, on the V8 engine, a full rebuild shows every part before any analysis runs, an edit to one
-part file redraws within two seconds of saving, and the report shows the whole verification within a
-minute.
+part file redraws within two seconds of saving and checks the manufacturing of that part alone, and
+the report shows the whole verification within a minute.
 
 ## v0.3: hitlcad's own agent, skills that teach design, and designing from a picture
 
@@ -174,6 +188,12 @@ that changed for small models.
 - Measure the server's memory between builds; check whether Blender's meshes are byte-identical
   from build to build (a head mesh differed once and was not followed up).
 
+**Builds**
+
+- **Revisions that share their files.** Each revision holds a copy of every part's files, changed or
+  not; stored once by content, with each revision naming what it holds, the data folder would stop
+  growing by a whole assembly with every build.
+
 **Motion**
 
 - **Speeds and loads.** Each part's velocity per unit of the input at every position: an exact
@@ -188,6 +208,12 @@ that changed for small models.
   sweep's guarantee, needing no watch.
 
 **Open questions**
+
+- **When a build becomes a graph.** A build is a fixed chain with two fan-outs, its part files and its
+  checks, so a scheduler of typed tasks with guards and transforms between them, or a chain of
+  handlers each calling the next, would add concepts to every plugin and surface without making a
+  build faster. It pays once plugins make what other plugins read (a mesh for FEA that several checks
+  use), checks read each other's results, or builds run off the machine.
 
 - **Proving what sampling leaves open.** A traced sweep is checked at the positions solved. An interval
   or SMT solver (dReal, Z3) could prove small claims about a block itself: that it locks where it

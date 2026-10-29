@@ -202,8 +202,9 @@ class Block:
 
     # ------------------------------------------------------------------ positions
 
+    @cached_property
     def start(self) -> Position:
-        """Where the block sits as assembled."""
+        """Where the block sits as assembled: measured once, shared by every position traced from it."""
         poses = {c: fr.IDENTITY for c in self.clusters}
         _, raw = self._seen(poses, dict.fromkeys(self.given, fr.IDENTITY))
         return Position(raw[self._driven] if self.driver is not None else 0.0, poses, raw, raw)
@@ -245,7 +246,7 @@ class Block:
     def jacobians(self) -> tuple[np.ndarray, np.ndarray]:
         """Where the block sits as assembled, how what its mates and relations hold (and its driver, last) moves
         with `x`, and how each mate's angle (× size, mm) and travel do."""
-        at = self.start()
+        at = self.start
         still = _flat(dict.fromkeys(self.given, fr.IDENTITY), self.given)
         args = (np.zeros(6 * len(self.clusters)), _flat(at.poses, self.clusters), still, still, at.total)
         return np.asarray(self._graph.held(*args)), np.asarray(self._graph.rates(*args))

@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     section_size: int = Field(default=640, ge=200, description="Pixels of a section view")
     loaded_builds: int = Field(default=8, ge=1, description="Built revisions kept in memory for picks and pins")
     loaded_revisions: int = Field(default=32, ge=1, description="Revisions (spec and report) kept in memory")
+    loaded_parts: int = Field(default=1024, ge=1, description="Part shapes (mesh, solid, B-rep features) kept in "
+                              "memory across builds, by their files' content")  # fmt: skip
 
     # Carrying picks and pins to a new build by geometry
     anchor_reach: float = Field(

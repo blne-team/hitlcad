@@ -2,11 +2,11 @@
 
     sources → plan (interface values, placements) → components (each a build of its own, cached by its
     spec) → part files (in parallel worker processes, cached by what each read) → the built design → its
-    3D view (the parts' views placed: seen from here on) → connectors measured → every analysis → outputs
-    (assembly STEP, mesh, preview, exporters, and the assembly in each backend's own format) → report
+    3D view (the parts' views placed: seen from here on) → connectors measured → every analysis, each one's
+    results said as it finishes → the outputs design.json names (`OUTPUTS` and the exporters) → report
 
 A build's directory is self-contained: its sources, its parts in their own frames, its components'
-build directories, its outputs and its report. Loading it back (`load_built`) gives the model the
+build directories, the outputs it was asked for and its report. Loading it back (`load_built`) gives the model the
 analyses saw, so components built earlier and revisions reopened later behave alike.
 
 A build fails when what the design's files say cannot produce geometry; its results say why, as any build's do.
@@ -22,7 +22,8 @@ import logging
 import shutil
 import time
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,7 +32,7 @@ import numpy as np
 from hitlcad import materials
 from hitlcad.analysis import motion
 from hitlcad.analysis.base import Analysis, Context, ResultCache, analysis_code, reported, result
-from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry
+from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry, Shapes
 from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.backends.workers import Superseded, Ticket
@@ -64,6 +65,7 @@ from hitlcad.kernel.errors import (
     BUILD_PART_FILE,
     BUILD_PLACED,
     HITLCAD_BUG,
+    OUTPUT_UNAVAILABLE,
     SOURCES_CHANGED,
     STRUCTURE_BACKEND,
     STRUCTURE_OUTPUT,
@@ -91,6 +93,9 @@ class Progress(Protocol):
     def doing(self, what: str) -> None:
         """What it does now: "checking motion (5 of 12)"."""
 
+    def found(self, results: list[Result]) -> None:
+        """An analysis finished: what it found, before the build ends."""
+
 
 class _Quiet:
     def shown(self, scene: str) -> None:
@@ -98,6 +103,24 @@ class _Quiet:
 
     def doing(self, what: str) -> None:
         pass
+
+    def found(self, results: list[Result]) -> None:
+        pass
+
+
+class _Clock:
+    """How long each step of a build took, in the order they ran (`BuildReport.durations`)."""
+
+    def __init__(self) -> None:
+        self.durations: dict[str, float] = {}
+
+    @contextmanager
+    def step(self, name: str) -> Iterator[None]:
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            self.durations[name] = round(time.monotonic() - started, 3)
 
 
 class _Failed(Exception):
@@ -108,12 +131,29 @@ class _Failed(Exception):
         self.results = results
 
 
-#: What the panel's file list says of the files every build writes; the sources, the 3D view and the preview it
-#: shows its own way. An exporter's files say its title.
+#: The outputs a build writes itself, beside the exporters plugins give, by the name design.json `outputs` gives
+#: them: a title (the panel's label for their files) and what they are for.
+OUTPUTS = {
+    "step": (
+        "STEP of the assembly, for CAD tools",
+        "model.step: the assembly as a STEP product structure, each part "
+        "shared by its instances; every part must be B-rep",
+    ),
+    "stl": ("STL of the assembly", "mesh.stl: the placed assembly as one mesh"),
+    "native": (
+        "The assembly in its modelling tool's own file (a Blender scene)",
+        "the assembly in the own file of each backend that writes one (Blender's model.blend)",
+    ),
+    "preview": (
+        "",
+        "preview.png: iso, front, right and top views on one sheet, where Blender is installed; the "
+        "panel shows it with the results",
+    ),
+}
+
+#: What the panel's file list says of the files every build writes; the sources and the 3D view it shows its own
+#: way. An output's files say its title.
 LABELS = {
-    "exchange": "STEP of the assembly, for CAD tools",
-    "native": "The assembly in its modelling tool's own file (a Blender scene)",
-    "mesh": "STL of the assembly",
     "part_exchange": "STEP of one part, in its own frame",
     "part_mesh": "STL of one part, in its own frame (as it is made)",
     "objects": "The part's named objects (glTF)",
@@ -148,8 +188,11 @@ class BuildPipeline:
         self.settings = settings
         self.analyses = list(analyses)
         self.exporters = exporters
+        #: Every output design.json may name, by name: its title (the panel's label for its files) and summary.
+        self.outputs = {**{n: (e.title, e.summary) for n, e in exporters.items()}, **OUTPUTS}
         self.renderer: Renderer = renderer or NullRenderer()
         self.parts_cache = PartCache(settings.cache_dir / "parts")
+        self.shapes = Shapes(settings.loaded_parts)
         self.results_cache = ResultCache(settings.cache_dir / "results")
         self.components_dir = settings.cache_dir / "components"
         self._component_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -162,7 +205,7 @@ class BuildPipeline:
 
     async def run(self, spec: BuildSpec, folder: Path, out_dir: Path, watched: Mapping[str, int] | None = None,
                   ticket: Ticket | None = None, progress: Progress | None = None) -> BuildReport:  # fmt: skip
-        """Build a design into `out_dir`, with every output; the report says how it went. `watched`: the loop
+        """Build a design into `out_dir`, with the outputs design.json names; the report says how it went. `watched`: the loop
         sweeps the human has watched move (`Context.watched`). A build whose `ticket` a newer one supersedes stops
         between its stages (`Superseded`), once what it is running is done. `progress` hears its scene as soon as
         its parts are in it, and each stage after."""
@@ -177,22 +220,25 @@ class BuildPipeline:
         out_dir.mkdir(parents=True)
         values = spec.values()
         log: list[str] = []
+        clock = _Clock()
 
         def finish(status: BuildStatus, **fields: Any) -> BuildReport:
             (out_dir / "build.log").write_text("\n".join(log), encoding="utf-8")
             report = BuildReport(status=status, configuration=spec.configuration, values=values,
-                                 duration_s=round(time.monotonic() - started, 3), **fields)  # fmt: skip
+                                 duration_s=round(time.monotonic() - started, 3), durations=clock.durations, **fields)  # fmt: skip
             report.artifacts.append(_artifact(out_dir, "build.log", "text/plain", "log"))
             (out_dir / REPORT_FILE).write_text(report.model_dump_json(indent=2), encoding="utf-8")
             return report
 
         try:
-            built, fields = await self._assemble(spec, folder, out_dir, ticket, values, log)
+            built, fields = await self._assemble(spec, folder, out_dir, ticket, values, log, clock)
             if outputs:
-                await asyncio.to_thread(assemble.write_scene, built, out_dir)
+                with clock.step("scene"):
+                    await asyncio.to_thread(assemble.write_scene, built, out_dir)
                 progress.shown(cadview.SCENE_FILE)
             progress.doing("measuring connectors")
-            await asyncio.to_thread(built.measure_connectors)
+            with clock.step("measuring connectors"):
+                await asyncio.to_thread(built.measure_connectors)
         except _Failed as e:
             return finish(BuildStatus.FAILED, results=e.results), None
         except HitlcadError as e:
@@ -200,22 +246,17 @@ class BuildPipeline:
                 raise
             return finish(BuildStatus.FAILED, results=[reported("build", e.diagnostic)]), None
         results = self._unregistered(spec, backends=False) + await asyncio.to_thread(
-            self._analyse, built, watched or {}, ticket, progress
+            self._analyse, built, watched or {}, ticket, progress, clock
         )
-        report_fields = {**fields, **await asyncio.to_thread(self._describe, built), "results": results}
+        with clock.step("report"):
+            report_fields = {**fields, **await asyncio.to_thread(self._describe, built), "results": results}
         if outputs:
             ticket.check()
             progress.doing("writing outputs")
-            try:
-                report_fields["artifacts"] = await self._outputs(built, out_dir, report_fields, ticket)
-            except ExceptionGroup as group:
-                if said := next((e for e in group.exceptions if isinstance(e, HitlcadError)), None):
-                    raise said from group  # a backend's own file, its build process said why
-                unwritten, others = group.split(OSError)
-                if others is not None:  # a bug: as itself, not as the group it surfaced in
-                    raise others.exceptions[0] from None
-                why = "; ".join(str(e) for e in unwritten.exceptions)
-                raise BUILD_OUTPUTS(f"could not write the build's outputs: {why}") from group
+            with clock.step("outputs"):
+                written, unavailable = await self.export(spec.design.outputs, built, out_dir, report_fields, ticket)
+            report_fields["artifacts"] = self._files(built, out_dir) + written
+            report_fields["results"] += unavailable
         return finish(BuildStatus.SUCCEEDED, **report_fields), built
 
     async def check_structure(
@@ -245,13 +286,14 @@ class BuildPipeline:
     # ------------------------------------------------------------------ building
 
     async def _assemble(self, spec: BuildSpec, folder: Path, out_dir: Path, ticket: Ticket, values: dict[str, Value],
-                        log: list[str]) -> tuple[BuiltDesign, dict[str, Any]]:  # fmt: skip
+                        log: list[str], clock: _Clock) -> tuple[BuiltDesign, dict[str, Any]]:  # fmt: skip
         design = spec.design
         src = out_dir / SOURCES
         write_sources(spec, folder, src)
         if missing := self._missing(spec, "build"):
             raise _Failed(missing)
-        plan = await self._plan(spec, folder, src, values, out_dir / "work" / "plan", ticket)
+        with clock.step("plan"):
+            plan = await self._plan(spec, folder, src, values, out_dir / "work" / "plan", ticket)
         ticket.check()
         log.append(plan.log)
         if plan.error:
@@ -260,9 +302,11 @@ class BuildPipeline:
         placements = {k: [fr.as_frame(m) for m in v] for k, v in plan.placements.items()}
         if unknown := _unknown(spec, plan, "build"):
             raise _Failed(unknown)
-        components = await self._components(spec, folder, out_dir, ticket, values, interfaces, placements)
+        with clock.step("components"):
+            components = await self._components(spec, folder, out_dir, ticket, values, interfaces, placements)
         ticket.check()
-        outcomes = await self._parts(spec, folder, src, ticket, values, interfaces, out_dir, log)
+        with clock.step("part files"):
+            outcomes = await self._parts(spec, folder, src, ticket, values, interfaces, out_dir, log)
         failed: dict[str, list[FileOutcome]] = {}  # files that failed alike (a worker that would not start)
         for o in outcomes:
             if o.error:
@@ -312,8 +356,8 @@ class BuildPipeline:
 
     def _unregistered(self, spec: BuildSpec, *, backends: bool) -> list[Result]:
         """What design.json names that this hitlcad does not provide: exporters, and (before a build) backends."""
-        out = [result("structure", STRUCTURE_OUTPUT, f"outputs: {name}", False, f"no exporter {name!r}; exporters: "
-                      f"{', '.join(self.exporters)}") for name in spec.design.outputs if name not in self.exporters]  # fmt: skip
+        out = [result("structure", STRUCTURE_OUTPUT, f"outputs: {name}", False, f"no output {name!r}; outputs: "
+                      f"{', '.join(self.outputs)}") for name in spec.design.outputs if name not in self.outputs]  # fmt: skip
         if backends:
             out += [result("structure", STRUCTURE_BACKEND, f"backend: {name}", False, f"backend {name!r} is not "
                            f"enabled; enabled: {', '.join(self.registry.names())}")
@@ -365,7 +409,7 @@ class BuildPipeline:
                 why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
                 raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
             shutil.copytree(target, out_dir / "components" / name)
-            out[name] = (report, load_built(report, bound, child_folder, out_dir / "components" / name))
+            out[name] = (report, load_built(report, bound, child_folder, out_dir / "components" / name, self.shapes))
         return out
 
     async def _parts(self, spec: BuildSpec, folder: Path, src: Path, ticket: Ticket, values: dict[str, Value],
@@ -406,10 +450,11 @@ class BuildPipeline:
         return [outcome for outcome, _ in built]  # type: ignore[misc]
 
     def _geometry(self, spec: BuildSpec, out_dir: Path, outcome: FileOutcome, bp: BuiltPart) -> PartGeometry:
+        mesh, step, objects = out_dir / bp.mesh, out_dir / bp.step if bp.step else None, out_dir / bp.objects
         return PartGeometry(
             name=bp.name, spec=spec.design.parts[bp.name], file=outcome.file, backend=spec.design.part_backend(bp.name),
-            mesh_file=out_dir / bp.mesh, step_file=out_dir / bp.step if bp.step else None,
-            objects_file=out_dir / bp.objects, view_file=out_dir / bp.view,
+            mesh_file=mesh, step_file=step, objects_file=objects, view_file=out_dir / bp.view,
+            shape=self.shapes.of(bp.name, mesh, step, objects),
             frames={k: [fr.as_frame(m) for m in v] for k, v in bp.connectors.items()}, catalog=bp.catalog,
             reads=outcome.reads, cached=outcome.cached, valid=bp.valid,
         )  # fmt: skip
@@ -417,25 +462,17 @@ class BuildPipeline:
     # ------------------------------------------------------------------ analyses and outputs
 
     def _analyse(self, built: BuiltDesign, watched: Mapping[str, int], ticket: Ticket,
-                 progress: Progress) -> list[Result]:  # fmt: skip
+                 progress: Progress, clock: _Clock) -> list[Result]:  # fmt: skip
         ctx = Context(built=built, settings=self.analysis_settings, cache=self.results_cache, watched=watched,
                       bodies=BuildBodies(built, self.analysis_settings, self.results_cache))  # fmt: skip
         out: list[Result] = []
         for n, analysis in enumerate(self.analyses, 1):
             ticket.check()
             progress.doing(f"checking {analysis.name} ({n} of {len(self.analyses)})")
-            try:
-                out += analysis.run(ctx)
-            except Exception as e:
-                d = diagnose(e)
-                if d.owner == "design":  # something the design declares does not fit together
-                    status = None if isinstance(e, Unmeasurable) else False
-                    out.append(reported("structure", d, analysis.name, status=status))
-                    continue
-                # a bug in one analysis: report it unverified, keep the others
-                logger.exception("analysis %s failed", analysis.name)
-                bug = HITLCAD_BUG.diagnostic(f"the {analysis.name} analysis failed: {d.message}")
-                out.append(reported(analysis.name, bug, analysis.name, status=None))
+            with clock.step(analysis.name):
+                found = _run(analysis, ctx)
+            out += found
+            progress.found(found)
         return out
 
     def _describe(self, built: BuiltDesign) -> dict[str, Any]:
@@ -448,26 +485,68 @@ class BuildPipeline:
                 "instances": instances,
                 "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built)}  # fmt: skip
 
-    async def _outputs(
-        self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any], ticket: Ticket
-    ) -> list[Artifact]:
-        # Backends write their own assembly files in their own processes, alongside the rest; either failing stops
-        # the other.
-        async with asyncio.TaskGroup() as group:
-            files = group.create_task(self._files(built, out_dir, fields))
-            native = group.create_task(self._native(built, out_dir, ticket))
-        return files.result() + native.result()
+    async def export(self, names: Sequence[str], built: BuiltDesign, out_dir: Path, report: dict[str, Any],
+                     ticket: Ticket) -> tuple[list[Artifact], list[Result]]:  # fmt: skip
+        """Write the outputs design.json names into a build's directory, all at once, each backend's own file in its
+        own process: their files, and a failing result for each this design cannot have."""
+        names = [n for n in dict.fromkeys(names) if n in self.outputs]  # an unknown one: the structure check says so
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(self._output(name, built, out_dir, report, ticket)) for name in names]
+        except ExceptionGroup as group:
+            if said := next((e for e in group.exceptions if isinstance(e, HitlcadError)), None):
+                raise said from group  # a backend's own file: its build process said why
+            unwritten, others = group.split(OSError)
+            if others is not None:  # a bug: as itself, not as the group it surfaced in
+                raise others.exceptions[0] from None
+            why = "; ".join(str(e) for e in unwritten.exceptions)
+            raise BUILD_OUTPUTS(f"could not write the build's outputs: {why}") from group
+        finally:
+            shutil.rmtree(out_dir / "work", ignore_errors=True)
+        artifacts: list[Artifact] = []
+        results: list[Result] = []
+        for name, task in zip(names, tasks, strict=True):
+            written, why = task.result()
+            label = self.outputs[name][0]
+            artifacts += [_artifact(out_dir, rel, media_type, name, label) for rel, media_type in written]
+            if why:
+                results.append(result("structure", OUTPUT_UNAVAILABLE, f"outputs: {name}", False, why))
+        return artifacts, results
 
-    async def _native(self, built: BuiltDesign, out_dir: Path, ticket: Ticket) -> list[Artifact]:
-        """The assembly in the format of each backend that built its parts, components' included."""
-        tree = assemble.tree(built)
-        names = sorted({part.backend for part in assemble.all_parts(built)})
-        written = await asyncio.gather(*(self._backend(name).write_assembly(ticket, built.folder, tree, out_dir, out_dir / "work" / name)
-                                         for name in names))  # fmt: skip
-        shutil.rmtree(out_dir / "work", ignore_errors=True)
-        return [_artifact(out_dir, rel, media_type, "native") for rel, media_type in filter(None, written)]
+    async def _output(self, name: str, built: BuiltDesign, out_dir: Path, report: dict[str, Any],
+                      ticket: Ticket) -> tuple[list[tuple[str, str]], str]:  # fmt: skip
+        """One output's files (path, media type), or why this design cannot have it."""
+        if name == "step":
+            if not await asyncio.to_thread(assemble.step_assembly, built, out_dir / STEP_FILE):
+                return [], "a part is a mesh, not B-rep: the assembly has no exact shape to write as STEP"
+            return [(STEP_FILE, "model/step")], ""
+        if name == "stl":
+            await asyncio.to_thread(built.mesh.export, out_dir / MESH_FILE)
+            return [(MESH_FILE, "model/stl")], ""
+        if name == "native":
+            tree = assemble.tree(built)
+            backends = sorted({part.backend for part in assemble.all_parts(built)})
+            written = await asyncio.gather(*(self._backend(b).write_assembly(ticket, built.folder, tree, out_dir,
+                                                                             out_dir / "work" / b) for b in backends))  # fmt: skip
+            return [w for w in written if w], ""
+        if name == "preview":
+            preview = await self.preview(built, out_dir, report.get("metrics"))
+            return [(preview.name, "image/png")] if preview else [], ""
+        return await asyncio.to_thread(self.exporters[name].export, built, report, out_dir), ""
 
-    async def _files(self, built: BuiltDesign, out_dir: Path, fields: dict[str, Any]) -> list[Artifact]:
+    async def preview(self, built: BuiltDesign, out_dir: Path, metrics: Any) -> Path | None:
+        """The assembly's rendered views in a build's directory (the agent's images ask for them too), or None
+        where no renderer is installed."""
+        work = out_dir / "work" / "preview"
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            await asyncio.to_thread(built.mesh.export, work / MESH_FILE)
+            return await self.renderer.render(work / MESH_FILE, out_dir, metrics)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def _files(self, built: BuiltDesign, out_dir: Path) -> list[Artifact]:
+        """What every build writes, for review: its sources, each part's own files and the 3D view."""
         artifacts = [_artifact(out_dir, rel.relative_to(out_dir).as_posix(), "text/x-python", "source")
                      for rel in sorted((out_dir / SOURCES).rglob("*.py"))]  # fmt: skip
         for part in built.parts.values():
@@ -481,22 +560,22 @@ class BuildPipeline:
             artifacts.append(
                 _artifact(out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects")
             )
-        await asyncio.to_thread(built.mesh.export, out_dir / MESH_FILE)
-        artifacts.append(_artifact(out_dir, MESH_FILE, "model/stl", "mesh"))
-        if await asyncio.to_thread(assemble.step_assembly, built, out_dir / STEP_FILE):
-            artifacts.append(_artifact(out_dir, STEP_FILE, "model/step", "exchange"))
-        artifacts.append(_artifact(out_dir, cadview.SCENE_FILE, "application/json", "view"))
-        metrics = fields.get("metrics")
-        preview = await self.renderer.render(out_dir / MESH_FILE, out_dir, metrics)
-        if preview:
-            artifacts.append(_artifact(out_dir, preview.name, "image/png", "preview"))
-        for name in built.spec.outputs:
-            if name not in self.exporters:  # the structure check says so
-                continue
-            exporter = self.exporters[name]
-            for rel, media_type in await asyncio.to_thread(exporter.export, built, fields, out_dir):
-                artifacts.append(_artifact(out_dir, rel, media_type, name, exporter.title))
-        return artifacts
+        return [*artifacts, _artifact(out_dir, cadview.SCENE_FILE, "application/json", "view")]
+
+
+def _run(analysis: Analysis, ctx: Context) -> list[Result]:
+    """An analysis's results; what it raises is the design's problem, or a bug reported unverified, so the others
+    still run."""
+    try:
+        return analysis.run(ctx)
+    except Exception as e:
+        d = diagnose(e)
+        if d.owner == "design":  # something the design declares does not fit together
+            status = None if isinstance(e, Unmeasurable) else False
+            return [reported("structure", d, analysis.name, status=status)]
+        logger.exception("analysis %s failed", analysis.name)
+        bug = HITLCAD_BUG.diagnostic(f"the {analysis.name} analysis failed: {d.message}")
+        return [reported(analysis.name, bug, analysis.name, status=None)]
 
 
 def _unknown(spec: BuildSpec, plan: PlanOutcome, analysis: str) -> list[Result]:
@@ -564,18 +643,20 @@ def bom(built: BuiltDesign, level: int = 0, prefix: str = "", times: int = 1) ->
     return out
 
 
-def load_built(report: BuildReport, spec: BuildSpec, folder: Path, out_dir: Path) -> BuiltDesign:
+def load_built(report: BuildReport, spec: BuildSpec, folder: Path, out_dir: Path, shapes: Shapes) -> BuiltDesign:
     """A built design back from its build directory and report: as the analyses saw it, but for each part's B-rep
-    check (`PartGeometry.valid`), which the report keeps only as the part analysis's result."""
+    check (`PartGeometry.valid`), which the report keeps only as the part analysis's result. Its parts' shapes come
+    from `shapes` where a build loaded the same files."""
     design = spec.design
     parts = {}
     for pr in report.parts:
         stl = out_dir / "parts" / f"{pr.name}.stl"
         step = out_dir / "parts" / f"{pr.name}.step"
+        brep, objects = step if step.is_file() else None, out_dir / "parts" / f"{pr.name}.glb"
         parts[pr.name] = PartGeometry(
             name=pr.name, spec=design.parts[pr.name], file=pr.file, backend=pr.backend, mesh_file=stl,
-            step_file=step if step.is_file() else None, objects_file=out_dir / "parts" / f"{pr.name}.glb",
-            view_file=out_dir / "parts" / f"{pr.name}{cadview.VIEW_SUFFIX}",
+            step_file=brep, objects_file=objects, view_file=out_dir / "parts" / f"{pr.name}{cadview.VIEW_SUFFIX}",
+            shape=shapes.of(pr.name, stl, brep, objects),
             frames={k: [fr.as_frame(m) for m in c.frames] for k, c in pr.connectors.items()},
             catalog=pr.catalog, reads=pr.reads, cached=pr.cached,
         )  # fmt: skip
@@ -583,7 +664,7 @@ def load_built(report: BuildReport, spec: BuildSpec, folder: Path, out_dir: Path
     for inst in report.instances:
         placements.setdefault(inst.part or inst.component, []).append(fr.as_frame(inst.transform))  # type: ignore[arg-type]
     components = {name: load_built(child, spec.components[name], (folder / design.components[name].design).resolve(),
-                                   out_dir / "components" / name)
+                                   out_dir / "components" / name, shapes)
                   for name, child in report.components.items()}  # fmt: skip
     built = BuiltDesign(
         spec=design, folder=folder, values=report.values, interfaces={i.name: i.value for i in report.interfaces},

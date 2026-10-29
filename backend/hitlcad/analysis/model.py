@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -47,23 +49,21 @@ class AnalysisSettings:
     motion_solver: Solver | None = field(default=None, metadata={"doc": "That solver, None when no plugin gives it"})
 
 
-@dataclass
-class PartGeometry:
-    """One part, built once, in its own frame."""
+class Shape:
+    """A part's geometry as its files hold it: its mesh, its solid, its B-rep features, its metrics and colliders,
+    each loaded or measured once, when first asked for. Every build whose part has the same files shares one
+    (`Shapes`), so nothing may change what it gives."""
 
-    name: str
-    spec: PartSpec
-    file: str
-    backend: str
-    mesh_file: Path
-    step_file: Path | None
-    objects_file: Path
-    view_file: Path
-    frames: dict[str, list[fr.Frame]]
-    catalog: CatalogInfo | None
-    reads: Reads
-    cached: bool
-    valid: bool | None = None
+    def __init__(self, name: str, mesh_file: Path, step_file: Path | None, objects_file: Path) -> None:
+        self.name = name
+        self.files(mesh_file, step_file, objects_file)
+        self._not_round: dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider | None]] = {}
+        self._turned: dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider]] = {}
+
+    def files(self, mesh_file: Path, step_file: Path | None, objects_file: Path) -> None:
+        """Where it reads what it has not yet loaded: the latest build's copy of the same files, which a build that
+        supersedes an older one may have cleared."""
+        self.mesh_file, self.step_file, self.objects_file = mesh_file, step_file, objects_file
 
     @cached_property
     def mesh(self) -> trimesh.Trimesh:
@@ -100,10 +100,6 @@ class PartGeometry:
         """Its solid's collider, in its own frame: every instance's, placed (`Leaf.collider`)."""
         return Collider(self.manifold)
 
-    @cached_property
-    def _not_round(self) -> dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider | None]]:
-        return {}
-
     def not_round(
         self, origin: np.ndarray, direction: np.ndarray, tolerance: float
     ) -> tuple[manifold3d.Manifold, Collider | None]:
@@ -117,10 +113,6 @@ class PartGeometry:
             solid = not_round(self.manifold, fr.on_axis(origin, direction)[:3], tolerance)
             self._not_round[key] = solid, None if solid.is_empty() else Collider(solid)
         return self._not_round[key]
-
-    @cached_property
-    def _turned(self) -> dict[tuple[object, ...], tuple[manifold3d.Manifold, Collider]]:
-        return {}
 
     def turned(self, origin: np.ndarray, direction: np.ndarray, tolerance: float,
                position_mm: float) -> tuple[manifold3d.Manifold, Collider]:  # fmt: skip
@@ -146,6 +138,93 @@ class PartGeometry:
         if self.solid is None:
             raise Unmeasurable(f"part {self.name} is not a closed mesh")
         return self.solid
+
+
+class Shapes:
+    """Part shapes by their files' content, the `limit` used last, shared by the builds of this process and the
+    revisions they load back: a part no edit changed is not loaded or measured again."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self._kept: OrderedDict[str, Shape] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def of(self, name: str, mesh_file: Path, step_file: Path | None, objects_file: Path) -> Shape:
+        content = hashlib.sha256(name.encode())
+        for file in (mesh_file, step_file, objects_file):
+            content.update(file.read_bytes() if file else b"")
+        key = content.hexdigest()
+        with self._lock:
+            shape = self._kept.pop(key, None)
+            if shape is None:
+                shape = Shape(name, mesh_file, step_file, objects_file)
+            else:
+                shape.files(mesh_file, step_file, objects_file)
+            self._kept[key] = shape
+            while len(self._kept) > self.limit:
+                self._kept.popitem(last=False)
+        return shape
+
+
+@dataclass
+class PartGeometry:
+    """One part, built once, in its own frame: its files in this build, and the shape they hold."""
+
+    name: str
+    spec: PartSpec
+    file: str
+    backend: str
+    mesh_file: Path
+    step_file: Path | None
+    objects_file: Path
+    view_file: Path
+    shape: Shape
+    frames: dict[str, list[fr.Frame]]
+    catalog: CatalogInfo | None
+    reads: Reads
+    cached: bool
+    valid: bool | None = None
+
+    @property
+    def mesh(self) -> trimesh.Trimesh:
+        return self.shape.mesh
+
+    @property
+    def mesh_issues(self) -> list[MeshIssue]:
+        return self.shape.mesh_issues
+
+    @property
+    def solid(self) -> manifold3d.Manifold | None:
+        return self.shape.solid
+
+    @property
+    def metrics(self) -> MeshMetrics:
+        return self.shape.metrics
+
+    @property
+    def features(self) -> Features:
+        return self.shape.features
+
+    @property
+    def collider(self) -> Collider:
+        return self.shape.collider
+
+    @property
+    def manifold(self) -> manifold3d.Manifold:
+        return self.shape.manifold
+
+    @property
+    def digest(self) -> str:
+        return self.shape.digest
+
+    def not_round(
+        self, origin: np.ndarray, direction: np.ndarray, tolerance: float
+    ) -> tuple[manifold3d.Manifold, Collider | None]:
+        return self.shape.not_round(origin, direction, tolerance)
+
+    def turned(self, origin: np.ndarray, direction: np.ndarray, tolerance: float,
+               position_mm: float) -> tuple[manifold3d.Manifold, Collider]:  # fmt: skip
+        return self.shape.turned(origin, direction, tolerance, position_mm)
 
     @property
     def material(self) -> str | None:

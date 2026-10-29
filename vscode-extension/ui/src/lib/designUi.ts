@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { RevisionInfo } from "../api/types";
+import type { BuildProgress, RevisionInfo } from "../api/types";
 import { toExtension } from "./host";
 import type { Inspection } from "./inspection";
 
@@ -76,4 +76,10 @@ export function baseRevision(revisions: RevisionInfo[], current: RevisionInfo | 
   if (chosen !== null && chosen !== current.id) return revisions.find((r) => r.id === chosen) ?? null;
   const before = revisions.filter((r) => r.id < current.id);
   return [...before].reverse().find((r) => r.status === "succeeded") ?? before[before.length - 1] ?? null;
+}
+
+/** The build running, when it is what the view shows: following the latest revision of its configuration, once its
+ * parts are placed. Its scene and what its analyses have found replace the last revision's until its own comes. */
+export function shownBuild(running: BuildProgress | null | undefined, ui: DesignUi): BuildProgress | null {
+  return ui.revision === null && running?.scene && running.configuration === ui.configuration ? running : null;
 }

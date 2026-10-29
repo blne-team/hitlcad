@@ -1,8 +1,9 @@
 """Exporters: files made from a build, chosen per design by design.json `outputs`.
 
 An exporter implements `Exporter`, and a plugin gives it from its `hitlcad_exporters` hook. hitlcad's own are
-`bom` and `3mf` (`hitlcad.builtin.exports`), `urdf` and `sdf` (`hitlcad.builtin.robot`). The assembly STEP, the
-parts' own STEP and STL, the mesh and the 3D view are written on every build and need no exporter.
+`bom` and `3mf` (`hitlcad.builtin.exports`), `urdf` and `sdf` (`hitlcad.builtin.robot`). The build writes the
+assembly STEP, its mesh, each backend's own assembly file and the rendered views itself, when `outputs` names them
+(`build.pipeline.OUTPUTS`, whose names an exporter cannot take); the parts' own files and the 3D view it writes always.
 """
 
 from __future__ import annotations

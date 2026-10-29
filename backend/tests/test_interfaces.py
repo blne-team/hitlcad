@@ -101,6 +101,7 @@ async def test_a_build_s_parts_are_seen_before_they_are_checked(
         progress = core.designs.get(state.id).building
         assert progress is not None and progress.revision == 1 and progress.scene == cadview.SCENE_FILE
         assert progress.doing == f"checking {first.name} (1 of {len(core.builds.pipeline.analyses)})"
+        assert progress.results == []  # nothing checked yet
         files = f"/api/designs/{state.id}/revisions/1/files"
         scene = (await api.get(f"{files}/{progress.scene}")).json()
         part_view = await api.get(f"{files}/{scene['instances'][0]['path']}")
@@ -116,7 +117,14 @@ async def test_a_build_s_parts_are_seen_before_they_are_checked(
             live.append(event)
     shown = next(n for n, e in enumerate(live) if e.scene)
     assert [e.doing for e in live[: shown + 1]] == ["building its parts"] * (shown + 1)  # seen before anything checked
-    assert live[-1].doing == "writing outputs" and all(e.seq == 0 and e.revision == revision.id for e in live)
+    assert all(e.seq == 0 and e.revision == revision.id for e in live)
+    # each analysis's results came as it finished, grouped as the report groups them
+    found = [len(e.results) for e in live]
+    assert found == sorted(found) and live[-1].results == revision.report.results
+    assert live[-1].problems == revision.report.problems and live[-1].tally == revision.report.tally
+    analyses = [a.name for a in core.builds.pipeline.analyses]
+    assert list(revision.report.durations) == ["plan", "components", "part files", "scene", "measuring connectors",
+                                               *analyses, "report", "outputs"]  # fmt: skip
     assert not {"build_progress", "build_stopped"} & {e.type for e in core.designs.store.events(state.id)}
     assert core.designs.get(state.id).building is None
     assert (await api.get(f"/api/designs/{state.id}/revisions/1/files/parts/box.step")).status_code == 200

@@ -31,5 +31,6 @@
     {"text": "Height follows the plate and bosses", "check": {"kind": "size", "target": "plate", "axis": "z", "min": "interfaces.overall_height", "max": "interfaces.overall_height"}},
     {"text": "Walls retain at least 1 mm", "check": {"kind": "wall", "target": "plate", "min": 1}}
   ],
+  "outputs": ["step"],
   "configurations": {"compact": {"width": 40, "depth": 30, "boss_height": 4}}
 }

@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
@@ -26,6 +28,7 @@ from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.report import Revision
 from hitlcad.kernel import plugins
 from hitlcad.kernel.errors import MOTION_SAMPLED, HitlcadError, agent_text, diagnose
+from hitlcad.render.base import PREVIEW_FILE
 from hitlcad.review import measure
 
 log = logging.getLogger(__name__)
@@ -65,12 +68,22 @@ def build_mcp(core: HitlCad) -> MCPServer:
 
         return wrapper
 
-    def images(design_id: str, rev: Revision) -> list[str | Image]:
-        out: list[str | Image] = []
-        preview = rev.report.artifact("preview")
+    rendering: defaultdict[Path, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def previewed(design_id: str, rev: Revision) -> Path | None:
+        """A revision's rendered views: its `preview` output, else rendered now and kept with it."""
         directory = feedback.revision_dir(design_id, rev)
-        if preview and (directory / preview.path).is_file():
-            out += [describe.PREVIEW_CAPTION, Image(data=(directory / preview.path).read_bytes(), format="png")]
+        if written := rev.report.artifact("preview"):
+            return directory / written.path
+        async with rendering[directory]:
+            if (directory / PREVIEW_FILE).is_file():
+                return directory / PREVIEW_FILE
+            return await core.pipeline.preview(feedback.built(design_id, rev), directory, rev.report.metrics)
+
+    async def images(design_id: str, rev: Revision) -> list[str | Image]:
+        out: list[str | Image] = []
+        if rev.report.status == "succeeded" and (preview := await previewed(design_id, rev)) and preview.is_file():
+            out += [describe.PREVIEW_CAPTION, Image(data=preview.read_bytes(), format="png")]
         leads = [rev.report.results[p.findings[0].results[0]] for p in rev.report.problems if p.status == "fail"]
         failing = [r for r in leads if r.analysis in ("mate", "fastener", "relation")]  # one per problem
         if failing and rev.report.status == "succeeded":
@@ -101,13 +114,15 @@ def build_mcp(core: HitlCad) -> MCPServer:
     @mcp.tool(structured_output=False)
     @guard
     async def list_backends() -> str:
-        """CAD backends with what each is good at, the materials, catalog providers and exporters there are, and the
+        """CAD backends with what each is good at, the materials, catalog providers and outputs there are, and the
         plugins installed (a design names those it needs in design.json `plugins`)."""
         lines = ["Backends:"] + [f"- {b.name}: {b.title} — {b.summary}" for b in registry.available()]
         lines.append("Materials (add your own in a materials.json): " + materials.names(materials.builtin()))
         lines.append("Catalog providers: " + "; ".join(f"{p.name} ({p.usage})" for p in catalogs.providers().values()))
-        lines.append("Exporters (design.json outputs): " + "; ".join(f"{e.name}: {e.summary}"
-                                                                     for e in core.pipeline.exporters.values()))  # fmt: skip
+        lines.append(
+            "Outputs (each build writes those design.json `outputs` names): "
+            + "; ".join(f"{name}: {summary}" for name, (_, summary) in core.pipeline.outputs.items())
+        )
         lines += [
             "Model packages (import from part files; see the backend skill for recipes):",
             *describe.model_package_lines(),
@@ -173,18 +188,18 @@ def build_mcp(core: HitlCad) -> MCPServer:
                 out.append(revision_summary(rev, limit=5,
                                             previous=designs.earlier(state.id, rev.id, rev.configuration)))  # fmt: skip
                 if include_images:
-                    out += images(state.id, rev)
+                    out += await images(state.id, rev)
             return out
         rev = await builds.build(state.id, summary, configuration=configuration)
         text = revision_summary(rev, [scope] if scope else None, limit=core.settings.explore_limit if scope else 5,
                                 previous=designs.earlier(state.id, rev.id, rev.configuration))  # fmt: skip
         if rev.report.status == "succeeded" and configuration is None:
-            text += f"\nOutputs in {designs.folder(state.id).build_dir}/ (the human can open them there)."
+            text += f"\nFiles in {designs.folder(state.id).build_dir}/ (the human can open them there)."
         if pins := len(designs.get(state.id).open_pins):
             text += f"\n{pins} open pin(s) from the human: explore_design(path, focus='review') lists them."
         if loops := len({r.cause for r in rev.report.results if r.code == MOTION_SAMPLED.code}):
             text += f"\n{loops} loop motion(s) checked only at solved positions: ask the human to watch them move."
-        return [text, *images(state.id, rev)] if include_images else [text]
+        return [text, *await images(state.id, rev)] if include_images else [text]
 
     @mcp.tool(structured_output=False)
     @guard
@@ -206,7 +221,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
                 else graph.ctx.revision
             )
             if rev:
-                out += images(state.id, rev)
+                out += await images(state.id, rev)
         return out
 
     @mcp.tool(structured_output=False)

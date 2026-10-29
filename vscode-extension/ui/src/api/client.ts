@@ -42,6 +42,8 @@ export const api = {
   /** Refused (409) where design.json no longer has the `expected` values the edit was made on. */
   editParameters: (id: string, values: Record<string, ParamValue>, expected: Record<string, ParamValue>) =>
     send<Revision>("POST", `/api/designs/${id}/parameters`, { values, expected }),
+  editOutputs: (id: string, outputs: string[], expected: string[]) =>
+    send<Revision>("POST", `/api/designs/${id}/outputs`, { outputs, expected }),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
   structure: (id: string, configuration: string | null) =>
     request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),

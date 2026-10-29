@@ -4,7 +4,8 @@ the component's own build."""
 
 from __future__ import annotations
 
-from hitlcad.analysis.base import Context, member_failed, result, structural
+from hitlcad.analysis.base import Context, member_code, member_failed, result, structural
+from hitlcad.core.checks import Process, ProcessFinding
 from hitlcad.core.report import Result
 from hitlcad.kernel.errors import (
     CONNECTOR_COUNT,
@@ -103,7 +104,7 @@ class Manufacturing:
             if process is None or part.mesh.is_empty:  # an empty part fails as a part
                 continue
             try:
-                findings = process.checks(ctx.bodies.part(name))
+                findings = _findings(ctx, name, process)
             except Exception as e:  # the process's own code: its other parts, and the build, go on
                 out.append(member_failed(self.name, process, f"the {process.process} checks of {name}", e, [name]))
                 continue
@@ -111,6 +112,21 @@ class Manufacturing:
                 out.append(result(self.name, of(f"manufacturing.{finding.name}"), f"{name}: {finding.name}",
                                   finding.passed, finding.detail, [name], severity="warning"))  # fmt: skip
         return out
+
+
+def _findings(ctx: Context, name: str, process: Process) -> list[ProcessFinding]:
+    """A part's findings for its process, kept by all a process check reads of the part on its own: its mesh, its
+    material, the tolerances and sampling, and the process with its code. A part no edit touched is not checked
+    again."""
+    part = ctx.built.parts[name]
+    material = ctx.built.materials.get(part.material or "")
+    kind = type(process)
+    key = ctx.cache.key("process", part.digest, material.model_dump(mode="json") if material else part.material,
+                        ctx.tol.model_dump(mode="json"), ctx.settings.mesh_tolerance_mm, ctx.settings.wall_samples,
+                        ctx.settings.overlap_mm3, f"{kind.__module__}.{kind.__qualname__}", member_code(kind.__module__),
+                        process.model_dump(mode="json"))  # fmt: skip
+    found = ctx.cache.get_or(key, lambda: [f.model_dump(mode="json") for f in process.checks(ctx.bodies.part(name))])
+    return [ProcessFinding.model_validate(f) for f in found]
 
 
 class Requirements:

@@ -1407,6 +1407,7 @@
     }
   ],
   "outputs": [
+    "step",
     "bom",
     "3mf"
   ]

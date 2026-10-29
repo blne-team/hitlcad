@@ -560,6 +560,25 @@ async def test_a_parameter_edit_made_on_values_an_agent_has_since_changed_is_ref
     assert json.loads((folder / "design.json").read_text(encoding="utf-8"))["parameters"][0]["value"] == 15
 
 
+@pytest.mark.geometry
+async def test_the_outputs_the_human_chooses_are_written_by_the_next_build(core: HitlCad, tmp_path: Path) -> None:
+    """The panel asks for a STEP of the assembly as an agent would: in design.json `outputs`, then a build, whose
+    parts come from the cache."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    assert (await core.builds.build(state.id)).report.artifact("step") is None  # review needs no STEP of the whole
+    revision = await core.builds.edit_outputs(state.id, ["step"], [])
+    assert revision.origin == "outputs_edit" and json.loads((folder / "design.json").read_text())["outputs"] == ["step"]
+    assert revision.report.artifact("step") is not None and (folder / "build" / "model.step").is_file()
+    assert all(part.cached for part in revision.report.parts)
+    with pytest.raises(HitlcadError, match="its outputs are now step") as refused:
+        await core.builds.edit_outputs(state.id, [], [])  # made on what the panel showed before
+    assert (refused.value.code, http_status(refused.value.diagnostic)) == ("conflict.design_changed", 409)
+    with pytest.raises(HitlcadError, match="no output 'dwg'") as unknown:
+        await core.builds.edit_outputs(state.id, ["dwg"], ["step"])
+    assert unknown.value.owner == "request"
+
+
 def test_design_json_changed_while_it_is_edited_is_not_overwritten(tmp_path: Path) -> None:
     folder = DesignFolder(copy_design("tiny", tmp_path / "tiny"))
 

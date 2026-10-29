@@ -29,6 +29,7 @@ export type Pin = Schemas["Pin"];
 /** Where a range of motion was when a pin was placed. */
 export type PinMotion = Schemas["PinMotion"];
 export type DesignState = Schemas["DesignState"];
+export type BuildProgress = Schemas["BuildProgress"];
 
 /** One message of a design's event stream. */
 export type DesignEvent = Schemas["DesignEvent"];

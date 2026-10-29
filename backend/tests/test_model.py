@@ -256,14 +256,15 @@ def test_overlapping_shells_load_as_the_solid_they_make(tmp_path: Path) -> None:
 
 
 def _part(tmp_path: Path, name: str, mesh: Any) -> Any:
-    from hitlcad.analysis.model import PartGeometry
+    from hitlcad.analysis.model import PartGeometry, Shape
     from hitlcad.core.design import PartSpec
     from hitlcad.core.report import Reads
 
     mesh.export(tmp_path / f"{name}.stl")
     return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
                         mesh_file=tmp_path / f"{name}.stl", step_file=None, objects_file=tmp_path / f"{name}.glb",
-                        view_file=tmp_path / f"{name}.view", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+                        view_file=tmp_path / f"{name}.view", shape=Shape(name, tmp_path / f"{name}.stl", None, tmp_path / f"{name}.glb"),
+                        frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
 
 
 def test_one_closedness_test_measures_solids_that_touch_along_an_edge(tmp_path: Path) -> None:
@@ -312,7 +313,7 @@ def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:
 def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> None:
     """Its relations then say so for every frame, never reading the nominals that are not there."""
     from hitlcad.analysis.base import Context
-    from hitlcad.analysis.model import BuiltDesign, PartGeometry
+    from hitlcad.analysis.model import BuiltDesign, PartGeometry, Shape
     from hitlcad.analysis.relations import Relations
     from hitlcad.core.report import Reads
 
@@ -323,7 +324,8 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
     ))  # fmt: skip
     parts = {name: PartGeometry(name=name, spec=spec.parts[name], file="parts/a.py", backend="build123d",
                                 mesh_file=Path("unused.stl"), step_file=None, objects_file=Path("unused.glb"),
-                                view_file=Path("unused.view"), frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
+                                view_file=Path("unused.view"), shape=Shape(name, Path("unused.stl"), None, Path("unused.glb")),
+                                frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
                                 reads=Reads(), cached=False)
              for name in ("a", "b")}  # fmt: skip
     built = BuiltDesign(spec=spec, folder=Path(), values={"w": 10}, interfaces={}, interface_reads={},

@@ -123,8 +123,13 @@ class Table:
         """The table's own b at its a = `x`."""
         return float(self._f(self._x(x - self.start)))
 
+    @cached_property
+    def _zero(self) -> float:
+        """The table's own b where a sits as assembled: what `at` counts from."""
+        return self.of(self.start)
+
     def at(self, a: float) -> float:
-        return self.of(self.start + a) - self.of(self.start)
+        return self.of(self.start + a) - self._zero
 
     def slope(self, a: float) -> float:
         return float(self._df(self._x(a)))
@@ -154,7 +159,7 @@ class Table:
         inner = ca.DM(breaks[1:-1])
         dx = x - ca.pw_const(x, inner, ca.DM(breaks[:-1]))
         y = sum(ca.pw_const(x, inner, ca.DM(c[k])) * dx ** (3 - k) for k in range(4))
-        return y - self.of(self.start)
+        return y - self._zero
 
 
 @dataclass(frozen=True)

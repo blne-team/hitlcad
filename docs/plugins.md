@@ -40,7 +40,7 @@ A package may contribute any number of each.
 | `hitlcad_processes` | `Process` subclasses with a `process` literal and `findings` | `processes`: fdm, resin, cnc_milling, sheet_metal, injection_molding |
 | `hitlcad_backends` | factories by name, each taking the settings | `build123d`, `blender` |
 | `hitlcad_catalogs` | `CatalogProvider`s | `catalogs`: bd_warehouse, step |
-| `hitlcad_exporters` | `Exporter`s | `exports`: bom, 3mf; `robot`: urdf, sdf |
+| `hitlcad_exporters` | `Exporter`s, each an output design.json `outputs` can name (`step`, `stl`, `native` and `preview` are the build's own) | `exports`: bom, 3mf; `robot`: urdf, sdf |
 | `hitlcad_solvers` | `Solver`s by name: where a block of an input's motion settles at each position, which motion checks (`Settings.solver`) | `solvers`: sqp |
 | `hitlcad_analyses` | `Analysis` objects, each at a `stage` | none: hitlcad's analyses are core |
 | `hitlcad_materials` | `materials.json` paths | `materials` |
@@ -63,7 +63,12 @@ The analyses hitlcad runs (structure, parts, connectors, mates, relations, faste
 interference, motion, manufacturing, requirements) are core: each loops over what a design declares
 and asks each member to verify itself. A plugin's analysis is for checks of a new kind (stress, cost,
 a print simulation); it runs at its stage, `structure`, `parts`, `connectors`, `joints`, `assembly`,
-`motion`, `process` or `requirements`, so cause still comes before effect.
+`motion`, `process` or `requirements`, so cause still comes before effect. Its results reach the panel
+as it finishes, and the report gives its duration (`BuildReport.durations`).
+
+A process's findings for a part are kept by all a check reads of the part on its own (its mesh, its
+material, the tolerances and sampling, the process's fields) and by the code of the plugin that gives
+the process, so a part no edit touched is not checked again. A process check reads nothing else.
 
 ### hitlcad's own plugins
 
@@ -87,7 +92,7 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 
 ### What stays core
 
-- **Worker** (`worker/`): the plugin registry, diagnostics and their catalog.
+- **Kernel** (`kernel/`): the plugin registry, diagnostics and their catalog.
 - **The design's skeleton**: `DesignSpec`, `PartSpec`, components, configurations, parameters,
   requirements, fastener sets and `plugins`, with slots the installed members fill; the bases members
   derive from (`Connector`, `Mate`, `Relation`, `Check`, `Process`).
@@ -221,7 +226,7 @@ hitlcad (`diagnose`).
 | `plugin` | an installed plugin: missing, broken, in conflict | tell the human | a tool error or an unverified result; HTTP 503; the panel |
 | `hitlcad` | a bug | stop, and tell the human | a tool error saying not to change the design; HTTP 500 |
 
-Each surface presents a diagnostic one way (`worker/errors.py`): `agent_text` for the MCP tools and
+Each surface presents a diagnostic one way (`kernel/errors.py`): `agent_text` for the MCP tools and
 the CLI, `http_status` and an `ErrorBody` (`detail` and the diagnostic) for REST, an `error` event
 carrying the diagnostic for the panel.
 

@@ -28,7 +28,7 @@ from hitlcad.kernel.model import Model
 
 Status = Literal["pass", "fail", "unverified"]
 #: What made a revision: files saved, the panel's parameters, or a review (the human watched a traced motion)
-Origin = Literal["file", "parameter_edit", "review"]
+Origin = Literal["file", "parameter_edit", "outputs_edit", "review"]
 Severity = Literal["error", "warning", "info"]
 
 
@@ -341,6 +341,11 @@ class BuildReport(Model):
     configuration: str | None = None
     values: dict[str, Value] = Field(default_factory=dict, description="The parameter values built")
     duration_s: float
+    durations: dict[str, float] = Field(
+        default_factory=dict,
+        description="Seconds each step took, in the order they ran: the plan, components, part files, the scene, "
+        "measuring connectors, each analysis by its name, the report and the outputs; a build that fails stops early",
+    )
     metrics: MeshMetrics | None = Field(default=None, description="The whole placed assembly")
     mass: MassProperties | None = None
     interfaces: list[InterfaceValue] = Field(default_factory=list)

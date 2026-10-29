@@ -122,7 +122,8 @@ async def test_a_plugin_s_process_and_building_block_build_and_its_failures_are_
         raise ZeroDivisionError("division by zero")
 
     monkeypatch.setattr(LaserCutProcess, "checks", broken)
-    report = await core.pipeline.run(spec, folder, tmp_path / "again")
+    thicker = spec.model_copy(update={"overrides": {"sheet": 4}})  # a plate no build has checked yet
+    report = await core.pipeline.run(thicker, folder, tmp_path / "again")
     (failed,) = [r for r in report.results if r.analysis == "manufacturing"]
     assert (failed.code, failed.status) == ("plugin.error", "unverified")
     assert failed.detail == ("hitlcad-lasercut 0.1.0: the laser_cut checks of plate: ZeroDivisionError: division by "

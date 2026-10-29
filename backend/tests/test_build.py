@@ -438,9 +438,12 @@ async def test_a_bug_writing_the_outputs_surfaces_as_itself(
     def crash(*_: Any) -> None:
         raise ValueError("boom")
 
-    monkeypatch.setattr(assemble, "write_scene", crash)
+    monkeypatch.setattr(assemble, "step_assembly", crash)
+    folder = copy_design("tiny", tmp_path / "tiny")
+    design = json.loads((folder / "design.json").read_text(encoding="utf-8"))
+    (folder / "design.json").write_text(json.dumps({**design, "outputs": ["step", "stl"]}), encoding="utf-8")
     with pytest.raises(ValueError, match="boom"):
-        await build(core, copy_design("tiny", tmp_path / "tiny"), tmp_path / "out")
+        await build(core, folder, tmp_path / "out")
 
 
 @pytest.mark.smoke
@@ -655,6 +658,7 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
                 "name": "Knob",
                 "backend": "build123d",
                 "ground": "plate",
+                "outputs": ["step", "stl", "native"],
                 "parameters": [{"name": "r", "value": 8, "min": 2, "max": 20}],
                 "parts": {
                     "plate": {
@@ -699,6 +703,8 @@ async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> Non
     assert mate.status == "pass" and "on the meshes" in mate.detail, mate.detail
     assert {p.name: p.backend for p in report.parts} == {"plate": "build123d", "knob": "blender"}
     assert not (tmp_path / "out" / "model.step").exists()  # an assembly with a mesh part has no B-rep STEP
+    (step,) = [r for r in report.results if r.code == "output.unavailable"]
+    assert step.subject == "outputs: step" and step.status == "fail" and "not B-rep" in step.detail
     # A B-rep part's colour reaches the view, as a mesh part's does
     scene = json.loads((tmp_path / "out" / "scene.json").read_text(encoding="utf-8"))
     plate = next(leaf for leaf in cadview.leaves(scene["shapes"]) if leaf["id"].endswith("/plate"))
@@ -827,7 +833,7 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
 
     encoding = locale.getpreferredencoding(False)
     folder = write_design(tmp_path / "toy", {
-        "design.json": {"hitlcad": 2, "name": "Toy", "backend": "blender", "ground": "base", "outputs": ["3mf"],
+        "design.json": {"hitlcad": 2, "name": "Toy", "backend": "blender", "ground": "base", "outputs": ["stl", "3mf", "native"],
                         "parts": {"base": {"role": "red block, white top", "file": "parts/toy.py", "material": "PLA"},
                                   "knob": {"role": "blue ball", "file": "parts/toy.py", "material": "PLA"}}},
         "parts/toy.py": COLOURED_PARTS,
@@ -914,7 +920,7 @@ def build(p, i):
     return {"block": [Location((100, 50, 0)) * Rot(0, 0, -90)]}
 """
     folder = write_design(tmp_path / "moved", {
-        "design.json": {"hitlcad": 2, "name": "Moved", "backend": "build123d", "ground": "block",
+        "design.json": {"hitlcad": 2, "name": "Moved", "backend": "build123d", "ground": "block", "outputs": ["stl"],
                         "parts": {"block": {"role": "a block", "file": "parts/block.py", "material": "PLA"}}},
         "parts/block.py": part,
         "assembly.py": assembly,

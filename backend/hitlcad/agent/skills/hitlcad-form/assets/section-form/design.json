@@ -22,5 +22,6 @@
     {"text": "Actual walls retain at least 1 mm", "check": {"kind": "wall", "target": "form", "min": 1}},
     {"text": "The form stays inside the teaching envelope", "check": {"kind": "fits_within", "box": [84, 84, 80]}}
   ],
+  "outputs": ["native"],
   "configurations": {"tall": {"height": 80, "radius": 14, "swell": 0.2, "taper": 0.1}}
 }

@@ -160,12 +160,12 @@ handhold-fan/
   parts/duct.py     one file per part, modelled in its own frame, the way it's made
   parts/...
   assembly.py       where each part sits
-  build/            STEP, STL, 3MF, BOM, renders; regenerated, git-ignored
+  build/            each part's STEP and STL, and the outputs it asks for; regenerated, git-ignored
 ```
 
-The STEP keeps the assembly's structure, so it opens in other CAD tools as parts and
-sub-assemblies, not one lump. Each part also gets its own STEP and STL for the printer or the
-machine shop. A design can ask for a bill of materials, 3MF, and URDF or SDF for a robot.
+Each part gets its own STEP and STL for the printer or the machine shop. A design can ask for a
+STEP of the whole assembly, which keeps its structure, so it opens in other CAD tools as parts and
+sub-assemblies, not one lump; and for a bill of materials, 3MF, and URDF or SDF for a robot.
 
 The panel has more than the clip shows: parameter sliders, comparing any two revisions, the
 assembly as a graph, the BOM and the brief.

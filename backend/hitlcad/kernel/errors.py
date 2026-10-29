@@ -289,8 +289,12 @@ STRUCTURE_NO_MATERIAL = define(
     hint="Give the part a `material`, so its mass and its threads' engagement can be judged.",
 )  # fmt: skip
 STRUCTURE_OUTPUT = define(
-    code="structure.output_unknown", owner="design", title="design.json `outputs` names an unknown exporter",
-    hint="Name exporters list_backends lists.",
+    code="structure.output_unknown", owner="design", title="design.json `outputs` names an unknown output",
+    hint="Name outputs list_backends lists.",
+)  # fmt: skip
+OUTPUT_UNAVAILABLE = define(
+    code="output.unavailable", owner="design", title="design.json `outputs` names an output this design cannot have",
+    hint="A STEP of the assembly needs every part as B-rep: build mesh parts with a B-rep backend, or ask for `stl`.",
 )  # fmt: skip
 STRUCTURE_BACKEND = define(
     code="structure.backend_unknown", owner="design", title="design.json names a backend that is not enabled",
@@ -437,6 +441,10 @@ REQUEST_INVALID = define(code="request.invalid", owner="request", title="The req
 PARAMETER_INVALID = define(
     code="parameter.invalid", owner="request", title="An unknown parameter, or a value outside its range",
     hint="Use parameters design.json declares, within their min and max.",
+)  # fmt: skip
+OUTPUT_UNKNOWN = define(
+    code="output.unknown", owner="request", title="An output hitlcad does not have",
+    hint="Name outputs list_backends lists.",
 )  # fmt: skip
 DESIGN_CHANGED = define(
     code="conflict.design_changed", owner="request", title="design.json changed since the edit was made on it",

@@ -7,7 +7,7 @@ import { useSelection } from "../hooks/useSelection";
 import { useScene } from "../hooks/useScene";
 import { type CadMarker, exactShapes } from "../lib/cadView";
 import { rangeAt, shown } from "../lib/motion";
-import { currentRevision, useDesignUi, type InspectorTab } from "../lib/designUi";
+import { currentRevision, shownBuild, useDesignUi, type InspectorTab } from "../lib/designUi";
 import { deliveryStatus } from "../lib/delivery";
 import { toExtension } from "../lib/host";
 import { selectionMarker } from "../lib/selection";
@@ -54,7 +54,7 @@ export function DesignView({ id }: { id: string }) {
   // Following the latest revision, the build running is drawn as soon as its parts are placed, before it is checked;
   // its results, motion and picks come with its revision.
   const running = state?.building ?? null;
-  const building = ui.revision === null && running?.scene && running.configuration === ui.configuration ? running : null;
+  const building = shownBuild(running, ui);
   const current = building?.scene ? { url: fileUrl(id, building.revision, building.scene) } : viewOf(id, revision);
   const { data, error: fetchError } = useScene(current.url, building?.started);
   const ghost = useScene(ui.compare ? viewOf(id, base).url : null).data;
@@ -232,7 +232,7 @@ export function DesignView({ id }: { id: string }) {
         )}
 
         <div className="side">
-          <ReviewPanel ctx={{ id, state, revision, base, ui, setUi, refresh: live.refresh }} open={reviewTab} onToggle={setReviewTab} />
+          <ReviewPanel ctx={{ id, state, revision, building, base, ui, setUi, refresh: live.refresh }} open={reviewTab} onToggle={setReviewTab} />
           <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null}>
             {selection.length === 2 && revisionId !== null && !sel.busy && !ui.motion && (
               <MeasurementPanel key={`${revisionId}:${selection.map((i) => i.id).join(",")}`} designId={id} revision={revisionId}

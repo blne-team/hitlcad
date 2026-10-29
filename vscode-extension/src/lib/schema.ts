@@ -127,6 +127,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/designs/{design_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Edit Outputs */
+        post: operations["edit_outputs_api_designs__design_id__outputs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/designs/{design_id}/revisions/{revision_id}": {
         parameters: {
             query?: never;
@@ -616,8 +633,9 @@ export interface components {
         /**
          * BuildProgress
          * @description The build running, as far as it has got: the revision it makes, its scene once its parts are placed in it
-         *     (before anything is checked), and what it does now. Live only, as `BuildStopped` is: published, never kept in
-         *     the log, since neither says anything once the build ends; the revision or error it ends with is kept.
+         *     (before anything is checked), what it does now, and what the analyses that have finished found. Live only, as
+         *     `BuildStopped` is: published, never kept in the log, since neither says anything once the build ends; the
+         *     revision or error it ends with is kept.
          */
         BuildProgress: {
             /**
@@ -657,6 +675,17 @@ export interface components {
              * @default
              */
             doing: string;
+            /**
+             * Results
+             * @description What the analyses that have finished found, in the order they ran
+             */
+            results: components["schemas"]["Result"][];
+            /**
+             * Problems
+             * @description Those that do not pass, by cause, as a report groups them
+             */
+            problems: components["schemas"]["Problem"][];
+            tally: components["schemas"]["Tally"];
         };
         /**
          * BuildReport
@@ -676,6 +705,13 @@ export interface components {
             };
             /** Duration S */
             duration_s: number;
+            /**
+             * Durations
+             * @description Seconds each step took, in the order they ran: the plan, components, part files, the scene, measuring connectors, each analysis by its name, the report and the outputs; a build that fails stops early
+             */
+            durations: {
+                [key: string]: number;
+            };
             /** @description The whole placed assembly */
             metrics: components["schemas"]["MeshMetrics"] | null;
             mass: components["schemas"]["MassProperties"] | null;
@@ -828,6 +864,11 @@ export interface components {
              * @description In the order they run: cause before effect
              */
             analyses: components["schemas"]["AnalysisInfo"][];
+            /**
+             * Outputs
+             * @description What a build writes when design.json `outputs` names it
+             */
+            outputs: components["schemas"]["OutputInfo"][];
             /**
              * Error Kinds
              * @description Every result's and error's kind, by code: its title and usual fix
@@ -1226,7 +1267,7 @@ export interface components {
             verification: components["schemas"]["Verification"];
             /**
              * Outputs
-             * @description Exporters to run on every successful build
+             * @description What each successful build writes beside what review needs (its parts' own files and 3D view): `step`, `stl`, `native`, `preview` and the exporters' names; list_backends lists them
              */
             outputs: string[];
             brief: components["schemas"]["DesignBrief"] | null;
@@ -1326,6 +1367,19 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** EditOutputs */
+        EditOutputs: {
+            /**
+             * Outputs
+             * @description What each build is to write: design.json `outputs`
+             */
+            outputs: string[];
+            /**
+             * Expected
+             * @description The outputs the edit was made on: where design.json now has others, the edit is refused (409)
+             */
+            expected: string[];
         };
         /** EditParameters */
         EditParameters: {
@@ -2142,6 +2196,21 @@ export interface components {
              */
             files: string[];
         };
+        /** OutputInfo */
+        OutputInfo: {
+            /**
+             * Name
+             * @description What design.json `outputs` calls it
+             */
+            name: string;
+            /**
+             * Title
+             * @description What its files are, for the panel's file list; empty for the preview
+             */
+            title: string;
+            /** Summary */
+            summary: string;
+        };
         /**
          * ParamSpec
          * @description A named, user-tunable input of a parametric model.
@@ -2606,7 +2675,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
             /** Parent */
             parent: number | null;
             /** Configuration */
@@ -2636,7 +2705,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
             /**
              * Parent
              * @description The configuration's latest successful revision before it
@@ -3436,7 +3505,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
             /** @description What a failed build failed on: the result that leads its first problem */
             failure: components["schemas"]["Result"] | null;
         };
@@ -3664,6 +3733,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["EditParameters"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_outputs_api_designs__design_id__outputs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditOutputs"];
             };
         };
         responses: {

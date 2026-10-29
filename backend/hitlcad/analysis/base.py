@@ -9,6 +9,7 @@ so a rebuild only recomputes what changed.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import logging
 from collections.abc import Callable, Iterable, Mapping
@@ -32,6 +33,17 @@ def analysis_code() -> str:
     root = Path(__file__).parents[1]
     packages = ("analysis", "builtin", "core", "geometry", "kernel")
     files = sorted(p for package in packages for p in (root / package).rglob("*.py"))
+    return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
+
+
+@cache
+def member_code(module: str) -> str:
+    """An installed plugin's code by content, for results its members compute; hitlcad's own is `analysis_code`."""
+    top = module.partition(".")[0]
+    spec = importlib.util.find_spec(top)
+    if top == "hitlcad" or spec is None or spec.origin is None:
+        return ""
+    files = sorted(Path(spec.origin).parent.rglob("*.py"))
     return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
 

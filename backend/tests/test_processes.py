@@ -35,7 +35,7 @@ from build123d import (
     make_face,
 )
 
-from hitlcad.analysis.model import AnalysisSettings, Body, BuildBodies, Leaf, PartGeometry
+from hitlcad.analysis.model import AnalysisSettings, Body, BuildBodies, Leaf, PartGeometry, Shape
 from hitlcad.builtin.processes.processes import (
     CncMillingProcess,
     FdmProcess,
@@ -63,7 +63,8 @@ def part(shape, tmp_path: Path, name: str) -> PartGeometry:
     export_stl(shape, str(stl), tolerance=0.01, angular_tolerance=0.1)
     # Process checks read the solid and STL; exporting the viewer's GLB adds another tessellation for no assertion.
     return PartGeometry(name=name, spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py", backend="build123d",
-                        mesh_file=stl, step_file=step, objects_file=glb, view_file=tmp_path / f"{name}.view", frames={},
+                        mesh_file=stl, step_file=step, objects_file=glb, view_file=tmp_path / f"{name}.view",
+                        shape=Shape(name, stl, step, glb), frames={},
                         catalog=None, reads=Reads(), cached=False)  # fmt: skip
 
 
@@ -247,7 +248,9 @@ def test_an_open_mesh_has_no_wall_thickness_to_read(tmp_path: Path) -> None:
     box.export(tmp_path / "open.stl")
     geometry = PartGeometry(name="open", spec=PartSpec(role="x", file="parts/x.py"), file="parts/x.py",
                             backend="blender", mesh_file=tmp_path / "open.stl", step_file=None,
-                            objects_file=tmp_path / "open.glb", view_file=tmp_path / "open.view", frames={}, catalog=None, reads=Reads(), cached=False)  # fmt: skip
+                            objects_file=tmp_path / "open.glb", view_file=tmp_path / "open.view",
+                            shape=Shape("open", tmp_path / "open.stl", None, tmp_path / "open.glb"), frames={}, catalog=None,
+                            reads=Reads(), cached=False)  # fmt: skip
     shape = Body("open", [Leaf("open", geometry, None, fr.IDENTITY)], SETTINGS, TOL)  # type: ignore[arg-type]
     with pytest.raises(Unmeasurable, match="open is not a closed mesh"):
         _ = shape.walls

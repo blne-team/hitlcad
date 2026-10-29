@@ -13,7 +13,6 @@ from hitlcad.analysis.coverage import Link
 from hitlcad.analysis.interference import beyond, overlap
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.analysis.motion.plans import World
-from hitlcad.core import frames as fr
 from hitlcad.core.structure import Tolerances
 from hitlcad.kernel.errors import Unmeasurable
 from hitlcad.kernel.model import Model
@@ -109,7 +108,7 @@ def at_rest(pairs: list[P], world: World, settings: AnalysisSettings, cache: Res
     keep = []
     for pair in pairs:
         try:
-            shared = overlap(cache, pair.p, fr.IDENTITY, pair.q, fr.IDENTITY)
+            shared = overlap(cache, pair.p, pair.q)
         except Unmeasurable as e:
             out.unmeasurable.append((pair.p.path, pair.q.path, str(e)))
             continue
