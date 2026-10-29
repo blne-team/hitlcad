@@ -62,9 +62,7 @@ async def test_rest_design_lifecycle(api: httpx.AsyncClient, tmp_path: Path) -> 
     assert {n["id"] for n in structure["graph"]["nodes"]} == {"base", "lid", "insert", "screw"}
     assert any(e["kind"] == "fastener" for e in structure["graph"]["edges"]) and "10 instances" in structure["overview"]
 
-    too_wide = await api.post(
-        f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}, "expected": {"width": 40}}
-    )
+    too_wide = await api.post(f"/api/designs/{design_id}/parameters", json={"values": {"width": 9999}, "base": 1})
     assert too_wide.status_code == 422 and too_wide.json()["diagnostic"]["code"] == "parameter.invalid"
     pin = (await api.post(f"/api/designs/{design_id}/pins", json={
         "point": [0, 0, 24], "note": "here", "component": {"instance": "lid", "topo": "solid"}})).json()  # fmt: skip
@@ -200,6 +198,7 @@ def test_streams_replay_follow_and_report_builds(core: HitlCad, tmp_path: Path) 
     client = TestClient(create_app(core), base_url="http://127.0.0.1")
     with client.websocket_connect(f"ws://127.0.0.1/api/designs/{state.id}/stream") as ws:
         assert json.loads(ws.receive_text())["type"] == "design_opened"  # the history so far
+        assert json.loads(ws.receive_text())["type"] == "document_changed"  # its files, version 1
         client.put(f"/api/designs/{state.id}/selection", json={"items": []})
         assert json.loads(ws.receive_text())["type"] == "selection_changed"
     with client.websocket_connect("ws://127.0.0.1/api/activity") as ws:

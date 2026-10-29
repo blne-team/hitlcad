@@ -4,7 +4,8 @@ import type { Revision } from "../api/types";
 import { useCapabilities } from "../hooks/useCapabilities";
 
 /** What each build writes beside what review needs: design.json `outputs`, chosen here as an agent would write
- * them. A change rebuilds, its parts from the cache; one made on outputs design.json no longer has is refused. */
+ * them. A change is made on the revision on screen, merged with what changed since, and rebuilds, its parts from
+ * the cache. */
 export function OutputsChoice({ designId, revision }: { designId: string; revision: Revision }) {
   const capabilities = useCapabilities();
   const [busy, setBusy] = useState(false);
@@ -18,7 +19,7 @@ export function OutputsChoice({ designId, revision }: { designId: string; revisi
     setBusy(true);
     setError(null);
     try {
-      await api.editOutputs(designId, chosen, shown);
+      await api.editOutputs(designId, chosen, revision.version);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

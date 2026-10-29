@@ -299,13 +299,13 @@ def test_design_json_problems_are_named_where_they_are(tmp_path: Path) -> None:
     (tmp_path / "design.json").write_text(json.dumps({"hitlcad": 1, "name": "old", "source": "model.py"}),
                                           encoding="utf-8")  # fmt: skip
     with pytest.raises(DesignInvalid) as old:
-        DesignFolder(tmp_path).load()
+        DesignFolder(tmp_path).load((tmp_path / "design.json").read_text())
     (problem,) = old.value.problems  # one problem, not one per field the old format no longer matches
     assert "hitlcad format 1" in problem.message and problem.code == "design.invalid"
     design = {"name": "x", "backend": "build123d", "parts": {"a": {"role": "a", "file": "parts/a.py", "colour": "red"}}}
     (tmp_path / "design.json").write_text(json.dumps(design), encoding="utf-8")
     with pytest.raises(DesignInvalid, match=r"\nparts\.a\.colour: ") as unknown:
-        DesignFolder(tmp_path).load()
+        DesignFolder(tmp_path).load((tmp_path / "design.json").read_text())
     (problem,) = unknown.value.problems
     assert problem.where == Location(file="design.json", address="parts.a.colour")
 

@@ -22,13 +22,13 @@ from hitlcad.backends.workers import Superseded
 from hitlcad.core.events import PinsChanged, SelectionChanged
 from hitlcad.core.report import Earlier
 from hitlcad.core.types import ComponentRef, Pick, Pin, SelectionItem
-from hitlcad.kernel.errors import HitlcadError, http_status
+from hitlcad.kernel.errors import HitlcadError
 from hitlcad.render.base import NullRenderer
 from hitlcad.review.selection import topology
 from hitlcad.services.watcher import _relevant
 from hitlcad.store.sqlite import SqliteStore
 from hitlcad.workspace import agents
-from hitlcad.workspace.folder import DesignFolder
+from hitlcad.workspace.document import Disk
 from hitlcad.workspace.project import init_project
 
 from .conftest import copy_design, edit_json, write_design
@@ -53,7 +53,7 @@ async def test_review_measures_selected_faces_and_points_on_the_named_revision(c
     assert "gap between their planes is 5.000 mm" in text
     points = (Pick(point=(0, 0, 0)), Pick(point=(3, 4, 0)))
     assert "minimum distance 5.000 mm" in await core.feedback.measure(state.id, rev.id, points)
-    await core.builds.edit_parameters(state.id, {"width": 20}, {"width": 10})
+    await core.builds.edit_parameters(state.id, {"width": 20}, core.designs.get(state.id).version)
     sides = tuple(
         Pick(point=(0, 0, 0), component=ComponentRef(instance="box", topo="face", index=k))
         for k in (face_index(box, lambda f: f.normal_at().X > 0.99), face_index(box, lambda f: f.normal_at().X < -0.99))
@@ -86,7 +86,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     pin = await core.feedback.add_pin(state.id, Pick(point=(0, 0, 24), component=ComponentRef(
         instance="lid", topo="face", index=top)), "make it thicker")  # fmt: skip
     assert pin.instance == "lid" and "face" in pin.label
-    rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6}, {"lid_t": 4})
+    rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6}, core.designs.get(state.id).version)
     (carried,) = core.designs.get(state.id).open_pins
     assert carried.revision == rebuilt.id and carried.point[2] == pytest.approx(26)
     new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].features, carried.component)
@@ -111,7 +111,7 @@ async def test_a_traced_motion_the_human_watched_passes_until_it_changes(core: H
     assert crank(watched).detail.endswith(f"watched in the panel on revision {rev.id}")
     assert [w.key for w in core.designs.get(state.id).watched] == [loop.key]
     longer = await core.builds.edit_parameters(
-        state.id, {"coupler_l": 41}, {"coupler_l": 40}
+        state.id, {"coupler_l": 41}, core.designs.get(state.id).version
     )  # another loop: watched no more
     assert crank(longer).code == "motion.sampled"
     with pytest.raises(HitlcadError, match="has no traced motion"):
@@ -144,8 +144,10 @@ async def test_the_design_graph_answers_with_addresses_and_impact(core: HitlCad,
         (folder / "interfaces.py").read_text(encoding="utf-8") + "\n\ndef extra(p, i):\n    return 1\n",
         encoding="utf-8",
     )
+    await core.designs.take_in(state.id)  # as the watcher does
     assert "stale: changed since rev 1: interfaces.py" in core.explore.graph(state.id).explore()
     (folder / "design.json").write_text("{", encoding="utf-8")  # broken mid-edit: the graph says so, not rev 1
+    await core.designs.take_in(state.id)
     assert "✗ design.json does not load, so this is rev 1's:" in core.explore.graph(state.id).explore()
     assert graph.structure()["nodes"][0] == {
         "id": "base",
@@ -183,7 +185,7 @@ async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCa
     shelf, _ = core.designs.open(tmp_path / "shelf")
     assert core.designs.where_used(hinge.id) == [shelf.id]
     first = await core.builds.build(hinge.id)
-    second = await core.builds.edit_parameters(hinge.id, {"stop_h": 0}, {"stop_h": 30})
+    second = await core.builds.edit_parameters(hinge.id, {"stop_h": 0}, core.designs.get(hinge.id).version)
     text = core.explore.compare(hinge.id, first.id, second.id)
     assert "stop_h: 30.0 → 0.0" in text and "motion base.hinge+lid.pin: fail → pass" in text
     assert "Parts rebuilt in 2: base, lid" in text
@@ -547,17 +549,53 @@ async def test_a_build_superseded_by_files_that_build_nothing_ends_its_building(
     assert core.designs.get(state.id).building is None and not core.designs.get(state.id).revisions
 
 
-async def test_a_parameter_edit_made_on_values_an_agent_has_since_changed_is_refused(
+async def test_a_panel_edit_made_on_an_earlier_version_keeps_what_was_written_since(
     core: HitlCad, tmp_path: Path
 ) -> None:
-    """The panel showed width 10; the agent wrote 15 meanwhile: the human's 20 would silently undo it."""
+    """The panel showed version 1; the agent renamed the design meanwhile, in its own layout of design.json: the
+    human's width merges into it, every other character as the agent wrote it. Both changing the same value is
+    merged too, by rule, and said: the human looks at what it made."""
     folder = copy_design("tiny", tmp_path / "tiny")
     state, _ = core.designs.open(folder)
-    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=15))
-    with pytest.raises(HitlcadError, match="width is now 15 \\(it showed 10\\)") as refused:
-        await core.builds.edit_parameters(state.id, {"width": 20}, {"width": 10})
-    assert (refused.value.code, http_status(refused.value.diagnostic)) == ("conflict.design_changed", 409)
-    assert json.loads((folder / "design.json").read_text(encoding="utf-8"))["parameters"][0]["value"] == 15
+    theirs = json.loads((folder / "design.json").read_text()) | {"name": "Theirs"}
+    (folder / "design.json").write_text(json.dumps(theirs, indent=4), encoding="utf-8")
+    assert (await core.designs.take_in(state.id)) is not None and core.designs.get(state.id).version == 2
+    await core.builds.edit_parameters(state.id, {"width": 20}, 1)
+    assert (folder / "design.json").read_text() == json.dumps(theirs, indent=4).replace('"value": 10', '"value": 20')
+    assert core.designs.get(state.id).changes[-1].origin == "panel" and not core.designs.get(state.id).crossed
+
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=15))  # the agent, from version 3
+    await core.designs.take_in(state.id)
+    await core.builds.edit_parameters(state.id, {"width": 30}, 3)
+    (crossed,) = core.designs.get(state.id).crossed
+    assert crossed.origin == "panel" and crossed.others == ["disk"]
+    merged = json.loads((folder / "design.json").read_text())["parameters"][0]["value"]  # both kept: look at it
+    assert [(c.path, c.now) for c in crossed.crossed] == [("design.json", f'"value": {merged},')]
+    with pytest.raises(HitlcadError, match="versions 1 to 5") as unknown:
+        await core.builds.edit_parameters(state.id, {"width": 30}, 7)
+    assert unknown.value.code == "request.base_unknown"
+
+
+async def test_a_write_to_the_folder_merges_from_the_version_its_writer_started_on(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    """An agent read version 1 and rewrites design.json from it, renamed, after the human set the width: from
+    version 1 the merge keeps the human's width. Taken in from the version last written instead, as an unknown
+    writer's, the same write would undo it."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    read = json.loads((folder / "design.json").read_text())
+    core.designs.change(state.id, 1, "panel", lambda doc: doc.write_text("design.json", doc.text("design.json").replace(
+        '"value": 10', '"value": 20')))  # fmt: skip
+    (folder / "design.json").write_text(json.dumps(read | {"name": "Theirs"}, indent=2), encoding="utf-8")
+    await core.designs.take_in(state.id, "agent:claude:s1", base=1)
+    merged = json.loads((folder / "design.json").read_text())
+    assert (merged["name"], merged["parameters"][0]["value"]) == ("Theirs", 20)
+    assert core.designs.files(state.id).design == (folder / "design.json").read_text()
+
+    (folder / "design.json").write_text(json.dumps(read | {"name": "Again"}, indent=2), encoding="utf-8")
+    await core.designs.take_in(state.id)
+    assert json.loads((folder / "design.json").read_text())["parameters"][0]["value"] == 10
 
 
 @pytest.mark.geometry
@@ -566,29 +604,35 @@ async def test_the_outputs_the_human_chooses_are_written_by_the_next_build(core:
     parts come from the cache."""
     folder = copy_design("tiny", tmp_path / "tiny")
     state, _ = core.designs.open(folder)
-    assert (await core.builds.build(state.id)).report.artifact("step") is None  # review needs no STEP of the whole
-    revision = await core.builds.edit_outputs(state.id, ["step"], [])
+    first = await core.builds.build(state.id)
+    assert first.report.artifact("step") is None  # review needs no STEP of the whole
+    revision = await core.builds.edit_outputs(state.id, ["step"], first.version)
     assert revision.origin == "outputs_edit" and json.loads((folder / "design.json").read_text())["outputs"] == ["step"]
     assert revision.report.artifact("step") is not None and (folder / "build" / "model.step").is_file()
     assert all(part.cached for part in revision.report.parts)
-    with pytest.raises(HitlcadError, match="its outputs are now step") as refused:
-        await core.builds.edit_outputs(state.id, [], [])  # made on what the panel showed before
-    assert (refused.value.code, http_status(refused.value.diagnostic)) == ("conflict.design_changed", 409)
     with pytest.raises(HitlcadError, match="no output 'dwg'") as unknown:
-        await core.builds.edit_outputs(state.id, ["dwg"], ["step"])
+        await core.builds.edit_outputs(state.id, ["dwg"], revision.version)
     assert unknown.value.owner == "request"
 
 
-def test_design_json_changed_while_it_is_edited_is_not_overwritten(tmp_path: Path) -> None:
-    folder = DesignFolder(copy_design("tiny", tmp_path / "tiny"))
+def test_a_design_s_document_replays_every_version_from_the_store(tmp_path: Path, monkeypatch: Any) -> None:
+    """Versions after a snapshot replay from it; a server started again reads the same files."""
+    from hitlcad.services import documents
 
-    def change(design: Any) -> Any:
-        edit_json(folder.design_file, lambda d: d.update(name="Theirs"))  # an agent writes it meanwhile
-        return design.model_copy(update={"name": "Mine"})
-
-    with pytest.raises(HitlcadError, match="changed while it was being edited"):
-        folder.edit(change)
-    assert folder.load().name == "Theirs"
+    monkeypatch.setattr(documents, "SNAPSHOT_EVERY", 2)
+    folder = copy_design("tiny", tmp_path / "tiny")
+    store = SqliteStore(tmp_path / "data")
+    store.create("d")
+    kept = documents.DocumentService(store)
+    kept.create("d", folder, Disk.read(folder), "folder")
+    for width in (11, 12, 13, 14):
+        kept.change("d", folder, kept.current("d").version, "panel", lambda doc, w=width: doc.write_text(
+            "assembly.py", (doc.text("assembly.py") or "") + f"# {w}\n"))  # fmt: skip
+    again = documents.DocumentService(store)
+    assert again.current("d") == kept.current("d") and again.current("d").version == 5
+    assert again.at("d", 3).text("assembly.py") == (folder / "assembly.py").read_text().replace("# 13\n# 14\n", "")
+    assert (folder / "assembly.py").read_text().endswith("# 14\n")  # the folder is written with each version
+    store.close()
 
 
 def test_one_server_keeps_a_data_folder(tmp_path: Path) -> None:

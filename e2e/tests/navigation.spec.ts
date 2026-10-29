@@ -20,8 +20,8 @@ def build(p, i):
     return {"box": [Pos(20, -15, p["elevation"])]}
 `,
   });
-  await api("POST", `/api/designs/${id}/build`);
-  await api("POST", `/api/designs/${id}/parameters`, { values: { elevation: -15 }, expected: { elevation: 25 } });
+  const built = await api<{ version: number }>("POST", `/api/designs/${id}/build`);
+  await api("POST", `/api/designs/${id}/parameters`, { values: { elevation: -15 }, base: built.version });
 });
 
 /** Observe real Three.js render state, so assertions distinguish camera pan from rotation and geometry moves.

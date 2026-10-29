@@ -1,8 +1,9 @@
 """Append-only design events and the projection that folds them into design state.
 
-Each design folder has one event log: what was built, what the human selected and pinned, and
-errors. The folder's files stay the source of truth; the log is the review history around them. A revision's
-event lists it (`RevisionInfo`); what it built from and its report are the store's, read when asked for.
+Each design has one event log: how its files changed, what was built, what the human selected and pinned, and
+errors. The files themselves are the design's document (`workspace.document`), which the log records the versions
+of; the log is the history around them. A revision's event lists it (`RevisionInfo`); what it built from and its
+report are the store's, read when asked for.
 """
 
 from __future__ import annotations
@@ -101,6 +102,35 @@ class MotionsWatched(_Event):
     watched: list[WatchedMotion]
 
 
+class DocumentChanged(_Event):
+    """The design's files changed: a new version of its document, made by `origin` (the folder it was read from,
+    a new design's files, the panel, an agent session, or a write to the folder by someone else)."""
+
+    type: Literal["document_changed"] = "document_changed"
+    version: int
+    origin: str = Field(description="folder, scaffold, panel, agent:<agent>:<session> or disk")
+    files: list[str] = Field(description="The files whose content changed")
+    summary: str = Field(default="", description="What the edit was, where the editor says (the panel's)")
+
+
+class CrossedEdit(Model):
+    """Where two edits made on the same version changed the same text: the merge kept both, by rule."""
+
+    path: str
+    line: int = Field(description="The line in the version both started from; 0 for a file kept by its content")
+    now: str = Field(description="The line as the merge left it")
+
+
+class EditsCrossed(_Event):
+    """An edit merged into others made since its version, where both changed the same text."""
+
+    type: Literal["edits_crossed"] = "edits_crossed"
+    version: int = Field(description="The version the merge made")
+    origin: str = Field(description="Whose edit was merged in")
+    others: list[str] = Field(description="Whose edits it crossed")
+    crossed: list[CrossedEdit]
+
+
 class FeedbackDelivered(_Event):
     """The selection and open pins went to an agent session with a prompt (its hitlcad hook)."""
 
@@ -121,11 +151,17 @@ Event = Annotated[
     | SelectionChanged
     | PinsChanged
     | MotionsWatched
+    | DocumentChanged
+    | EditsCrossed
     | FeedbackDelivered,
     Field(discriminator="type"),
 ]
 
 EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
+
+
+#: How many of its latest changes and crossed edits a design's state holds.
+KEPT = 20
 
 
 class DesignState(Model):
@@ -146,6 +182,11 @@ class DesignState(Model):
     watched: list[WatchedMotion] = Field(default_factory=list)
     deliveries: dict[str, FeedbackDelivered] = Field(
         default_factory=dict, description="What each agent session was last given, by session id"
+    )
+    version: int = Field(default=0, description="The latest version of the design's document")
+    changes: list[DocumentChanged] = Field(default_factory=list, description=f"The latest {KEPT} changes of its files")
+    crossed: list[EditsCrossed] = Field(
+        default_factory=list, description=f"The latest {KEPT} edits that crossed others"
     )
 
     @property
@@ -196,6 +237,11 @@ class DesignState(Model):
                 self.pins = event.pins
             case MotionsWatched():
                 self.watched = event.watched
+            case DocumentChanged():
+                self.version = event.version
+                self.changes = [*self.changes, event][-KEPT:]
+            case EditsCrossed():
+                self.crossed = [*self.crossed, event][-KEPT:]
             case FeedbackDelivered():
                 self.deliveries[event.session] = event
 

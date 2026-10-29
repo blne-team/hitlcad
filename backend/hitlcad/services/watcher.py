@@ -1,5 +1,6 @@
-"""Rebuild design folders when their files change on disk (saved by a person or an agent), and a design first
-opened since the server started when its files changed while nothing watched them."""
+"""Take into each design's document what is written to its folder (by a person, an agent, git: anyone but hitlcad,
+whose own writes match the document and change nothing), then rebuild it; and so for a design first opened since
+the server started, whose folder may have changed while nothing watched it."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from hitlcad.services.builds import DEBOUNCE_MS, BuildService
 from hitlcad.services.designs import DesignService
-from hitlcad.workspace.folder import BUILD_DIR
+from hitlcad.workspace.document import in_design
 
 log = logging.getLogger(__name__)
 
@@ -34,9 +35,19 @@ class FolderWatcher:
         self._tasks = []
 
     async def _catch_up(self) -> None:
-        """Each design as it is first opened: skipped when its files are its latest build's."""
+        """Each design as it is first opened: its folder taken in, and built unless its files are its latest
+        build's."""
         while True:
-            self.builds.schedule_build(await self.designs.first_used.get())
+            design_id = await self.designs.first_used.get()
+            await self._take_in(design_id)
+            self.builds.schedule_build(design_id)
+
+    async def _take_in(self, design_id: str) -> bool:
+        try:
+            return await self.designs.take_in(design_id) is not None
+        except OSError as e:  # a file went while it was read: the next change reads it again
+            log.info("could not read %s: %s", self.designs.get(design_id).path, e)
+            return False
 
     async def _watch(self) -> None:
         from watchfiles import awatch
@@ -56,7 +67,7 @@ class FolderWatcher:
                 async for changes in awatch(*folders, stop_event=stop, debounce=DEBOUNCE_MS, recursive=True,
                                             watch_filter=lambda _, path, f=folders: _relevant(f, Path(path))):  # fmt: skip
                     for design_id in {_owner(registered, Path(path)) for _, path in changes}:
-                        if design_id:  # skipped when the build's inputs did not change
+                        if design_id and await self._take_in(design_id):
                             self.builds.schedule_build(design_id)
             except FileNotFoundError:
                 await asyncio.sleep(1)  # a folder vanished; folders() drops it next round
@@ -69,14 +80,10 @@ def _ended(task: asyncio.Task[None]) -> None:
         log.error("the folder watcher stopped: saved files are not rebuilt until hitlcad restarts", exc_info=error)
 
 
-IGNORED = {BUILD_DIR, f".{BUILD_DIR}.tmp", f".{BUILD_DIR}.old", "__pycache__", ".git"}
-
-
 def _relevant(folders: list[Path], path: Path) -> bool:
-    """Changes that can change a build: not hitlcad's own outputs, caches or editors' temporary files. Only
-    the part of `path` inside its design folder counts: the folder itself may be anywhere, under build/ too."""
-    inside = [path.relative_to(f) for f in folders if path.is_relative_to(f)]
-    return any(not IGNORED & set(rel.parts) for rel in inside) and not path.name.endswith((".tmp", "~", ".swp"))
+    """Changes to a design's files: not hitlcad's own outputs, caches or editors' temporary files. Only the part of
+    `path` inside its design folder counts: the folder itself may be anywhere, under build/ too."""
+    return any(in_design(path.relative_to(f)) for f in folders if path.is_relative_to(f))
 
 
 def _owner(folders: dict[str, str], path: Path) -> str | None:

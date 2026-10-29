@@ -1,11 +1,13 @@
 """The store: one SQLite database for what hitlcad keeps on this machine, beside the revisions' files.
 
-    <data_dir>/hitlcad.db                        folders, events, revisions, their results
+    <data_dir>/hitlcad.db                        folders, events, revisions, their results, the designs' documents
     <data_dir>/designs/<id>/revisions/<n>/       each revision's files: parts, assembly, view, exports, log
     <data_dir>/designs/<id>/unreadable-<time>/   a design's history that did not read, set aside
 
-A design's events are its history, folded into its state; a revision's event lists it, and the revision itself
-(what it built from and its report) is read when asked for. Its results are a table too, so what one revision
+A design's files are its document (`workspace.document`): the updates that made it, one per version, with a
+snapshot every `SNAPSHOT_EVERY` versions so that an earlier version replays from near it, and the content of its
+other files by their sums. A design's events are its history, folded into its state; a revision's event lists
+it, and the revision itself (what it built from and its report) is read when asked for. Its results are a table too, so what one revision
 failed is a query. A database of another layout (`SCHEMA`) is set aside whole when this one opens it, as
 ``hitlcad.<time>.db``; a design's history that does not read is set aside on its own.
 
@@ -33,7 +35,7 @@ from hitlcad.kernel.errors import STORE_IN_USE, STORE_UNREADABLE
 
 #: The tables' layout and what their rows hold (the events' types): a database of another is set aside. Raise it
 #: with every change to either.
-SCHEMA = 2
+SCHEMA = 3
 DATABASE = "hitlcad.db"
 LOCK = "hitlcad.lock"
 
@@ -49,6 +51,11 @@ CREATE TABLE results (design TEXT NOT NULL, revision INTEGER NOT NULL, idx INTEG
                       analysis TEXT NOT NULL, subject TEXT NOT NULL, status TEXT NOT NULL, severity TEXT NOT NULL,
                       file TEXT, line INTEGER, PRIMARY KEY (design, revision, idx));
 CREATE INDEX results_by_code ON results (design, code, subject);
+CREATE TABLE doc_updates (design TEXT NOT NULL, version INTEGER NOT NULL, origin TEXT NOT NULL, at TEXT NOT NULL,
+                          body BLOB NOT NULL, PRIMARY KEY (design, version));
+CREATE TABLE doc_snapshots (design TEXT NOT NULL, version INTEGER NOT NULL, body BLOB NOT NULL,
+                            PRIMARY KEY (design, version));
+CREATE TABLE blobs (sum TEXT PRIMARY KEY, body BLOB NOT NULL);
 """
 
 
@@ -190,6 +197,34 @@ class SqliteStore:
         if (revisions := self._dir(design_id) / "revisions").exists():
             shutil.move(revisions, aside / "revisions")
         return aside
+
+    # ------------------------------------------------------------------ documents
+
+    def add_update(self, design_id: str, origin: str, update: bytes, snapshot: bytes | None = None) -> int:
+        with self._transaction() as db:
+            (last,) = db.execute("SELECT coalesce(max(version), 0) FROM doc_updates WHERE design = ?",
+                                 (design_id,)).fetchone()  # fmt: skip
+            db.execute("INSERT INTO doc_updates VALUES (?, ?, ?, ?, ?)",
+                       (design_id, last + 1, origin, datetime.now(UTC).isoformat(), update))  # fmt: skip
+            if snapshot is not None:
+                db.execute("INSERT INTO doc_snapshots VALUES (?, ?, ?)", (design_id, last + 1, snapshot))
+            return int(last + 1)
+
+    def document(self, design_id: str, version: int | None = None) -> tuple[int, bytes | None, list[bytes]]:
+        rows = self._query("SELECT version, body FROM doc_snapshots WHERE design = ? AND version <= ? "
+                           "ORDER BY version DESC LIMIT 1", design_id, 2**62 if version is None else version)  # fmt: skip
+        start, snapshot = rows[0] if rows else (0, None)
+        updates = self._query("SELECT version, body FROM doc_updates WHERE design = ? AND version > ? AND version <= ? "
+                              "ORDER BY version", design_id, start, 2**62 if version is None else version)  # fmt: skip
+        return (updates[-1][0] if updates else start), snapshot, [u for _, u in updates]
+
+    def put_blobs(self, blobs: dict[str, bytes]) -> None:
+        with self._transaction() as db:
+            db.executemany("INSERT OR IGNORE INTO blobs VALUES (?, ?)", list(blobs.items()))
+
+    def blob(self, digest: str) -> bytes | None:
+        rows = self._query("SELECT body FROM blobs WHERE sum = ?", digest)
+        return rows[0][0] if rows else None
 
     # ------------------------------------------------------------------ files
 

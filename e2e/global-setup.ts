@@ -59,8 +59,8 @@ export default async function globalSetup() {
   const design = await api<Design>("POST", "/api/designs", { path: folder, create: { name: "Block", backend: "build123d" } });
   writeDesign(folder, { parameters: PARAMETERS, ground: "block", parts: { block: PART("parts/block.py") }, outputs: ["step", "stl"] },
     { "parts/block.py": BLOCK, "assembly.py": PLACE_ONE("block") });
-  await api("POST", `/api/designs/${design.id}/build`);
-  await api("POST", `/api/designs/${design.id}/parameters`, { values: { height: 20 }, expected: { height: 10 } });
+  const built = await api<{ version: number }>("POST", `/api/designs/${design.id}/build`);
+  await api("POST", `/api/designs/${design.id}/parameters`, { values: { height: 20 }, base: built.version });
 
   const assemblyFolder = path.join(WORK, "project", "designs", "pair");
   const assembly = await api<Design>("POST", "/api/designs", { path: assemblyFolder, create: { name: "Pair", backend: "build123d" } });

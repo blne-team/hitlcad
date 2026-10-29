@@ -60,13 +60,14 @@ def cmd_build(args: argparse.Namespace) -> int:
     from hitlcad.core.report import BuildReport, Revision
     from hitlcad.kernel.errors import HitlcadError, agent_text
     from hitlcad.render.base import NullRenderer
+    from hitlcad.workspace.document import Snapshot
     from hitlcad.workspace.folder import DesignFolder
 
     settings = get_settings()
     pipeline = build_pipeline(settings, renderer=NullRenderer() if args.no_render else None)
     folder = DesignFolder(Path(args.design))
     try:
-        spec = folder.spec(settings.tolerances, args.configuration)
+        spec = folder.spec(Snapshot.scan, settings.tolerances, args.configuration)  # the folder as it is: no server
     except HitlcadError as e:
         print(agent_text(e.diagnostic), file=sys.stderr)
         return 1
@@ -84,7 +85,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     except HitlcadError as e:
         print(agent_text(e.diagnostic), file=sys.stderr)
         return 1
-    revision = Revision(id=0, origin="file", configuration=spec.configuration, spec=spec, report=report)
+    revision = Revision(id=0, origin="file", configuration=spec.configuration, spec=spec, version=0, report=report)
     print(revision_summary(revision, limit=settings.explore_limit))
     print(f"outputs in {out}")
     return 0 if report.status == "succeeded" and not report.failing() else 1

@@ -1104,6 +1104,24 @@ export interface components {
             backend: string;
         };
         /**
+         * CrossedEdit
+         * @description Where two edits made on the same version changed the same text: the merge kept both, by rule.
+         */
+        CrossedEdit: {
+            /** Path */
+            path: string;
+            /**
+             * Line
+             * @description The line in the version both started from; 0 for a file kept by its content
+             */
+            line: number;
+            /**
+             * Now
+             * @description The line as the merge left it
+             */
+            now: string;
+        };
+        /**
          * CylindricalMate
          * @description Turns about and slides along Z: origins on one line along Z, Z axes face each other.
          */
@@ -1318,6 +1336,22 @@ export interface components {
             deliveries: {
                 [key: string]: components["schemas"]["FeedbackDelivered"];
             };
+            /**
+             * Version
+             * @description The latest version of the design's document
+             * @default 0
+             */
+            version: number;
+            /**
+             * Changes
+             * @description The latest 20 changes of its files
+             */
+            changes: components["schemas"]["DocumentChanged"][];
+            /**
+             * Crossed
+             * @description The latest 20 edits that crossed others
+             */
+            crossed: components["schemas"]["EditsCrossed"][];
         };
         /** DesignSummary */
         DesignSummary: {
@@ -1368,6 +1402,46 @@ export interface components {
              */
             note: string;
         };
+        /**
+         * DocumentChanged
+         * @description The design's files changed: a new version of its document, made by `origin` (the folder it was read from,
+         *     a new design's files, the panel, an agent session, or a write to the folder by someone else).
+         */
+        DocumentChanged: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "document_changed";
+            /** Version */
+            version: number;
+            /**
+             * Origin
+             * @description folder, scaffold, panel, agent:<agent>:<session> or disk
+             */
+            origin: string;
+            /**
+             * Files
+             * @description The files whose content changed
+             */
+            files: string[];
+            /**
+             * Summary
+             * @description What the edit was, where the editor says (the panel's)
+             * @default
+             */
+            summary: string;
+        };
         /** EditOutputs */
         EditOutputs: {
             /**
@@ -1376,10 +1450,10 @@ export interface components {
              */
             outputs: string[];
             /**
-             * Expected
-             * @description The outputs the edit was made on: where design.json now has others, the edit is refused (409)
+             * Base
+             * @description The version of the design's files the edit was made on, as for parameters
              */
-            expected: string[];
+            base: number;
         };
         /** EditParameters */
         EditParameters: {
@@ -1388,12 +1462,48 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
-             * Expected
-             * @description The values the edit was made on, of the parameters it changes: where design.json now has others, the edit is refused (409)
+             * Base
+             * @description The version of the design's files the edit was made on (the revision on screen's): what changed since is kept, the edit merged into it
              */
-            expected: {
-                [key: string]: unknown;
-            };
+            base: number;
+        };
+        /**
+         * EditsCrossed
+         * @description An edit merged into others made since its version, where both changed the same text.
+         */
+        EditsCrossed: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "edits_crossed";
+            /**
+             * Version
+             * @description The version the merge made
+             */
+            version: number;
+            /**
+             * Origin
+             * @description Whose edit was merged in
+             */
+            origin: string;
+            /**
+             * Others
+             * @description Whose edits it crossed
+             */
+            others: string[];
+            /** Crossed */
+            crossed: components["schemas"]["CrossedEdit"][];
         };
         /** ErrorKind */
         ErrorKind: {
@@ -2683,6 +2793,11 @@ export interface components {
             /** @description What it built from; none when design.json did not validate */
             spec: components["schemas"]["BuildSpec"] | null;
             /**
+             * Version
+             * @description The version of the design's document it built: what an edit of it is made on
+             */
+            version: number;
+            /**
              * Summary
              * @default
              */
@@ -2724,6 +2839,11 @@ export interface components {
              * @description Its build spec's key (`BuildSpec.key`); none when design.json did not validate
              */
             key: string | null;
+            /**
+             * Version
+             * @description The version of the design's document it built
+             */
+            version: number;
         };
         /**
          * RevoluteMate
@@ -3476,7 +3596,7 @@ export interface components {
             /** Items */
             items: components["schemas"]["SelectionItem"][];
         };
-        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildProgress"] | components["schemas"]["BuildStopped"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["FeedbackDelivered"];
+        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildProgress"] | components["schemas"]["BuildStopped"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["DocumentChanged"] | components["schemas"]["EditsCrossed"] | components["schemas"]["FeedbackDelivered"];
         /**
          * BuildActivity
          * @description A build that finished, one message of the /api/activity WebSocket.

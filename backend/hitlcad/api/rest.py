@@ -150,14 +150,13 @@ class UpdatePin(BaseModel):
 
 class EditParameters(BaseModel):
     values: dict[str, Any]
-    expected: dict[str, Any] = Field(description="The values the edit was made on, of the parameters it changes: "
-                                     "where design.json now has others, the edit is refused (409)")  # fmt: skip
+    base: int = Field(description="The version of the design's files the edit was made on (the revision on screen's): "
+                      "what changed since is kept, the edit merged into it")  # fmt: skip
 
 
 class EditOutputs(BaseModel):
     outputs: list[str] = Field(description="What each build is to write: design.json `outputs`")
-    expected: list[str] = Field(description="The outputs the edit was made on: where design.json now has others, "
-                                "the edit is refused (409)")  # fmt: skip
+    base: int = Field(description="The version of the design's files the edit was made on, as for parameters")
 
 
 class BuildRequest(BaseModel):
@@ -381,11 +380,11 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.post("/api/designs/{design_id}/parameters", status_code=201)
     async def edit_parameters(design_id: str, body: EditParameters) -> Revision:
-        return await builds.edit_parameters(design_id, body.values, body.expected)
+        return await builds.edit_parameters(design_id, body.values, body.base)
 
     @app.post("/api/designs/{design_id}/outputs", status_code=201)
     async def edit_outputs(design_id: str, body: EditOutputs) -> Revision:
-        return await builds.edit_outputs(design_id, body.outputs, body.expected)
+        return await builds.edit_outputs(design_id, body.outputs, body.base)
 
     @app.get("/api/designs/{design_id}/revisions/{revision_id}")
     async def get_revision(design_id: str, revision_id: int) -> Revision:

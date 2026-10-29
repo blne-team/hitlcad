@@ -1,6 +1,9 @@
-"""Design folders bound to their event logs, shared by every surface: MCP tools, the panel's REST API and the CLI.
+"""Designs bound to their folders, documents and event logs, shared by every surface: MCP tools, the panel's REST API
+and the CLI.
 
-A design is a folder holding ``design.json`` and its model source. The folder → design id mapping
+A design is a folder holding ``design.json`` and its model source; hitlcad keeps its files as a document
+(``documents``), of which the folder is the copy on disk, and every edit goes through `change` (made on a version,
+merged into the current one) or `take_in` (what was written to the folder). The folder → design id mapping
 lives in hitlcad's store on this machine, so machine-local ids never end up in the (committable) design
 files. Building (``builds``), what the human points at (``feedback``) and the agent's context
 (``context``) are services on top of this one.
@@ -16,13 +19,23 @@ from pathlib import Path
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.design import DESIGN_FILE, DesignSpec
-from hitlcad.core.events import DesignOpened, DesignState, DesignUpdated, ErrorRaised, Event
+from hitlcad.core.events import (
+    DesignOpened,
+    DesignState,
+    DesignUpdated,
+    DocumentChanged,
+    EditsCrossed,
+    ErrorRaised,
+    Event,
+)
 from hitlcad.core.report import Earlier, Revision
 from hitlcad.core.types import new_id
 from hitlcad.kernel.errors import NOT_FOUND_DESIGN, NOT_FOUND_REVISION, REQUEST_INVALID, STORE_UNREADABLE, HitlcadError
 from hitlcad.services.bus import EventBus
+from hitlcad.services.documents import Change, DocumentService
 from hitlcad.store.base import DesignStore
-from hitlcad.workspace.folder import DesignFolder
+from hitlcad.workspace.document import Disk, Edit, Snapshot
+from hitlcad.workspace.folder import DesignFolder, load_design
 
 
 def _absolute(path: str | Path) -> DesignFolder:
@@ -32,17 +45,18 @@ def _absolute(path: str | Path) -> DesignFolder:
     return DesignFolder(Path(path))
 
 
-def readable(folder: DesignFolder) -> DesignSpec | None:
-    """The folder's design.json, or None when it does not read (its next build reports why)."""
+def readable(files: Snapshot) -> DesignSpec | None:
+    """The design in its design.json, or None when it does not read (its next build reports why)."""
     try:
-        return folder.load()
-    except (OSError, HitlcadError):
+        return load_design(files.design)
+    except HitlcadError:
         return None
 
 
 class DesignService:
     def __init__(self, store: DesignStore, registry: BackendRegistry, loaded: int) -> None:
         self.store = store
+        self.documents = DocumentService(store)
         self.registry = registry
         self.bus = EventBus()
         self.folders_changed = asyncio.Event()
@@ -155,25 +169,28 @@ class DesignService:
     def open(
         self, path: str | Path, backend: str | None = None, name: str | None = None
     ) -> tuple[DesignState, list[str]]:
-        """Bind the folder at ``path`` to its design. With ``backend``, a folder that is not a design yet
-        is scaffolded first. Returns the design and the files that were created. The folder watcher
-        builds it once its model exists, and when first opened since the server started, if its files changed;
-        a design.json that does not validate is opened all the same, and its build says why."""
+        """Bind the folder at ``path`` to its design, its files becoming the design's document. With ``backend``, a
+        folder that is not a design yet is scaffolded first. Returns the design and the files that were created.
+        The folder watcher builds it once its model exists, and when first opened since the server started, if its
+        files changed; a design.json that does not validate is opened all the same, and its build says why."""
         folder = _absolute(path)
-        created = []
+        created: Disk | None = None
         if not folder.exists():
             if backend is None:
                 raise NOT_FOUND_DESIGN(f"no {DESIGN_FILE} in {folder.path}")
             if backend not in self.registry.names():
                 raise REQUEST_INVALID(f"unknown backend {backend!r}; available: {', '.join(self.registry.names())}")
             created = folder.scaffold(name or folder.path.name, backend)
-        design = readable(folder)
         design_id = self.id_for(folder.path)
         if design_id is None:
             design_id = new_id("dsg")
             self.store.create(design_id)
+            disk = created or Disk.read(folder.path)
+            design = readable(Snapshot(0, disk.texts))
             self.emit(design_id, DesignOpened(path=str(folder.path), name=design.name if design else folder.path.name,
                                               backend=design.backend if design else DEFAULT_BACKEND))  # fmt: skip
+            origin = "scaffold" if created else "folder"
+            self._changed(design_id, self.documents.create(design_id, folder.path, disk, origin), origin, 0, "")
             self.store.bind(str(folder.path), design_id)
             self._folders[str(folder.path)] = design_id
             self.folders_changed.set()
@@ -181,9 +198,9 @@ class DesignService:
                 self.emit(design_id, ErrorRaised(diagnostic=STORE_UNREADABLE.diagnostic(
                     "This design's history was written by another version of hitlcad: it was set aside with the "
                     "database it was in. Its revisions start again.")))  # fmt: skip
-        self.sync(design_id, design)
+        self.sync(design_id)
         self._use(design_id)
-        return self.get(design_id), created
+        return self.get(design_id), [*created.texts, *created.sums] if created else []
 
     def ensure(self, path: str | Path) -> DesignState:
         """The design for ``path``, opening the folder if it is not registered yet."""
@@ -204,17 +221,60 @@ class DesignService:
         out = []
         for folder, other in self.folders().items():
             try:
-                if path in DesignFolder(Path(folder)).components():
+                if path in DesignFolder(Path(folder)).components(self.files(other)):
                     out.append(other)
-            except (OSError, HitlcadError):  # an unreadable design.json: its own build reports it
+            except HitlcadError:  # an unreadable design.json: its own build reports it
                 continue
         return out
 
     def sync(self, design_id: str, design: DesignSpec | None = None) -> None:
         """Mirror the parts of design.json the panel shows (name, backend, brief) into the log."""
         state = self.get(design_id)
-        design = design or readable(self.folder(design_id))
+        design = design or readable(self.files(design_id))
         if design is None:  # the next build reports why
             return
         if (state.name, state.backend, state.brief) != (design.name, design.backend, design.brief):
             self.emit(design_id, DesignUpdated(name=design.name, backend=design.backend, brief=design.brief))
+
+    # ------------------------------------------------------------------ files
+
+    def files(self, design_id: str) -> Snapshot:
+        """The design's files, as its document holds them now."""
+        return self.documents.current(design_id)
+
+    def files_at(self, path: Path) -> Snapshot | None:
+        """The files of the design in a folder (registered when it was not yet); None when it holds none."""
+        folder = DesignFolder(path)
+        design_id = self.id_for(folder.path)
+        if design_id is None:
+            if not folder.exists():
+                return None
+            design_id = self.open(folder.path)[0].id
+        return self.files(design_id)
+
+    def change(self, design_id: str, base: int, origin: str, edit: Edit, summary: str = "") -> Change | None:
+        """Make `edit` on the design's files as they were at version `base`, merged with what changed since."""
+        change = self.documents.change(design_id, Path(self.get(design_id).path), base, origin, edit)
+        return self._changed(design_id, change, origin, base, summary)
+
+    async def take_in(self, design_id: str, origin: str = "disk", base: int | None = None) -> Change | None:
+        """What the design's folder holds now, written by `origin` from version `base` (unknown: the version last
+        written there), merged into the design's files."""
+        folder = Path(self.get(design_id).path)
+        disk = await asyncio.to_thread(Disk.read, folder)
+        since = self.files(design_id).version if base is None else base
+        return self._changed(
+            design_id, self.documents.take_in(design_id, folder, disk, base, origin), origin, since, ""
+        )
+
+    def _changed(self, design_id: str, change: Change | None, origin: str, base: int, summary: str) -> Change | None:
+        if change is None:
+            return None
+        others = sorted({c.origin for c in self.get(design_id).changes if c.version > base} - {origin})
+        self.emit(
+            design_id, DocumentChanged(version=change.version, origin=origin, files=change.files, summary=summary)
+        )
+        if change.crossings:
+            self.emit(design_id, EditsCrossed(version=change.version, origin=origin, others=others,
+                                              crossed=change.crossings))  # fmt: skip
+        return change

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import difflib
-from pathlib import Path
 
 from hitlcad.agent.graph import Context, DesignGraph, revision_summary
 from hitlcad.config import Settings
@@ -11,7 +10,8 @@ from hitlcad.core.design import DESIGN_FILE
 from hitlcad.core.report import Revision
 from hitlcad.kernel.errors import NOT_FOUND_REVISION, HitlcadError
 from hitlcad.services.designs import DesignService
-from hitlcad.workspace.folder import DesignFolder
+from hitlcad.workspace.document import Snapshot
+from hitlcad.workspace.folder import load_design
 
 
 class ExploreService:
@@ -21,30 +21,29 @@ class ExploreService:
 
     def graph(self, design_id: str, configuration: str | None = None) -> DesignGraph:
         state = self.designs.get(design_id)
-        folder = DesignFolder(Path(state.path))
+        files = self.designs.files(design_id)
         design, design_error = None, None
         try:
-            design = folder.load()
-        except (OSError, HitlcadError) as e:
+            design = load_design(files.design)
+        except HitlcadError as e:
             design_error = str(e)
         latest = state.latest(configuration)
         revision = self.designs.revision(design_id, latest.id) if latest else None
-        stale = self._stale(folder, revision) if revision else []
+        stale = self._stale(files, revision) if revision else []
         used_by = [self.designs.get(i).name for i in self.designs.where_used(design_id)]
         return DesignGraph(Context(state=state, design=design, design_error=design_error, revision=revision,
                                    stale=stale, used_by=used_by, limit=self.settings.explore_limit,
                                    load=lambda rev: self.designs.revision(design_id, rev)))  # fmt: skip
 
     @staticmethod
-    def _stale(folder: DesignFolder, revision: Revision) -> list[str]:
+    def _stale(files: Snapshot, revision: Revision) -> list[str]:
         """Files that changed since `revision` was built: what its facts no longer describe."""
         assert revision.spec is not None  # a revision that built
         try:
-            now = folder.sources()
-            design = folder.load()
-            assets = folder.assets()
-        except (OSError, HitlcadError):
+            design = load_design(files.design)
+        except HitlcadError:
             return [DESIGN_FILE]
+        now, assets = files.sources(), files.vendor()
         then = revision.spec.sources
         changed = sorted(f for f in {*now, *then} if now.get(f) != then.get(f))
         if design.model_dump(exclude={"brief"}) != revision.spec.design.model_dump(exclude={"brief"}):

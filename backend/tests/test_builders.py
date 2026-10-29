@@ -17,6 +17,7 @@ from hitlcad.agent.skills import install
 from hitlcad.app import HitlCad
 from hitlcad.geometry.mesh import load_mesh, topology
 from hitlcad.kernel.plugins import registry
+from hitlcad.workspace.document import Snapshot
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import write_design
@@ -187,7 +188,7 @@ async def test_blender_form_bounds_volume_resolution_and_frames(core: HitlCad, t
             "    return {'form': section_form(sections=[(0, p['radius']), (20, p['radius'])], wall=2, floor=3)}\n"
         ),
     )
-    spec = DesignFolder(folder).spec(core.settings.tolerances, None)
+    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances, None)
     out = tmp_path / "out"
     report = await core.pipeline.run(spec, folder, out)
     assert report.status == "succeeded" and not report.failing(), report.lead()
@@ -221,7 +222,9 @@ async def test_open_mesh_feedback_names_file_counts_and_local_coordinates(core: 
             "    return {'form': (obj, connectors)}\n"
         ),
     )
-    report = await core.pipeline.run(DesignFolder(folder).spec(core.settings.tolerances), folder, tmp_path / "out")
+    report = await core.pipeline.run(
+        DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances), folder, tmp_path / "out"
+    )
     assert report.status == "succeeded", report.lead()
     (finding,) = [r for r in report.results if r.code == "part.mesh_open"]
     assert finding.status == "fail"

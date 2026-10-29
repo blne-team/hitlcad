@@ -1,4 +1,4 @@
-"""Persistence interface. Implementations keep event logs append-only."""
+"""Persistence interface. Implementations keep event logs and documents' updates append-only."""
 
 from __future__ import annotations
 
@@ -47,6 +47,23 @@ class DesignStore(Protocol):
         """Move the design's history (its events and revisions) out of the way, intact, and start it a new,
         empty one. Returns where it went."""
         ...
+
+    def add_update(self, design_id: str, origin: str, update: bytes, snapshot: bytes | None = None) -> int:
+        """Persist one change to the design's document, with the whole document at it when given (a snapshot);
+        returns its version."""
+        ...
+
+    def document(self, design_id: str, version: int | None = None) -> tuple[int, bytes | None, list[bytes]]:
+        """What makes the document at `version` (its latest without): that version, the latest snapshot at or
+        before it, and the updates after the snapshot up to it, in order. Version 0, no snapshot and no updates:
+        no document."""
+        ...
+
+    def put_blobs(self, blobs: dict[str, bytes]) -> None:
+        """Keep file contents by their sha256."""
+        ...
+
+    def blob(self, digest: str) -> bytes | None: ...
 
     def revision_dir(self, design_id: str, revision_id: int) -> Path:
         """Directory that holds the files of one revision (created on demand)."""

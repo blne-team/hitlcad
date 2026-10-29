@@ -37,8 +37,8 @@ test.beforeAll(async () => {
   ];
   writeDesign(folder, { parameters, ground: "box", parts: { box: { role: "a box", file: "parts/box.py", material: "PLA" } } },
     { "parts/box.py": MODEL, "assembly.py": ASSEMBLY });
-  await api("POST", `/api/designs/${id}/build`);
-  await api("POST", `/api/designs/${id}/parameters`, { values: { height: 15 }, expected: { height: 10 } });
+  const built = await api<{ version: number }>("POST", `/api/designs/${id}/build`);
+  await api("POST", `/api/designs/${id}/parameters`, { values: { height: 15 }, base: built.version });
 });
 
 const tab = (page: Page, name: string) => page.locator(".tab", { hasText: name }).click();

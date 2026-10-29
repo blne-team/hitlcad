@@ -143,7 +143,7 @@ def advice(code: str) -> str:
 def http_status(d: Diagnostic) -> int:
     match d.owner:
         case "request":
-            return 404 if d.code.startswith("not_found.") else 409 if d.code.startswith("conflict.") else 422
+            return 404 if d.code.startswith("not_found.") else 422
         case "design":
             return 422
         case "environment" | "plugin":
@@ -446,9 +446,9 @@ OUTPUT_UNKNOWN = define(
     code="output.unknown", owner="request", title="An output hitlcad does not have",
     hint="Name outputs list_backends lists.",
 )  # fmt: skip
-DESIGN_CHANGED = define(
-    code="conflict.design_changed", owner="request", title="design.json changed since the edit was made on it",
-    hint="Look at the design as it is now, and make the edit again on it.",
+BASE_UNKNOWN = define(
+    code="request.base_unknown", owner="request", title="An edit made on a version of the design it never had",
+    hint="Make the edit on a version the design's state lists (its revisions' versions).",
 )  # fmt: skip
 SOURCES_CHANGED = define(
     code="build.sources_changed", owner="request", title="A file changed while the design built",

@@ -39,11 +39,11 @@ export const api = {
   watchMotion: (id: string, revision: number, key: string) => send<Revision>("POST", `/api/designs/${id}/watched`, { revision, key }),
   unwatchMotion: (id: string, revision: number, key: string) =>
     request<Revision>(`/api/designs/${id}/watched/${key}?revision=${revision}`, { method: "DELETE" }),
-  /** Refused (409) where design.json no longer has the `expected` values the edit was made on. */
-  editParameters: (id: string, values: Record<string, ParamValue>, expected: Record<string, ParamValue>) =>
-    send<Revision>("POST", `/api/designs/${id}/parameters`, { values, expected }),
-  editOutputs: (id: string, outputs: string[], expected: string[]) =>
-    send<Revision>("POST", `/api/designs/${id}/outputs`, { outputs, expected }),
+  /** Made on the version of the files the revision on screen built (`base`): merged with what changed since. */
+  editParameters: (id: string, values: Record<string, ParamValue>, base: number) =>
+    send<Revision>("POST", `/api/designs/${id}/parameters`, { values, base }),
+  editOutputs: (id: string, outputs: string[], base: number) =>
+    send<Revision>("POST", `/api/designs/${id}/outputs`, { outputs, base }),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
   structure: (id: string, configuration: string | null) =>
     request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),

@@ -396,6 +396,7 @@ class RevisionInfo(Model):
     key: str | None = Field(
         description="Its build spec's key (`BuildSpec.key`); none when design.json did not validate"
     )
+    version: int = Field(description="The version of the design's document it built")
 
 
 class Revision(Model):
@@ -405,6 +406,7 @@ class Revision(Model):
     parent: int | None = None
     configuration: str | None = None
     spec: BuildSpec | None = Field(description="What it built from; none when design.json did not validate")
+    version: int = Field(description="The version of the design's document it built: what an edit of it is made on")
     summary: str = ""
     report: BuildReport
 
@@ -413,7 +415,7 @@ class Revision(Model):
         return RevisionInfo(id=self.id, created_at=self.created_at, origin=self.origin, parent=self.parent,
                             configuration=self.configuration, summary=self.summary, status=r.status, tally=r.tally,
                             failure=r.lead() if r.status == BuildStatus.FAILED else None,
-                            key=self.spec.key if self.spec else None)  # fmt: skip
+                            key=self.spec.key if self.spec else None, version=self.version)  # fmt: skip
 
 
 @dataclass(frozen=True)

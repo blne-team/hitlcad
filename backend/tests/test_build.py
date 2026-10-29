@@ -21,6 +21,7 @@ from hitlcad.app import HitlCad
 from hitlcad.core.report import BuildReport
 from hitlcad.geometry import cadview
 from hitlcad.kernel.errors import Location
+from hitlcad.workspace.document import Snapshot
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import copy_design, edit_json, results, write_design
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.geometry
 
 
 async def build(core: HitlCad, folder: Path, out: Path, configuration: str | None = None) -> BuildReport:
-    spec = DesignFolder(folder).spec(core.settings.tolerances, configuration)
+    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances, configuration)
     return await core.pipeline.run(spec, folder, out)
 
 
@@ -175,7 +176,7 @@ async def test_structure_is_checked_before_any_geometry(core: HitlCad, tmp_path:
     edit_json(
         folder / "design.json", lambda d: d["mates"].append({"type": "rigid", "a": "base.side", "b": "lid.bottom"})
     )
-    spec = DesignFolder(folder).spec(core.settings.tolerances)
+    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
     found, plan = await core.pipeline.check_structure(spec, folder, tmp_path / "work")
     assert plan and set(plan.placements) == {"base", "lid", "insert", "screw"}
     assert [r.detail for r in found if r.status == "fail"] == [

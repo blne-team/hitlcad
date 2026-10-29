@@ -16,6 +16,7 @@ from hitlcad.app import HitlCad
 from hitlcad.build.pipeline import load_built
 from hitlcad.builtin.pictures.picture import cut_out
 from hitlcad.core.report import BuildReport, BuildSpec
+from hitlcad.workspace.document import Snapshot
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import edit_json, results, write_design
@@ -98,14 +99,14 @@ async def test_a_build_is_compared_with_its_picture_and_a_new_picture_builds_aga
 ) -> None:
     folder = write_design(tmp_path / "figure", figure_design("references/front.png"))
     drawing(folder / "references/front.png", eared=False)
-    first = DesignFolder(folder).spec(core.settings.tolerances)
+    first = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
     report = await core.pipeline.run(first, folder, tmp_path / "out1")
     (looks,) = results(report, "requirement")
     assert looks.status == "pass", looks.detail
     assert "apart by up to 0.1 mm" in looks.detail and "reference 30.0 × 40.0 mm" in looks.detail
 
     drawing(folder / "references/front.png", eared=True)
-    second = DesignFolder(folder).spec(core.settings.tolerances)
+    second = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
     assert second.key != first.key and second.checked != first.checked and second.sources == first.sources
     report = await core.pipeline.run(second, folder, tmp_path / "out2")
     assert all(p.cached for p in report.parts)
@@ -116,7 +117,9 @@ async def test_a_build_is_compared_with_its_picture_and_a_new_picture_builds_aga
 
     drawing(folder / "references/front.png", eared=False)
     edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=30))  # shorter than its picture
-    report = await core.pipeline.run(DesignFolder(folder).spec(core.settings.tolerances), folder, tmp_path / "out3")
+    report = await core.pipeline.run(
+        DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances), folder, tmp_path / "out3"
+    )
     (looks,) = results(report, "requirement")
     assert ": 1 figure stops 10.0 mm short of the reference towards +Z at X " in looks.detail, looks.detail
 
@@ -132,7 +135,7 @@ def check_figure(core: HitlCad, report: BuildReport, spec: BuildSpec, folder: Pa
 @pytest.mark.geometry
 async def test_a_missing_picture_fails_saying_where_to_save_it(core: HitlCad, tmp_path: Path) -> None:
     folder = write_design(tmp_path / "figure", figure_design("references/side.png"))
-    spec = DesignFolder(folder).spec(core.settings.tolerances)
+    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
     assert spec.checked == {"references/side.png": ""}
     report = await core.pipeline.run(spec, folder, tmp_path / "out")
     (looks,) = results(report, "requirement")

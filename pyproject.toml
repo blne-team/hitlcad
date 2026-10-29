@@ -37,6 +37,10 @@ dependencies = [
   "opencv-python-headless>=4.10",  # cuts the subject of a reference picture out of its background (GrabCut)
   "python-fcl>=0.7",  # distances between solids, each moved, from a tree of its triangles built once: motion sweeps
   "casadi>=3.8.1",
+  "pycrdt>=0.12",
+  "diff-match-patch>=20230430",
+  "tree-sitter>=0.23",
+  "tree-sitter-json>=0.24",
 ]
 
 [project.optional-dependencies]

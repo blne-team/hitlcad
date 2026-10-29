@@ -42,7 +42,7 @@ export function ParametersPanel({ design, revision, configuration, setConfigurat
     setBusy(true);
     setError(null);
     try {
-      await api.editParameters(design.id, changed, Object.fromEntries(Object.keys(changed).map((k) => [k, original[k]!])));
+      await api.editParameters(design.id, changed, revision.version);  // made on the revision on screen: merged
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

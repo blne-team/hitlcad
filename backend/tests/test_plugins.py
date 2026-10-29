@@ -18,6 +18,7 @@ from hitlcad.core.design import DesignSpec
 from hitlcad.kernel import plugins
 from hitlcad.kernel.errors import HitlcadError, catalog
 from hitlcad.kernel.plugins import Registry, hookimpl, registry
+from hitlcad.workspace.document import Snapshot
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import write_design
@@ -61,14 +62,14 @@ def test_hitlcad_s_own_plugins_and_an_installed_one_load_alike() -> None:
 
 def test_a_design_names_the_plugins_it_needs(tmp_path: Path) -> None:
     folder = write_design(tmp_path / "plate", PLATE)
-    assert DesignFolder(folder).load().plugins == {"hitlcad-lasercut": ">=0.1"}
+    assert DesignFolder(folder).load((folder / "design.json").read_text()).plugins == {"hitlcad-lasercut": ">=0.1"}
     for needs, says in (({"hitlcad-lasercut": ">=9"}, "hitlcad-lasercut >=9 is needed, 0.1.0 is installed"),
                         ({"hitlcad-sls": ">=1"}, "hitlcad-sls >=1 is not installed"),
                         ({"hitlcad-lasercut": "soon"}, "'soon' is not a version specifier")):  # fmt: skip
         design = json.loads((folder / "design.json").read_text(encoding="utf-8")) | {"plugins": needs}
         (folder / "design.json").write_text(json.dumps(design), encoding="utf-8")
         with pytest.raises(HitlcadError, match=says) as missing:
-            DesignFolder(folder).load()
+            DesignFolder(folder).load((folder / "design.json").read_text())
         assert missing.value.code == "plugin.missing" and missing.value.owner == "plugin"
 
 
@@ -110,7 +111,7 @@ async def test_a_plugin_s_process_and_building_block_build_and_its_failures_are_
     from hitlcad_lasercut.process import LaserCutProcess
 
     folder = write_design(tmp_path / "plate", PLATE)
-    spec = DesignFolder(folder).spec(core.settings.tolerances)
+    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
     assert spec.plugins == {"hitlcad-lasercut": "0.1.0"}
     report = await core.pipeline.run(spec, folder, tmp_path / "out")  # the part file imports the plugin's block
     assert report.status == "succeeded", report.lead()
