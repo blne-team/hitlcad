@@ -344,10 +344,11 @@ async def test_a_backend_keeps_a_worker_per_design_and_replaces_one_it_needs_for
     workers = Workers(LocalExecutor(), size=2)
     a = await pid("/a", "a4")
     for _ in range(100):  # the spare, started as /a started its own
-        if spare := next((h.worker.pid for h in workers._idle if h.design is None), None):
+        if spare := next((h for h in workers._idle if h.design is None), None):
             break
         await asyncio.sleep(0.05)
-    assert await pid("/b", "b2") == spare  # the next design takes it, its libraries loaded
+    await pid("/b", "b2")
+    assert spare and spare.design == "/b"  # the next design takes it, its libraries loaded
     assert psutil.pid_exists(a) and await pid("/a", "a5") == a  # no design's worker is replaced for a spare
     await workers.close()
 

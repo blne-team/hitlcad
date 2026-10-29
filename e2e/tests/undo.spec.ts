@@ -38,6 +38,7 @@ test("undo and redo in the panel take back the human's edit and keep the agent's
   await expect.poll(() => read().parameters[0]!.value).toBe(30);
   expect(read().name).toBe("Renamed");
   await expect(undo).toBeDisabled();
+  await expect(redo).toBeEnabled(); // the design's state, after the Undo, lists the step to make again
 
   await page.keyboard.press("Control+Shift+Z");
   await expect.poll(() => read().parameters[0]!.value).toBe(40);

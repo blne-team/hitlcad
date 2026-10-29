@@ -20,7 +20,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import shutil
 import time
 from collections import defaultdict
@@ -187,7 +186,7 @@ def write_sources(spec: BuildSpec, blobs: Blobs, target: Path) -> None:
     shutil.rmtree(target, ignore_errors=True)
     for rel, text in spec.sources.items():
         (target / rel).parent.mkdir(parents=True, exist_ok=True)
-        (target / rel).write_text(text, encoding="utf-8")
+        (target / rel).write_text(text, encoding="utf-8", newline="")  # as the file has it, its line endings too
     for rel, digest in spec.assets.items():
         data = blobs(digest)
         assert data is not None, f"no content for {rel}"  # every file a document holds, its blob is kept
@@ -448,7 +447,7 @@ class BuildPipeline:
             lead = report.lead()
             why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
             raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
-        shutil.copytree(target, out_dir / "components" / name, copy_function=os.link)
+        shutil.copytree(target, out_dir / "components" / name, copy_function=link)
         return report, load_built(report, bound, child_folder, out_dir / "components" / name, self.shapes)
 
     async def _parts(self, spec: BuildSpec, folder: Path, src: Path, ticket: Ticket, values: dict[str, Value],

@@ -817,10 +817,10 @@ async def test_an_editor_s_save_of_a_buffer_older_than_the_file_keeps_what_was_w
     width stays."""
     folder = copy_design("tiny", tmp_path / "tiny")
     state, _ = core.designs.open(folder)
-    buffer = (folder / "design.json").read_text()
+    buffer = (folder / "design.json").read_bytes().decode()  # as the editor reads it: its line endings kept
     await core.builds.edit_parameters(state.id, {"width": 20}, 1)
     core.designs.saving(folder / "design.json", sha256(buffer.encode()).hexdigest())
-    (folder / "design.json").write_text(buffer.replace('"name": "Tiny"', '"name": "Theirs"'), encoding="utf-8")
+    (folder / "design.json").write_bytes(buffer.replace('"name": "Tiny"', '"name": "Theirs"').encode())
     await core.designs.take_in(state.id)
     saved = json.loads((folder / "design.json").read_text())
     assert (saved["name"], saved["parameters"][0]["value"]) == ("Theirs", 20) and not state.crossed
@@ -851,7 +851,7 @@ async def test_a_folder_read_while_an_edit_merged_does_not_undo_it(
     go.set()
     await asyncio.gather(taking_in, edit)
     assert json.loads(core.designs.files(state.id).design)["parameters"][0]["value"] == 20
-    assert core.designs.files(state.id).design == (folder / "design.json").read_text()
+    assert core.designs.files(state.id).design == (folder / "design.json").read_bytes().decode()
     assert [c.origin for c in core.designs.get(state.id).changes] == ["folder", "panel"]
 
 

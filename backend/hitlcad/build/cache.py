@@ -9,6 +9,7 @@ another folder finds its parts too.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -23,12 +24,18 @@ from hitlcad.core.report import Reads
 OUTCOME = "outcome.json"
 
 
-def link(source: Path, target: Path) -> None:
+def link(source: Path | str, target: Path | str) -> None:
     """`target` as the same file as `source`, taking no more room (a hard link): the part files the cache and the
-    builds share are written once and never again."""
+    builds share are written once and never again. On another drive than `source`, where no link reaches, a copy."""
+    target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.unlink(missing_ok=True)
-    os.link(source, target)
+    try:
+        os.link(source, target)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        shutil.copy2(source, target)
 
 
 @dataclass(frozen=True)
