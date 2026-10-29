@@ -888,10 +888,9 @@ def test_a_design_s_document_replays_every_version_from_the_store(tmp_path: Path
     kept.write("d", folder)
     again = documents.DocumentService(store)
     assert again.current("d") == kept.current("d") and again.current("d").version == 5
-    assert again.files_at("d", 3).texts["assembly.py"] == (folder / "assembly.py").read_text().replace(
-        "# 13\n# 14\n", ""
-    )
-    assert (folder / "assembly.py").read_text().endswith("# 14\n")  # the folder written with the latest version
+    written = (folder / "assembly.py").read_bytes().decode()  # its line endings as they are
+    assert again.files_at("d", 3).texts["assembly.py"] == written.replace("# 13\n# 14\n", "")
+    assert written.endswith("# 14\n")  # the folder written with the latest version
     store.close()
 
 
