@@ -1,8 +1,9 @@
 """A design's files as one CRDT document: what hitlcad keeps as the design, of which its folder is the copy on disk.
 
-design.json and the Python files are text that merges character by character (an edit made on an earlier
-version keeps what others changed since); every other file of the folder is kept by its content (sha256), the
-later of two writes winning. A `Snapshot` is the files at one version, as builds and the panel read them.
+design.json and the Python files are text; every other file of the folder is kept by its content (sha256). An edit
+made on an earlier version is merged into the current one by tokens (`merge`): what others changed since stays, and
+where both changed the same tokens, the edit merged now is kept and the place said. A `Snapshot` is the files at one
+version, as builds and the panel read them.
 
 Text positions in the document are UTF-8 byte offsets (pycrdt's), so edits found in Python strings are turned
 into bytes here, and tree-sitter's are bytes already.
@@ -13,8 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +27,7 @@ from pycrdt import Doc, Map, Text
 from tree_sitter import Language, Node, Parser
 
 from hitlcad.core.design import DESIGN_FILE
-from hitlcad.core.events import CrossedEdit
+from hitlcad.core.events import ChangedLine, CrossedEdit
 
 BUILD_DIR = "build"
 CODE = ("interfaces.py", "assembly.py")
@@ -54,7 +57,7 @@ def in_design(rel: Path) -> bool:
 
 @dataclass(frozen=True)
 class Snapshot:
-    """A design's files at one version (0: as read from a folder, outside any document)."""
+    """A design's files at one version (0: as read from a folder, outside any document: `Scanned`)."""
 
     version: int
     texts: dict[str, str]
@@ -71,12 +74,6 @@ class Snapshot:
 
     def vendor(self) -> dict[str, str]:
         return {p: s for p, s in sorted(self.assets.items()) if p.split("/")[0] in ASSET_DIRS}
-
-    @classmethod
-    def scan(cls, folder: Path) -> Snapshot | None:
-        """The files of a design folder on disk, as they are; None when it holds no design."""
-        disk = Disk.read(folder)
-        return cls(0, disk.texts, disk.sums) if DESIGN_FILE in disk.texts else None
 
 
 @dataclass
@@ -104,6 +101,20 @@ class Disk:
         return cls(texts, sums, blobs)
 
 
+class Scanned:
+    """Design folders' files as they are on disk, outside any document (`hitlcad build`, with no server): the files a
+    spec is made of (`DesignFolder.spec`), with the contents of those kept by their sums, for the build."""
+
+    def __init__(self) -> None:
+        self.blobs: dict[str, bytes] = {}
+
+    def __call__(self, folder: Path) -> Snapshot | None:
+        """The files of a design folder; None when it holds no design."""
+        disk = Disk.read(folder)
+        self.blobs |= disk.blobs
+        return Snapshot(0, disk.texts, disk.sums) if DESIGN_FILE in disk.texts else None
+
+
 def _files(folder: Path) -> Iterator[Path]:
     for root, dirs, names in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if d not in IGNORED)
@@ -124,17 +135,13 @@ class Document:
 
     def update(self, since: bytes | None = None) -> bytes:
         """Everything (or what changed since the state `since`) as one update."""
-        return self.doc.get_update(since) if since is not None else self.doc.get_update()
+        return self.doc.get_update(since)
 
     def state(self) -> bytes:
         return self.doc.get_state()
 
     def apply(self, update: bytes) -> None:
         self.doc.apply_update(update)
-
-    def fork(self) -> Document:
-        """A copy to edit apart (an editor of its own), whose changes merge back with `update(state)`."""
-        return Document(self.update())
 
     def snapshot(self, version: int) -> Snapshot:
         return Snapshot(version, {p: str(t) for p, t in sorted(self._texts.items())},
@@ -186,46 +193,115 @@ class Document:
                 self.put(path, texts.get(path), sums.get(path))
 
 
-# ---------------------------------------------------------------------- edits that crossed
+# ---------------------------------------------------------------------- merging an edit made on an earlier version
+
+#: A text's tokens: string literals, comments, numbers, words, runs of spaces, line breaks, any other character. A
+#: merge never splits one, so a number two edits changed comes out as one of theirs, never digits of both.
+_TOKEN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|#[^\n]*|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|\w+|[ \t]+|.',
+                    re.DOTALL)  # fmt: skip
 
 
-def crossings(base: Snapshot, mine: Snapshot, theirs: Snapshot, merged: Snapshot) -> list[CrossedEdit]:
-    """Places both `mine` and `theirs` changed from `base` (touching counts): a merge kept both, by rule, and the
-    human should look at what it made."""
+@dataclass(frozen=True)
+class _Hunk:
+    start: int  # tokens of the base it replaces: [start, end)
+    end: int
+    tokens: tuple[str, ...]
+    mine: bool
+
+
+def _hunks(base: list[str], new: list[str], mine: bool) -> list[_Hunk]:
+    found = SequenceMatcher(None, base, new, autojunk=False).get_opcodes()
+    return [_Hunk(i1, i2, tuple(new[j1:j2]), mine) for op, i1, i2, j1, j2 in found if op != "equal"]
+
+
+def _applied(base: list[str], start: int, end: int, hunks: list[_Hunk]) -> list[str]:
+    """base[start:end] with one side's hunks in it made."""
+    out, at = [], start
+    for h in hunks:
+        out += [*base[at : h.start], *h.tokens]
+        at = h.end
+    return out + base[at:end]
+
+
+def merge_text(base: str, mine: str, theirs: str) -> tuple[str, list[tuple[int, int]]]:
+    """`mine` and `theirs`, both edits of `base`, as one text: what either changed alone is kept, the same change
+    once, and insertions at one place both (theirs first). Where they changed the same tokens otherwise, `mine` (the
+    edit merged now) is kept, and the place is said: its line in `base` and in the merged text."""
+    b = _TOKEN.findall(base)
+    hunks = sorted([*_hunks(b, _TOKEN.findall(theirs), False), *_hunks(b, _TOKEN.findall(mine), True)],
+                   key=lambda h: (h.start, h.end, h.mine))  # fmt: skip
+    groups: list[list[_Hunk]] = []
+    for h in hunks:  # hunks that meet: they overlap, or insert at the same place
+        last = groups[-1] if groups else None
+        if last and (h.start < max(g.end for g in last) or h.start == h.end == last[0].start == last[0].end):
+            last.append(h)
+        else:
+            groups.append([h])
+    out: list[str] = []
+    crossed: list[tuple[int, int]] = []
+    at = 0
+    for group in groups:
+        start, end = group[0].start, max(h.end for h in group)
+        ours, others = [h for h in group if h.mine], [h for h in group if not h.mine]
+        out += b[at:start]
+        made = _applied(b, start, end, ours), _applied(b, start, end, others)
+        if not ours or not others or made[0] == made[1]:
+            out += made[0] if ours else made[1]
+        elif start == end:  # both inserted here
+            out += [*made[1], *made[0]]
+        else:
+            crossed.append(("".join(b[:start]).count("\n") + 1, "".join(out).count("\n") + 1))
+            out += made[0]
+        at = end
+    return "".join(out + b[at:]), crossed
+
+
+def changed_lines(before: Snapshot, after: Snapshot, paths: Sequence[str]) -> list[ChangedLine]:
+    """The lines of these text files that differ from `before` in `after`, as `after` has them (a removed one empty);
+    files created or removed are said by their names."""
     out = []
-    for path in sorted({*mine.texts, *theirs.texts, *base.texts}):
-        old, a, b = base.texts.get(path), mine.texts.get(path), theirs.texts.get(path)
-        if a == old or b == old:
+    for path in paths:
+        old, new = before.texts.get(path), after.texts.get(path)
+        if old is None or new is None:
             continue
-        if old is None or a is None or b is None:  # created or removed on both sides
-            out.append(CrossedEdit(path=path, line=1, now=(merged.texts.get(path) or "").partition("\n")[0]))
-            continue
-        ours, others = _changed(old, a), _changed(old, b)
-        for start, end in ours:
-            if any(start <= e and s <= end for s, e in others):
-                line = old.count("\n", 0, start) + 1
-                lines = (merged.texts.get(path) or "").splitlines()
-                out.append(CrossedEdit(path=path, line=line, now=lines[line - 1].strip() if line <= len(lines) else ""))
-                break
-    for path in sorted({*mine.assets, *theirs.assets, *base.assets}):
-        old, a, b = base.assets.get(path), mine.assets.get(path), theirs.assets.get(path)
-        if a != old and b != old and a != b:
-            out.append(CrossedEdit(path=path, line=0, now=""))
+        a, b = old.splitlines(), new.splitlines()
+        for op, _, _, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+            if op != "equal":
+                out += [ChangedLine(path=path, line=j + 1, now=b[j].strip()) for j in range(j1, j2)] or [
+                    ChangedLine(path=path, line=j1 + 1, now="")]  # fmt: skip
     return out
 
 
-def _changed(old: str, new: str) -> list[tuple[int, int]]:
-    """The spans of `old` (characters) an edit to `new` deleted or inserted at."""
-    spans, at = [], 0
-    for op, chunk in _DIFF.diff_main(old, new):
-        if op == _DIFF.DIFF_EQUAL:
-            at += len(chunk)
-        elif op == _DIFF.DIFF_DELETE:
-            spans.append((at, at + len(chunk)))
-            at += len(chunk)
-        else:
-            spans.append((at, at))
-    return spans
+def merge(base: Snapshot, mine: Snapshot, theirs: Snapshot) -> tuple[Snapshot, list[CrossedEdit]]:
+    """The design's files with `mine` and `theirs`, two edits of `base`, both made (`merge_text` for each text file
+    both changed); where they crossed, `mine` is kept and the place is said, for the human to look at."""
+    texts: dict[str, str] = {}
+    assets: dict[str, str] = {}
+    crossed: list[CrossedEdit] = []
+    for path in sorted({*base.texts, *mine.texts, *theirs.texts}):
+        old, a, b = base.texts.get(path), mine.texts.get(path), theirs.texts.get(path)
+        if a in (old, b):
+            kept = b
+        elif b == old:
+            kept = a
+        elif old is not None and a is not None and b is not None:
+            kept, places = merge_text(old, a, b)
+            lines = kept.splitlines()
+            crossed += [CrossedEdit(path=path, line=line, now=lines[now - 1].strip() if now <= len(lines) else "")
+                        for line, now in places]  # fmt: skip
+        else:  # created on both sides, or removed on one and changed on the other
+            kept = a
+            crossed.append(CrossedEdit(path=path, line=1, now=(a or "").partition("\n")[0]))
+        if kept is not None:
+            texts[path] = kept
+    for path in sorted({*base.assets, *mine.assets, *theirs.assets}):
+        old, a, b = base.assets.get(path), mine.assets.get(path), theirs.assets.get(path)
+        kept = b if a in (old, b) else a
+        if a != old and b not in (old, a):
+            crossed.append(CrossedEdit(path=path, line=0, now=""))
+        if kept is not None:
+            assets[path] = kept
+    return Snapshot(theirs.version, texts, assets), crossed
 
 
 # ---------------------------------------------------------------------- design.json, edited where a value is

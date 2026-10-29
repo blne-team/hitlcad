@@ -31,6 +31,13 @@ class DesignOpened(_Event):
     backend: str
 
 
+class DesignMoved(_Event):
+    """The design's folder was moved or renamed: found at `path` with exactly the files it had."""
+
+    type: Literal["design_moved"] = "design_moved"
+    path: str
+
+
 class DesignUpdated(_Event):
     """design.json changed in a way the panel shows (name, backend, brief)."""
 
@@ -102,6 +109,18 @@ class MotionsWatched(_Event):
     watched: list[WatchedMotion]
 
 
+#: How many of the lines an edit changed its change says.
+SHOWN = 5
+
+
+class ChangedLine(Model):
+    """A line an edit changed: its number and text in the version the edit made; empty where it removed lines."""
+
+    path: str
+    line: int
+    now: str
+
+
 class DocumentChanged(_Event):
     """The design's files changed: a new version of its document, made by `origin` (the folder it was read from,
     a new design's files, the panel, an agent session, or a write to the folder by someone else)."""
@@ -111,10 +130,20 @@ class DocumentChanged(_Event):
     origin: str = Field(description="folder, scaffold, panel, agent:<agent>:<session> or disk")
     files: list[str] = Field(description="The files whose content changed")
     summary: str = Field(default="", description="What the edit was, where the editor says (the panel's)")
+    reverts: int | None = Field(default=None, description="The version it took back: the panel's Undo or Redo")
+    lines: list[ChangedLine] = Field(default_factory=list, description=f"The first {SHOWN} lines it changed")
+    more: int = Field(default=0, description="How many more lines it changed")
+
+
+class PanelEdit(Model):
+    """An edit the human made in the panel, which Undo takes back, or an Undo, which Redo takes back."""
+
+    version: int = Field(description="The version that made it: what Undo or Redo takes back")
+    summary: str = Field(description="The panel edit, as its change says")
 
 
 class CrossedEdit(Model):
-    """Where two edits made on the same version changed the same text: the merge kept both, by rule."""
+    """Where two edits made on the same version changed the same text: the one merged later is kept."""
 
     path: str
     line: int = Field(description="The line in the version both started from; 0 for a file kept by its content")
@@ -143,6 +172,7 @@ class FeedbackDelivered(_Event):
 
 Event = Annotated[
     DesignOpened
+    | DesignMoved
     | DesignUpdated
     | BuildProgress
     | BuildStopped
@@ -162,6 +192,8 @@ EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
 
 #: How many of its latest changes and crossed edits a design's state holds.
 KEPT = 20
+#: How many of the human's panel edits Undo can take back.
+UNDO_LEVELS = 100
 
 
 class DesignState(Model):
@@ -188,6 +220,8 @@ class DesignState(Model):
     crossed: list[EditsCrossed] = Field(
         default_factory=list, description=f"The latest {KEPT} edits that crossed others"
     )
+    undo: list[PanelEdit] = Field(default_factory=list, description="The panel edits Undo takes back, latest last")
+    redo: list[PanelEdit] = Field(default_factory=list, description="The undos Redo takes back, latest last")
 
     @property
     def current_revision(self) -> RevisionInfo | None:
@@ -220,6 +254,8 @@ class DesignState(Model):
             case DesignOpened():
                 self.path, self.name, self.backend = event.path, event.name, event.backend
                 self.created_at = event.ts
+            case DesignMoved():
+                self.path = event.path
             case DesignUpdated():
                 self.name, self.backend, self.brief = event.name, event.backend, event.brief
             case BuildProgress():
@@ -240,10 +276,22 @@ class DesignState(Model):
             case DocumentChanged():
                 self.version = event.version
                 self.changes = [*self.changes, event][-KEPT:]
+                if event.origin == "panel":
+                    self._undo_redo(event)
             case EditsCrossed():
                 self.crossed = [*self.crossed, event][-KEPT:]
             case FeedbackDelivered():
                 self.deliveries[event.session] = event
+
+    def _undo_redo(self, change: DocumentChanged) -> None:
+        """A panel edit can be undone, and clears what could be redone; an undo can be redone, and a redo undone."""
+        if change.reverts is None:
+            self.undo, self.redo = [*self.undo, PanelEdit(version=change.version, summary=change.summary)], []
+        elif self.undo and self.undo[-1].version == change.reverts:
+            self.redo = [*self.redo, PanelEdit(version=change.version, summary=self.undo.pop().summary)]
+        elif self.redo and self.redo[-1].version == change.reverts:
+            self.undo = [*self.undo, PanelEdit(version=change.version, summary=self.redo.pop().summary)]
+        self.undo = self.undo[-UNDO_LEVELS:]
 
     @classmethod
     def replay(cls, design_id: str, events: list[Event]) -> DesignState:

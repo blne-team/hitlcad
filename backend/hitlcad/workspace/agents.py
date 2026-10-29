@@ -1,8 +1,8 @@
 """How a design project's coding agents reach hitlcad, each piece set up only with the human's permission:
 
 - hooks (``hooks``): hitlcad's hook (`hitlcad.hook`) around every message the human sends, adding what they
-  selected and pinned in the panel, and around every tool call that can read or write a design's files, so that
-  what the agent writes is merged from the version it started on and it hears what others changed meanwhile. It
+  selected and pinned in the panel, and around every tool call that can write a design's files, so that what the
+  agent writes is merged as its own and it hears what others changed meanwhile. It
   runs this machine's interpreter, so it goes where only this machine reads it: Claude Code's
   `.claude/settings.local.json` in the project (its per-user settings, kept out of the repository) and Codex's
   user `hooks.json`, as Codex has no per-user file for one project (in a folder without designs the hook adds
@@ -30,12 +30,15 @@ from hitlcad.kernel.model import Model
 CLAUDE_SETTINGS = ".claude/settings.json"
 CLAUDE_HOOKS = ".claude/settings.local.json"
 HOOK_TIMEOUT_S = SERVER_WAIT_S + 2  # what the agents allow the hook: its wait for the server, and Python starting
-#: The events hitlcad's hook handles in each agent, with the tools it is run around (None: every prompt): those that
-#: read a design's files (Claude Code's Read, for what a whole-file Write starts from) or can write them.
+#: The events hitlcad's hook handles in each agent, with the tools it is run around (None: every prompt and every
+#: turn's end): those that can write a design's files.
 EVENTS: dict[str, dict[str, str | None]] = {
-    "claude": dict.fromkeys(["PreToolUse", "PostToolUse"], "Read|Write|Edit|MultiEdit|NotebookEdit|Bash")
-    | {"UserPromptSubmit": None},
-    "codex": dict.fromkeys(["PreToolUse", "PostToolUse"], "Bash|apply_patch") | {"UserPromptSubmit": None},
+    "claude": dict.fromkeys(
+        ["PreToolUse", "PostToolUse", "PostToolUseFailure"], "Write|Edit|MultiEdit|NotebookEdit|Bash"
+    )
+    | {"UserPromptSubmit": None, "Stop": None},
+    "codex": dict.fromkeys(["PreToolUse", "PostToolUse"], "Bash|apply_patch")
+    | {"UserPromptSubmit": None, "Stop": None},
 }
 
 
@@ -49,9 +52,9 @@ class AgentSetup(Model):
     codex_config: str = Field(description="Codex's user config.toml, for the MCP server")
 
 
-def hook_argv(python: str, agent: str, server_url: str) -> list[str]:
+def hook_argv(python: str, agent: str) -> list[str]:
     """hitlcad's hook for one agent. Runs hitlcad's own interpreter, so it does not depend on PATH."""
-    return [python, "-m", "hitlcad.hook", agent, "--server", server_url]
+    return [python, "-m", "hitlcad.hook", agent]
 
 
 def command_line(argv: list[str]) -> str:
@@ -59,10 +62,10 @@ def command_line(argv: list[str]) -> str:
     return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
 
 
-def hook_handler(python: str, agent: str, server_url: str) -> dict[str, Any]:
+def hook_handler(python: str, agent: str) -> dict[str, Any]:
     """The hook's entry in the agent's config. Claude Code starts it from its argv with no shell in between;
     Codex takes only a command line."""
-    argv = hook_argv(python, agent, server_url)
+    argv = hook_argv(python, agent)
     if agent == "claude":
         return {"type": "command", "command": argv[0], "args": argv[1:], "timeout": HOOK_TIMEOUT_S}
     return {"type": "command", "command": command_line(argv), "timeout": HOOK_TIMEOUT_S}
@@ -133,11 +136,13 @@ def codex_config(mcp_url: str) -> bool:
     return True
 
 
-def status(root: Path) -> AgentSetup:
+def status(root: Path, python: str) -> AgentSetup:
+    """What the project has of the agent setup: its hooks only as this hitlcad writes them (`python`'s), so a project
+    set up by another asks again."""
+
     def hooked(file: Path, agent: str) -> bool:
         config = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
-        return all(any(map(_is_ours, (h for g in config.get("hooks", {}).get(event, []) for h in g.get("hooks", []))))
-                   for event in EVENTS[agent])  # fmt: skip
+        return not hooks(config, agent, hook_handler(python, agent))
 
     file = codex_config_file()
     doc = tomlkit.parse(file.read_text(encoding="utf-8")) if file.is_file() else tomlkit.document()

@@ -10,7 +10,7 @@ import pytest
 
 from hitlcad.agent.skills import install
 from hitlcad.app import HitlCad
-from hitlcad.workspace.document import Snapshot
+from hitlcad.workspace.document import Scanned
 from hitlcad.workspace.folder import DesignFolder
 
 DESIGN_SKILLS = ("hitlcad-design", "hitlcad-form", "hitlcad-dfm", "hitlcad-style")
@@ -56,7 +56,7 @@ async def test_installed_teaching_designs_build_and_verify(
     install(tmp_path / "project", core.registry.all())
     source = tmp_path / "project" / ".agents" / "skills" / skill / "assets" / example
     folder = Path(shutil.copytree(source, tmp_path / "design"))
-    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances, configuration)
+    spec = DesignFolder(folder).spec(Scanned(), core.settings.tolerances, configuration)
     report = await core.pipeline.run(spec, folder, tmp_path / "out")
     assert report.status == "succeeded", report.lead()
     assert not report.failing(), report.lead()

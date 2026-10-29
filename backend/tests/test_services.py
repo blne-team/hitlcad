@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import sqlite3
 import subprocess
 import sys
+import threading
 from contextlib import closing
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +47,7 @@ def face_index(shape, test) -> int:
 async def test_review_measures_selected_faces_and_points_on_the_named_revision(core: HitlCad, tmp_path: Path) -> None:
     state, _ = core.designs.open(copy_design("tiny", tmp_path / "tiny"))
     rev = await core.builds.build(state.id)
-    box = core.feedback.built(state.id, rev).parts["box"].features.exact()
+    box = (await core.revisions.built(state.id, rev)).parts["box"].features.exact()
     top = face_index(box, lambda f: f.normal_at().Z > 0.99)
     bottom = face_index(box, lambda f: f.normal_at().Z < -0.99)
     picks = tuple(
@@ -77,7 +81,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     folder = copy_design("enclosure", tmp_path / "enclosure")
     state, _ = core.designs.open(folder)
     rev = await core.builds.build(state.id)
-    built = core.feedback.built(state.id, rev)
+    built = await core.revisions.built(state.id, rev)
     lid = built.parts["lid"].features.exact()
     top = face_index(lid, lambda f: f.is_planar and f.normal_at().Z > 0.99)
     hole = face_index(lid, lambda f: f.geom_type.name == "CYLINDER")
@@ -90,7 +94,7 @@ async def test_picks_name_instances_and_connectors_and_pins_follow_rebuilds(core
     rebuilt = await core.builds.edit_parameters(state.id, {"lid_t": 6}, core.designs.get(state.id).version)
     (carried,) = core.designs.get(state.id).open_pins
     assert carried.revision == rebuilt.id and carried.point[2] == pytest.approx(26)
-    new_top = topology(core.feedback.built(state.id, rebuilt).parts["lid"].features, carried.component)
+    new_top = topology((await core.revisions.built(state.id, rebuilt)).parts["lid"].features, carried.component)
     assert new_top.is_planar and new_top.normal_at().Z > 0.99
     saved = json.loads((folder / "design.json").read_text(encoding="utf-8"))
     assert next(p["value"] for p in saved["parameters"] if p["name"] == "lid_t") == 6
@@ -191,6 +195,12 @@ async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCa
     assert "stop_h: 30.0 → 0.0" in text and "motion base.hinge+lid.pin: fail → pass" in text
     assert "Parts rebuilt in 2: base, lid" in text
 
+    built = await core.builds.build(shelf.id)  # its spec made again holds the hinge's files as they were
+    core.designs._revisions.clear()
+    again = core.designs.revision(shelf.id, built.id)
+    assert again.built is not None and {at.design for at in again.built.files.values()} == {shelf.id, hinge.id}
+    assert again.spec is not None and built.spec is not None and again.spec.key == built.spec.key
+
 
 @pytest.mark.geometry
 async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
@@ -273,35 +283,37 @@ def test_the_hooks_reach_the_agents_without_their_shell_in_the_way(
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     python = str(tmp_path / "Program Files" / "python")  # a path with a space, as on Windows
-    server = core.settings.base_url
     project = tmp_path / "project"
     old = {"type": "command", "command": "python -m hitlcad.cli context --hook codex --server http://x", "timeout": 5}
     agents.json_file(agents.codex_hooks_file(), lambda c: c.setdefault("hooks", {}).setdefault(
         "UserPromptSubmit", []).append({"hooks": [old]}) or True)  # fmt: skip
     written = init_project(project, core.settings, python, core.registry.all(), hooks=True, codex=True)
-    setup = agents.status(project)
+    setup = agents.status(project, python)
     assert setup.hooks and setup.codex and setup.codex_config == str(tmp_path / "codex" / "config.toml")
 
     def groups(file: Path) -> dict[str, list[dict[str, Any]]]:
         return json.loads(file.read_text(encoding="utf-8")).get("hooks", {})
 
-    # The hooks name this machine's interpreter: only this machine reads them. The project's committed files
-    # name the server alone.
+    # The hooks name this machine's interpreter, and no server (they find it as it runs): only this machine reads
+    # them, and every project's are the same. The project's committed files name the server alone.
     assert {agents.CLAUDE_HOOKS, ".gitignore"} <= set(written)
     assert agents.CLAUDE_HOOKS in (project / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert not groups(project / agents.CLAUDE_SETTINGS) and python not in (project / ".mcp.json").read_text()
-    # Claude Code starts the hook from its argv, with no shell in between, around prompts and the tools that read
-    # or write files.
-    claude = agents.hook_argv(python, "claude", server)
+    # Claude Code starts the hook from its argv, with no shell in between, around prompts and the tools that write
+    # files, whether they succeed or fail.
+    claude = agents.hook_argv(python, "claude")
     handler = {"type": "command", "command": python, "args": claude[1:], "timeout": agents.HOOK_TIMEOUT_S}
+    tools = {"hooks": [handler], "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash"}
     assert groups(project / agents.CLAUDE_HOOKS) == {
-        "PreToolUse": [{"hooks": [handler], "matcher": "Read|Write|Edit|MultiEdit|NotebookEdit|Bash"}],
-        "PostToolUse": [{"hooks": [handler], "matcher": "Read|Write|Edit|MultiEdit|NotebookEdit|Bash"}],
+        "PreToolUse": [tools],
+        "PostToolUse": [tools],
+        "PostToolUseFailure": [tools],
         "UserPromptSubmit": [{"hooks": [handler]}],
+        "Stop": [{"hooks": [handler]}],
     }
     # Codex hands a command line to its shell (cmd.exe /C on Windows, sh elsewhere): once that shell has read it,
     # it is the hook's argv again. The old prompt hook is replaced, not doubled; setting up again changes nothing.
-    codex = agents.hook_argv(python, "codex", server)
+    codex = agents.hook_argv(python, "codex")
     hooked = groups(agents.codex_hooks_file())
     assert [g["hooks"][0]["command"] for g in hooked["UserPromptSubmit"]] == [agents.command_line(codex)]
     assert hooked["PostToolUse"][0]["matcher"] == "Bash|apply_patch"
@@ -312,27 +324,41 @@ def test_the_hooks_reach_the_agents_without_their_shell_in_the_way(
     shell = f'cmd.exe /C "{echo}"' if sys.platform == "win32" else ["/bin/sh", "-c", echo]
     assert json.loads(subprocess.run(shell, capture_output=True, encoding="utf-8", check=True).stdout) == codex
     assert f'url = "{core.settings.mcp_url}"' in agents.codex_config_file().read_text(encoding="utf-8")
+    # A project set up by another hitlcad (its hook as that one ran it) is asked about again.
+    assert not agents.status(project, sys.executable).hooks
 
 
-def test_the_hook_starts_on_the_standard_library_alone_and_never_stops_the_agent() -> None:
-    """It runs around every tool call: nothing of hitlcad's to import, and a server not there adds nothing."""
+def test_the_hook_starts_on_the_standard_library_alone_and_never_stops_the_agent(tmp_path: Path) -> None:
+    """It runs around every tool call: nothing of hitlcad's to import. A server not running, one that does not
+    answer, or a hook run as another hitlcad wrote it adds nothing and exits 0: an agent takes some exit codes as a
+    refusal of the prompt."""
     loaded = subprocess.run([sys.executable, "-c", "import sys, hitlcad.hook; print(sorted(m for m in sys.modules "
                              "if m.startswith('hitlcad')))"], capture_output=True, encoding="utf-8", check=True)  # fmt: skip
     assert loaded.stdout.strip() == "['hitlcad', 'hitlcad.hook']"
-    gone = subprocess.run([sys.executable, "-m", "hitlcad.hook", "claude", "--server", "http://127.0.0.1:9"],
-                          input='{"hook_event_name": "PostToolUse"}', capture_output=True, encoding="utf-8")  # fmt: skip
-    assert (gone.returncode, gone.stdout) == (0, "")
+    env = os.environ | {"HITLCAD_DATA_DIR": str(tmp_path)}
+
+    def run(*args: str) -> tuple[int, str]:
+        done = subprocess.run([sys.executable, "-m", "hitlcad.hook", *args], input='{"hook_event_name": "PostToolUse"}',
+                              capture_output=True, encoding="utf-8", env=env)  # fmt: skip
+        return done.returncode, done.stdout
+
+    assert run("claude") == (0, "")  # no server
+    (tmp_path / hook.SERVER_FILE).write_text('{"url": "http://127.0.0.1:9"}', encoding="utf-8")
+    assert run("claude") == (0, "")  # a server that does not answer
+    assert run("claude", "--server", "http://127.0.0.1:9") == (0, "")
     said = json.loads(hook.output("PostToolUse", "the human set width"))
     assert said == {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "the human set width"}}
     assert hook.output("UserPromptSubmit", "pointing at") == "pointing at"
 
 
-async def test_an_agent_s_write_merges_from_what_it_read_and_it_hears_what_the_human_changed(
+async def test_an_agent_s_command_merges_with_what_the_human_changed_while_it_ran_and_it_hears_of_it(
     core: HitlCad, tmp_path: Path
 ) -> None:
-    """Claude Code reads design.json, the human sets the width in the panel, then the agent writes the file whole
-    from what it read, renamed: merged from the version it read, the human's width stays, and the agent is told of
-    it with the tool's result. While its tool runs, the watcher leaves the design to it."""
+    """The agent's shell command starts; the human sets the width in the panel; the command then renames the design
+    in the file. The folder stays as the agent left it until its turn ends, so it need not read the file again: the
+    design's files have the human's width and the agent's name at once, the agent is told the line the human
+    changed with the command's result, and the folder gets both when the turn ends. While the command runs, the
+    watcher leaves the design to it; one that never ends (the human denied it) ends with the next prompt."""
     project = tmp_path / "project"
     folder = copy_design("tiny", project / "designs" / "tiny")
     state, _ = core.designs.open(folder)
@@ -343,26 +369,36 @@ async def test_an_agent_s_write_merges_from_what_it_read_and_it_hears_what_the_h
         return await sessions.hook("claude", session | {"hook_event_name": event} | more)
 
     assert await hook("UserPromptSubmit") == ""  # first seen: nothing to catch up on
-    read = {"tool_name": "Read", "tool_use_id": "t1", "tool_input": {"file_path": str(folder / "design.json")}}
-    await hook("PreToolUse", **read)
-    await hook("PostToolUse", **read)
-    text = (folder / "design.json").read_text()
-    await core.builds.edit_parameters(state.id, {"width": 20}, core.designs.get(state.id).version)
-    write = {"tool_name": "Write", "tool_use_id": "t2", "tool_input": {"file_path": str(folder / "design.json")}}
-    await hook("PreToolUse", **write)
+    bash = {"tool_name": "Bash", "tool_use_id": "t1", "tool_input": {"command": "sed -i ..."}}
+    await hook("PreToolUse", **bash)
     assert sessions.busy(state.id)
+    await core.builds.edit_parameters(state.id, {"width": 20}, core.designs.get(state.id).version)
+
+    def design(text: str | None) -> tuple[str, int]:
+        data = json.loads(text or "")
+        return data["name"], data["parameters"][0]["value"]
+
+    text = (folder / "design.json").read_text()
+    assert design(text) == ("Tiny", 10)  # the folder as the agent's command found it
     (folder / "design.json").write_text(text.replace('"name": "Tiny"', '"name": "Theirs"'), encoding="utf-8")
-    told = await hook("PostToolUse", **write)
-    merged = json.loads((folder / "design.json").read_text())
-    assert (merged["name"], merged["parameters"][0]["value"]) == ("Theirs", 20) and not sessions.busy(state.id)
-    assert core.designs.get(state.id).changes[-1].origin == "agent:claude:s1"
+    told = await hook("PostToolUseFailure", **bash)  # it wrote, then failed
+    assert design(core.designs.files(state.id).design) == ("Theirs", 20) and not sessions.busy(state.id)
+    assert design((folder / "design.json").read_text()) == ("Theirs", 10)  # as the agent left it, until the turn ends
+    assert core.designs.get(state.id).changes[-1].origin == "agent:claude:s1" and not core.designs.get(state.id).crossed
     assert "the human, in the panel, changed design.json: Parameter edit: width=20" in told
+    assert 'design.json line 6: `{"name": "width", "value": 20, "min": 1, "max": 50}`' in told
+    await hook("Stop")
+    assert design((folder / "design.json").read_text()) == ("Theirs", 20)
     assert await hook("UserPromptSubmit") == ""  # told once
 
+    await hook("PreToolUse", **bash | {"tool_use_id": "t2"})  # denied: no PostToolUse
+    assert sessions.busy(state.id)
+    await hook("UserPromptSubmit")
+    assert not sessions.busy(state.id)
+
     patch = "*** Begin Patch\n*** Update File: designs/tiny/parts/box.py\n@@\n*** End Patch"
-    assert sessions._touched({"tool_name": "apply_patch", "tool_input": {"command": patch}}, str(project)) == {
-        state.id: ["parts/box.py"]}  # fmt: skip
-    assert sessions._touched({"tool_name": "Bash", "tool_input": {"command": "ls"}}, str(project)) == {state.id: []}
+    assert sessions._touched({"tool_name": "apply_patch", "tool_input": {"command": patch}}, str(project)) == [state.id]
+    assert sessions._touched({"tool_name": "Bash", "tool_input": {"command": "ls"}}, str(project)) == [state.id]
 
 
 def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_path: Path) -> None:
@@ -375,10 +411,11 @@ def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_
 
 
 @pytest.mark.geometry
-async def test_a_design_edited_while_the_server_was_down_builds_when_opened_not_at_start(
+async def test_a_design_edited_while_the_server_was_down_is_read_at_start_and_builds_when_opened(
     core: HitlCad, settings: Any, tmp_path: Path
 ) -> None:
-    """A server knows every design it ever opened: building each that changed at start would build them all."""
+    """What was written while no server ran is the design's before anything reads it; but a server knows every
+    design it ever opened, and building each that changed at start would build them all."""
     folder = copy_design("tiny", tmp_path / "tiny")
     state, _ = core.designs.open(folder)
     await core.builds.build(state.id)
@@ -388,7 +425,8 @@ async def test_a_design_edited_while_the_server_was_down_builds_when_opened_not_
     (folder / "design.json").write_text(json.dumps(spec), encoding="utf-8")
 
     later = HitlCad.create(settings, registry=core.registry, renderer=NullRenderer())
-    later.start()
+    await later.start()
+    assert json.loads(later.designs.files(state.id).design or "")["parameters"][0]["value"] == 12
     await asyncio.sleep(1)  # more than the debounce
     assert len(later.designs.get(state.id).revisions) == 1
     later.designs.ensure(folder)
@@ -521,7 +559,7 @@ async def test_a_server_keeps_each_design_s_worker_between_its_builds(settings: 
     loaded the build before, but the design's files as they are then (lib/ as edited, not as kept); another design
     gets a worker of its own; none outlive the server."""
     core = HitlCad.create(settings, renderer=NullRenderer())
-    core.start()
+    await core.start()
     workers = core.registry.get("build123d").workers
     widths = []
 
@@ -636,26 +674,185 @@ async def test_a_panel_edit_made_on_an_earlier_version_keeps_what_was_written_si
     assert unknown.value.code == "request.base_unknown"
 
 
-async def test_a_write_to_the_folder_merges_from_the_version_its_writer_started_on(
-    core: HitlCad, tmp_path: Path
+async def test_a_revision_keeps_what_it_built_from_and_only_the_builds_something_needs_keep_their_files(
+    core: HitlCad, tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """An agent read version 1 and rewrites design.json from it, renamed, after the human set the width: from
-    version 1 the merge keeps the human's width. Taken in from the version last written instead, as an unknown
-    writer's, the same write would undo it."""
+    """A revision keeps the version of the files it built, not a copy: its spec is made again from them, the same. A
+    build's folder holds no code and no report, and its part files are the part cache's own. Once a newer build is
+    made, an older one nothing points at lets go of its files, and opened again makes them again; one an open pin is
+    on keeps them."""
     folder = copy_design("tiny", tmp_path / "tiny")
     state, _ = core.designs.open(folder)
-    read = json.loads((folder / "design.json").read_text())
-    core.designs.change(state.id, 1, "panel", lambda doc: doc.write_text("design.json", doc.text("design.json").replace(
-        '"value": 10', '"value": 20')))  # fmt: skip
-    (folder / "design.json").write_text(json.dumps(read | {"name": "Theirs"}, indent=2), encoding="utf-8")
-    await core.designs.take_in(state.id, "agent:claude:s1", base=1)
-    merged = json.loads((folder / "design.json").read_text())
-    assert (merged["name"], merged["parameters"][0]["value"]) == ("Theirs", 20)
-    assert core.designs.files(state.id).design == (folder / "design.json").read_text()
+    first = await core.builds.build(state.id)
+    assert first.spec is not None
+    with closing(sqlite3.connect(core.settings.data_dir / "hitlcad.db")) as db:
+        (body,) = db.execute("SELECT body FROM revisions WHERE id = ?", (first.id,)).fetchone()
+    stored = json.loads(body)
+    assert "spec" not in stored and stored["built"]["files"] == {
+        str(folder.resolve()): {"design": state.id, "version": 1}
+    }
+    core.designs._revisions.clear()  # read back from the store
+    again = core.designs.revision(state.id, first.id)
+    assert again.spec is not None and again.spec.key == first.spec.key
+    files = core.designs.store.revision_dir(state.id, first.id)
+    assert not (files / "src").exists() and not (files / "report.json").exists()
+    assert (files / "parts" / "box.stl").stat().st_nlink > 1  # the part cache's own file
 
-    (folder / "design.json").write_text(json.dumps(read | {"name": "Again"}, indent=2), encoding="utf-8")
+    second = await core.builds.edit_parameters(state.id, {"width": 20}, first.version)
+    assert not files.exists() and core.designs.store.revision_dir(state.id, second.id).is_dir()
+    assert (
+        await core.revisions.files(state.id, again) == files and (files / again.report.artifact("view").path).is_file()
+    )  # type: ignore[union-attr]
+
+    await core.feedback.add_pin(state.id, Pick(point=(0, 0, 2.5)), "this face", second.id)
+
+    async def nowhere(design_id: str, revision: Any) -> None:  # the pin does not follow the next build
+        pass
+
+    monkeypatch.setattr(core.feedback, "carry", nowhere)
+    await core.builds.edit_parameters(state.id, {"width": 30}, second.version)
+    assert core.designs.store.revision_dir(state.id, second.id).is_dir() and not files.exists()
+
+
+async def test_undo_takes_back_the_human_s_panel_edit_and_keeps_what_others_wrote_since(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    """The human sets the width in the panel; the agent renames the design. Undo takes the width back and keeps the
+    agent's name; Redo makes it again; a new panel edit leaves nothing to redo. Undo names the step it takes back, so
+    a second click is not taken for an undo of an edit the human has not seen. Where the agent changed the same value
+    since, the Undo is kept and said; where it set the value back already, Undo finds nothing left and moves on."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+
+    def read() -> tuple[str, int]:
+        design = json.loads((folder / "design.json").read_text())
+        return design["name"], design["parameters"][0]["value"]
+
+    await core.builds.edit_parameters(state.id, {"width": 20}, 1)
+    edit_json(folder / "design.json", lambda d: d.update(name="Theirs"))
     await core.designs.take_in(state.id)
-    assert json.loads((folder / "design.json").read_text())["parameters"][0]["value"] == 10
+    (edit,) = state.undo
+    assert edit.summary == "Parameter edit: width=20" and not state.redo
+
+    undone = await core.builds.revert(state.id, edit.version)
+    assert read() == ("Theirs", 10) and not state.undo and state.redo[0].summary == edit.summary
+    assert undone.origin == "undo" and undone.summary == "Undo: Parameter edit: width=20"
+    with pytest.raises(HitlcadError) as gone:
+        await core.builds.revert(state.id, edit.version)  # a second click on what it showed
+    assert gone.value.code == "request.not_undoable"
+    assert (await core.builds.revert(state.id, state.redo[-1].version)).origin == "redo"
+    assert read() == ("Theirs", 20) and [e.summary for e in state.undo] == [edit.summary] and not state.redo
+    await core.builds.revert(state.id, state.undo[-1].version)
+    await core.builds.edit_parameters(state.id, {"width": 30}, state.version)
+    assert read() == ("Theirs", 30) and len(state.undo) == 1 and not state.redo
+
+    def width(value: int) -> Any:
+        return lambda doc: doc.write_text(
+            "design.json", re.sub(r'"value": \d+', f'"value": {value}', doc.text("design.json"), count=1)
+        )
+
+    await core.designs.change(state.id, state.version, "panel", width(40), "width=40")
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=35))  # the agent, meanwhile
+    await core.designs.take_in(state.id)
+    change = await core.designs.revert(state.id, state.undo[-1].version, "Undo: width=40")
+    assert change is not None and change.crossings and read() == ("Theirs", 30)  # the human's Undo is kept, and said
+
+    await core.designs.change(state.id, state.version, "panel", width(45), "width=45")
+    edit_json(folder / "design.json", lambda d: d["parameters"][0].update(value=30))  # the agent set it back already
+    await core.designs.take_in(state.id)
+    change = await core.designs.revert(state.id, state.undo[-1].version, "Undo: width=45")
+    assert (
+        change is not None and change.files == [] and read() == ("Theirs", 30) and state.redo[-1].summary == "width=45"
+    )
+
+
+async def test_a_design_whose_folder_is_renamed_keeps_its_history(core: HitlCad, tmp_path: Path) -> None:
+    """The human renames a design's folder: opened where it is now, it is the same design, its revisions with it. A
+    folder that only looks like it (its files edited since) is a design of its own."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    await core.builds.build(state.id)
+    folder.rename(tmp_path / "small")
+    moved, _ = core.designs.open(tmp_path / "small")
+    assert moved.id == state.id and moved.path == str((tmp_path / "small").resolve()) and len(moved.revisions) == 1
+    assert list(core.designs.folders()) == [moved.path]
+    copy = copy_design("tiny", tmp_path / "other")
+    (tmp_path / "small").rename(tmp_path / "gone")
+    edit_json(copy / "design.json", lambda d: d.update(name="Other"))
+    assert core.designs.open(copy)[0].id != state.id
+
+
+async def test_what_an_agent_s_turn_writes_builds_once_when_the_turn_ends(core: HitlCad, tmp_path: Path) -> None:
+    """The agent moves a part to a file of its own in two writes, design.json first: the design between them names
+    a file that is not there yet. Its rebuild waits for the turn, which builds the change once, whole."""
+    project = tmp_path / "project"
+    folder = copy_design("tiny", project / "designs" / "tiny")
+    state, _ = core.designs.open(folder)
+    await core.builds.build(state.id)
+
+    async def write(n: int, rel: str, text: str) -> None:
+        event = {"session_id": "s1", "cwd": str(project), "tool_name": "Write", "tool_use_id": f"w{n}",
+                 "tool_input": {"file_path": str(folder / rel)}}  # fmt: skip
+        await core.sessions.hook("claude", event | {"hook_event_name": "PreToolUse"})
+        (folder / rel).write_text(text, encoding="utf-8")
+        await core.sessions.hook("claude", event | {"hook_event_name": "PostToolUse"})
+
+    await write(1, "design.json", (folder / "design.json").read_text().replace("parts/box.py", "parts/block.py"))
+    await asyncio.sleep(1)  # more than the debounce
+    assert len(state.revisions) == 1
+    await write(2, "parts/block.py", (folder / "parts" / "box.py").read_text())
+    await core.sessions.hook("claude", {"session_id": "s1", "cwd": str(project), "hook_event_name": "Stop"})
+    for _ in range(600):
+        if len(state.revisions) == 2 and not state.building:
+            break
+        await asyncio.sleep(0.05)
+    assert [r.status for r in state.revisions] == ["succeeded", "succeeded"]
+
+
+async def test_an_editor_s_save_of_a_buffer_older_than_the_file_keeps_what_was_written_since(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    """The human opened design.json in the editor; the panel set the width meanwhile, which the folder got at once;
+    then the buffer, renamed, is saved over it. Told what the buffer was read from, the save merges from there: the
+    width stays."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    buffer = (folder / "design.json").read_text()
+    await core.builds.edit_parameters(state.id, {"width": 20}, 1)
+    core.designs.saving(folder / "design.json", sha256(buffer.encode()).hexdigest())
+    (folder / "design.json").write_text(buffer.replace('"name": "Tiny"', '"name": "Theirs"'), encoding="utf-8")
+    await core.designs.take_in(state.id)
+    saved = json.loads((folder / "design.json").read_text())
+    assert (saved["name"], saved["parameters"][0]["value"]) == ("Theirs", 20) and not state.crossed
+
+
+async def test_a_folder_read_while_an_edit_merged_does_not_undo_it(
+    core: HitlCad, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The watcher reads the folder, off the event loop, as the human sets the width: the edit waits for the read to
+    be taken in, so the folder the read saw is not taken for a write that undid it."""
+    folder = copy_design("tiny", tmp_path / "tiny")
+    state, _ = core.designs.open(folder)
+    reading, go, read = asyncio.Event(), threading.Event(), Disk.read
+    loop = asyncio.get_running_loop()
+
+    def slow(path: Path) -> Disk:
+        disk = read(path)
+        loop.call_soon_threadsafe(reading.set)
+        go.wait(5)
+        return disk
+
+    monkeypatch.setattr(Disk, "read", staticmethod(slow))
+    taking_in = asyncio.create_task(core.designs.take_in(state.id))
+    await reading.wait()
+    monkeypatch.setattr(Disk, "read", staticmethod(read))
+    edit = asyncio.create_task(core.designs.change(state.id, 1, "panel", lambda doc: doc.write_text(
+        "design.json", doc.text("design.json").replace('"value": 10', '"value": 20'))))  # fmt: skip
+    go.set()
+    await asyncio.gather(taking_in, edit)
+    assert json.loads(core.designs.files(state.id).design)["parameters"][0]["value"] == 20
+    assert core.designs.files(state.id).design == (folder / "design.json").read_text()
+    assert [c.origin for c in core.designs.get(state.id).changes] == ["folder", "panel"]
 
 
 @pytest.mark.geometry
@@ -686,12 +883,15 @@ def test_a_design_s_document_replays_every_version_from_the_store(tmp_path: Path
     kept = documents.DocumentService(store)
     kept.create("d", folder, Disk.read(folder), "folder")
     for width in (11, 12, 13, 14):
-        kept.change("d", folder, kept.current("d").version, "panel", lambda doc, w=width: doc.write_text(
+        kept.change("d", kept.current("d").version, "panel", lambda doc, w=width: doc.write_text(
             "assembly.py", (doc.text("assembly.py") or "") + f"# {w}\n"))  # fmt: skip
+    kept.write("d", folder)
     again = documents.DocumentService(store)
     assert again.current("d") == kept.current("d") and again.current("d").version == 5
-    assert again.at("d", 3).text("assembly.py") == (folder / "assembly.py").read_text().replace("# 13\n# 14\n", "")
-    assert (folder / "assembly.py").read_text().endswith("# 14\n")  # the folder is written with each version
+    assert again.files_at("d", 3).texts["assembly.py"] == (folder / "assembly.py").read_text().replace(
+        "# 13\n# 14\n", ""
+    )
+    assert (folder / "assembly.py").read_text().endswith("# 14\n")  # the folder written with the latest version
     store.close()
 
 

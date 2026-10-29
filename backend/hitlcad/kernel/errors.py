@@ -450,9 +450,13 @@ BASE_UNKNOWN = define(
     code="request.base_unknown", owner="request", title="An edit made on a version of the design it never had",
     hint="Make the edit on a version the design's state lists (its revisions' versions).",
 )  # fmt: skip
-SOURCES_CHANGED = define(
-    code="build.sources_changed", owner="request", title="A file changed while the design built",
-    hint="Build again.",
+NOT_UNDOABLE = define(
+    code="request.not_undoable", owner="request", title="An Undo or Redo of a step that is not the latest",
+    hint="Undo the latest panel edit the design's state lists (`undo`), or redo its latest undo (`redo`).",
+)  # fmt: skip
+FILES_UNMADE = define(
+    code="build.files_unmade", owner="environment", title="An earlier revision's files could not be made again",
+    hint="Build the design again: its latest build keeps its files.",
 )  # fmt: skip
 FILE_UNREADABLE = define(code="file.unreadable", owner="request", title="A model file that does not read")
 

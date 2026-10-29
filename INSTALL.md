@@ -80,7 +80,8 @@ remote side, next to the tool. The panel reaches the server through VS Code's po
 
 2. hitlcad asks whether your agents may see what you select and pin in the panel. Allowing it
    adds a hook that puts your selection and open pins in your next message, and runs around the agent's
-   file reads, edits and shell commands so that its edits merge with yours and it hears what you changed. The hook runs
+   file edits and shell commands so that its edits merge with yours and it hears what you changed (what it changed
+   builds once its turn ends). The hook runs
    the Python hitlcad is installed with, so it goes where only you and this machine read it:
 
    | File | For |

@@ -1,7 +1,7 @@
 """Take into each design's document what is written to its folder (by a person, an agent, git: anyone but hitlcad,
-whose own writes match the document and change nothing), then rebuild it; and so for a design first opened since
-the server started, whose folder may have changed while nothing watched it. While an agent's tool that can write a
-design runs, its writes are that tool's to take in, from the version it started on (`AgentSessions`)."""
+whose own writes match the document and change nothing), then rebuild it; and, as the server starts, what was written
+while nothing watched, the design rebuilt once it is first opened. While an agent's tool that can write a design
+runs, its writes are that tool's to take in, as the agent's (`AgentSessions`)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class FolderWatcher:
     def start(self) -> None:
         if not self._tasks:
             loop = asyncio.get_running_loop()
-            self._tasks = [loop.create_task(self._watch()), loop.create_task(self._catch_up())]
+            self._tasks = [loop.create_task(self._watch()), loop.create_task(self._build_when_used())]
             for task in self._tasks:
                 task.add_done_callback(_ended)
 
@@ -37,13 +37,18 @@ class FolderWatcher:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
 
-    async def _catch_up(self) -> None:
-        """Each design as it is first opened: its folder taken in, and built unless its files are its latest
+    async def catch_up(self) -> None:
+        """Each registered design's folder, taken in: what was written while no server watched it, so nothing reads
+        a design behind its folder. Building waits until the design is opened (`_build_when_used`): a server knows
+        every design it ever opened."""
+        for design_id in self.designs.folders().values():
+            await self._take_in(design_id)
+
+    async def _build_when_used(self) -> None:
+        """Each design as it is first opened since the server started: built unless its files are its latest
         build's."""
         while True:
-            design_id = await self.designs.first_used.get()
-            await self._take_in(design_id)
-            self.builds.schedule_build(design_id)
+            self.builds.schedule_build(await self.designs.first_used.get())
 
     async def _take_in(self, design_id: str) -> bool:
         try:

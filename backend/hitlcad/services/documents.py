@@ -2,23 +2,23 @@
 into them, and their copy on disk.
 
 Every writer edits the same way: on the version it started from (`base`), merged into the current one, so that
-what others changed since stays. The panel's edits start from the revision on screen; an agent's file writes from
-the version its tool call started on, which its hooks say; any other write to a file from the version that file was
-last written or read at (each file's own: a file not written over, because it changed on disk meanwhile, keeps the
-version it had). Where two edits made on the same version changed the same text, the merge keeps both by rule and
-says so (`Change.crossings`), for the human to look at. The folder is then written with what changed, file by file,
-and never over a file changed on disk since it was last read: that write is taken in next.
+what others changed since stays. The panel's edits start from the revision on screen; a write to the folder (an
+agent's tool, an editor, git) from the version that file was last written or read at: what its writer found on
+disk (each file's own: a file not written over, because it changed on disk meanwhile, keeps the version it had).
+Where two edits changed the same tokens, the edit merged now is kept and the place said (`Change.crossings`), for
+the human to look at. The folder is then written with what changed, file by file, and
+never over a file changed on disk since it was last read: that write is taken in next.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from hitlcad.core.events import CrossedEdit
+from hitlcad.core.events import ChangedLine, CrossedEdit
 from hitlcad.kernel.errors import BASE_UNKNOWN
 from hitlcad.store.base import DesignStore
-from hitlcad.workspace.document import Disk, Document, Edit, Snapshot, crossings, sha
+from hitlcad.workspace.document import Disk, Document, Edit, Snapshot, changed_lines, merge, sha
 
 #: A whole document is kept every this many versions, so that an earlier one replays from near it.
 SNAPSHOT_EVERY = 100
@@ -30,6 +30,7 @@ class Change:
     since: int  # the version the edit was made on (the earliest, for files taken in from several)
     files: list[str]  # those whose content changed
     crossings: list[CrossedEdit]
+    lines: list[ChangedLine]  # the lines of its text files it changed, as it left them
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,21 @@ class _OnDisk:
 
     sum: str
     version: int
+
+
+@dataclass
+class _Folder:
+    """What hitlcad knows of a design's folder: each file as it was last written or read; each content a file had on
+    disk, with the latest version it was (what an editor's buffer was read from); and the saves editors are about to
+    make, by the version each was read from."""
+
+    known: dict[str, _OnDisk] = field(default_factory=dict)
+    was: dict[tuple[str, str], int] = field(default_factory=dict)  # (path, sum) -> version
+    saving: dict[str, int] = field(default_factory=dict)  # path -> version
+
+    def read(self, path: str, digest: str, version: int) -> None:
+        self.known[path] = _OnDisk(digest, version)
+        self.was[path, digest] = version
 
 
 @dataclass
@@ -51,17 +67,22 @@ class DocumentService:
     def __init__(self, store: DesignStore) -> None:
         self.store = store
         self._held: dict[str, _Held] = {}
-        self._disk: dict[str, dict[str, _OnDisk]] = {}  # design -> path -> the file as last read or written
+        self._folders: dict[str, _Folder] = {}
+
+    def _replay(self, design_id: str, version: int | None = None) -> tuple[int, Document]:
+        """The document at `version` (its latest without), from the store; version 0: none."""
+        version, snapshot, updates = self.store.document(design_id, version)
+        doc = Document(snapshot)
+        for update in updates:
+            doc.apply(update)
+        return version, doc
 
     def _get(self, design_id: str) -> _Held | None:
         held = self._held.get(design_id)
         if held is None:
-            version, snapshot, updates = self.store.document(design_id)
+            version, doc = self._replay(design_id)
             if not version:
                 return None
-            doc = Document(snapshot)
-            for update in updates:
-                doc.apply(update)
             held = self._held[design_id] = _Held(doc, version, doc.snapshot(version))
         return held
 
@@ -73,19 +94,10 @@ class DocumentService:
         assert held is not None, f"design {design_id} has no document"  # every design is created with one
         return held.files
 
-    def at(self, design_id: str, version: int) -> Document:
-        """The document as it was at `version`, to edit apart."""
-        held = self._get(design_id)
-        assert held is not None
-        if not 0 < version <= held.version:
-            raise BASE_UNKNOWN(f"the design has versions 1 to {held.version}, not {version}")
-        if version == held.version:
-            return held.doc.fork()
-        _, snapshot, updates = self.store.document(design_id, version)
-        doc = Document(snapshot)
-        for update in updates:
-            doc.apply(update)
-        return doc
+    def files_at(self, design_id: str, version: int) -> Snapshot:
+        """The design's files at `version`, read from any thread: a revision's, as it built them."""
+        files = self.current(design_id)
+        return files if version == files.version else self._replay(design_id, version)[1].snapshot(version)
 
     def create(self, design_id: str, folder: Path, disk: Disk, origin: str) -> Change:
         """The design's document, from its folder (or the files a new design starts with, which are written)."""
@@ -95,51 +107,55 @@ class DocumentService:
         whole = doc.update()
         version = self.store.add_update(design_id, origin, whole, snapshot=whole)
         held = self._held[design_id] = _Held(doc, version, doc.snapshot(version))
-        self._disk[design_id] = {}
-        self._write(design_id, folder, held.files)
-        return Change(version, 0, sorted([*held.files.texts, *held.files.assets]), [])
+        self._folders[design_id] = _Folder()
+        self.write(design_id, folder)
+        return Change(version, 0, sorted([*held.files.texts, *held.files.assets]), [], [])
 
-    def change(self, design_id: str, folder: Path, base: int, origin: str, edit: Edit) -> Change | None:
-        """Make `edit` on the document as it was at `base` and merge it into the current one; None when that
-        changes nothing."""
+    def change(self, design_id: str, base: int, origin: str, edit: Edit, always: bool = False) -> Change | None:
+        """Make `edit` on the design's files as they were at `base` and merge it into the current ones (`merge`);
+        None when that changes nothing, unless `always` (an Undo is a step even when what it takes back is gone
+        already). The folder is not written (`write`)."""
         held = self._get(design_id)
         assert held is not None
-        start = self.at(design_id, base)
-        before, at_base = start.state(), start.snapshot(base)
+        if not 0 < base <= held.version:
+            raise BASE_UNKNOWN(f"the design has versions 1 to {held.version}, not {base}")
+        at_base, theirs = self.files_at(design_id, base), held.files
+        start = Document()
+        start.become(at_base.texts, at_base.assets)
         edit(start)
-        update = start.update(before)
-        theirs = held.files
-        held.doc.apply(update)
-        merged = held.doc.snapshot(held.version)
-        if merged == theirs:
+        merged, crossed = merge(at_base, start.snapshot(base), theirs)
+        before = held.doc.state()
+        held.doc.become(merged.texts, merged.assets)
+        update = held.doc.update(before)
+        if merged == theirs and not always:
             return None
         whole = held.doc.update() if (held.version + 1) % SNAPSHOT_EVERY == 0 else None
         held.version = self.store.add_update(design_id, origin, update, snapshot=whole)
         held.files = held.doc.snapshot(held.version)
         files = sorted(p for p in {*merged.texts, *theirs.texts, *merged.assets, *theirs.assets}
                        if (merged.texts.get(p), merged.assets.get(p)) != (theirs.texts.get(p), theirs.assets.get(p)))  # fmt: skip
-        crossed = crossings(at_base, start.snapshot(0), theirs, merged) if base != theirs.version else []
-        self._write(design_id, folder, held.files)
-        return Change(held.version, base, files, crossed)
+        return Change(held.version, base, files, crossed, changed_lines(theirs, merged, files))
 
-    def take_in(self, design_id: str, folder: Path, disk: Disk, base: int | None, origin: str) -> Change | None:
-        """What the folder holds now, written by someone starting from version `base`, merged as their edit: each
-        file that changed on disk since it was last read or written, from that version when `base` is not known
-        (files that started from different versions merge apart). None when nothing on disk changed."""
-        known, now = self._disk.setdefault(design_id, {}), self.current(design_id)
+    def take_in(self, design_id: str, disk: Disk, origin: str) -> Change | None:
+        """What the folder holds now, merged as `origin`'s edit: each file that changed on disk since it was last read
+        or written, from that version, or from the one an editor saving it read it at (`saving`); files that started
+        from different versions merge apart. None when nothing on disk changed. The folder is not written
+        (`write`)."""
+        on_disk, now = self._folders.setdefault(design_id, _Folder()), self.current(design_id)
+        known = on_disk.known
         sums = {**{p: sha(t.encode()) for p, t in disk.texts.items()}, **disk.sums}
         held = {**{p: sha(t.encode()) for p, t in now.texts.items()}, **now.assets}
         written = {p for p in {*sums, *known, *held}  # changed on disk since, to other than the document holds
                    if sums.get(p) != (known[p].sum if p in known else held.get(p)) and sums.get(p) != held.get(p)}  # fmt: skip
         groups: dict[int, list[str]] = {}
         for path in sorted(written):
-            version = base or (known[path].version if path in known else now.version)
+            version = on_disk.saving.pop(path, known[path].version if path in known else now.version)
             groups.setdefault(version, []).append(path)
             if path in sums:  # read now: the merge is written over it
-                known[path] = _OnDisk(sums[path], version)
+                on_disk.read(path, sums[path], version)
             else:
                 known.pop(path, None)
-        self.store.put_blobs(disk.blobs)
+        self.store.put_blobs({disk.sums[p]: disk.blobs[disk.sums[p]] for p in written if p in disk.sums})
 
         def written_from(paths: list[str]) -> Edit:
             def edit(doc: Document) -> None:
@@ -149,48 +165,48 @@ class DocumentService:
             return edit
 
         changes = [c for v, paths in sorted(groups.items())
-                   if (c := self.change(design_id, folder, v, origin, written_from(paths)))]  # fmt: skip
-        self._write(design_id, folder, self.current(design_id))  # a folder behind the document too
+                   if (c := self.change(design_id, v, origin, written_from(paths)))]  # fmt: skip
         if not changes:
             return None
         return Change(changes[-1].version, min(c.since for c in changes), sorted({f for c in changes for f in c.files}),
-                      [x for c in changes for x in c.crossings])  # fmt: skip
+                      [x for c in changes for x in c.crossings], [x for c in changes for x in c.lines])  # fmt: skip
 
-    def _write(self, design_id: str, folder: Path, files: Snapshot) -> list[str]:
-        """Bring the folder to `files`: each file that differs, atomically, unless it changed on disk since it was
-        last read (taken in next, then written)."""
-        known = self._disk.setdefault(design_id, {})
-        written = []
+    def saving(self, design_id: str, path: str, read: str) -> None:
+        """An editor is about to save `path` from a buffer it read from disk when the file's sum was `read`: the save
+        is taken in from the version the file had that content at, so what was written since stays. One that read
+        content this server never saw is taken in as any other write."""
+        on_disk = self._folders.setdefault(design_id, _Folder())
+        if (version := on_disk.was.get((path, read))) is not None:
+            on_disk.saving[path] = version
+
+    def write(self, design_id: str, folder: Path) -> None:
+        """Bring the folder to the design's files: each file that differs, atomically, unless it changed on disk since
+        it was last read (taken in next, then written)."""
+        files, on_disk = self.current(design_id), self._folders.setdefault(design_id, _Folder())
+        known = on_disk.known
         for path, text in files.texts.items():
-            if self._put(folder, path, text.encode(), known, files.version):
-                written.append(path)
+            self._put(on_disk, folder, path, text.encode(), files.version)
         for path, digest in files.assets.items():
             if path in known and known[path].sum == digest and (folder / path).is_file():
                 continue
-            data = self.store.blob(digest)
-            if data is not None and self._put(folder, path, data, known, files.version):
-                written.append(path)
+            if (data := self.store.blob(digest)) is not None:
+                self._put(on_disk, folder, path, data, files.version)
         for path in [p for p in known if p not in files.texts and p not in files.assets]:
             target = folder / path
             if target.is_file() and sha(target.read_bytes()) == known[path].sum:
                 target.unlink()
-                written.append(path)
             if not target.is_file():
                 del known[path]
-        return written
 
     @staticmethod
-    def _put(folder: Path, path: str, data: bytes, known: dict[str, _OnDisk], version: int) -> bool:
+    def _put(on_disk: _Folder, folder: Path, path: str, data: bytes, version: int) -> None:
         target, digest = folder / path, sha(data)
-        on_disk = sha(target.read_bytes()) if target.is_file() else None
-        if on_disk == digest:
-            known[path] = _OnDisk(digest, version)
-            return False
-        if path in known and on_disk != known[path].sum:
-            return False
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.tmp")
-        tmp.write_bytes(data)
-        tmp.replace(target)  # atomic: readers never see half a file
-        known[path] = _OnDisk(digest, version)
-        return True
+        now = sha(target.read_bytes()) if target.is_file() else None
+        if path in on_disk.known and now not in (digest, on_disk.known[path].sum):
+            return  # changed on disk since it was last read: taken in next
+        if now != digest:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(f".{target.name}.tmp")
+            tmp.write_bytes(data)
+            tmp.replace(target)  # atomic: readers never see half a file
+        on_disk.read(path, digest, version)

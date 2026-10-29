@@ -62,7 +62,7 @@ def init_project(
         written.append("designs/")
 
     def hook(agent: str) -> Callable[[dict[str, Any]], bool]:
-        return lambda config: agents.hooks(config, agent, agents.hook_handler(python, agent, settings.base_url))
+        return lambda config: agents.hooks(config, agent, agents.hook_handler(python, agent))
 
     def mcp_server(config: dict[str, Any]) -> bool:
         servers = config.setdefault("mcpServers", {})

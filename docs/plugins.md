@@ -254,7 +254,7 @@ hitlcad's own codes, by area:
 | `model.*` (`exception`, `no_build_function`, `return_type`, `connectors_missing`, `parts_mismatch`, `frame_type`, `shape`, `interface_cycle`, `unknown_interface`, `unknown_parameter`, `interface_value`) | design |
 | `build.*` (`part_file_missing`, `placed_unknown`, `component`, `binding`, `time_limit`, `memory_limit`, `crashed`) | design |
 | `part.*`, `connector.*`, `mate.*`, `relation.*`, `fastener.*`, `coverage.*`, `interference.*`, `motion.*`, `measure.unmeasurable`, `requirement.*`, `manufacturing.*` | design |
-| `not_found.*`, `request.invalid`, `parameter.invalid`, `build.sources_changed`, `file.unreadable`, `project.config` | request |
+| `not_found.*`, `request.invalid`, `parameter.invalid`, `file.unreadable`, `project.config` | request |
 | `backend.unavailable`, `build.outputs`, `export.write_failed`, `store.unreadable`, `design.unreadable` | environment |
 | `plugin.missing`, `plugin.load_failed`, `plugin.conflict`, `plugin.error` | plugin |
 | `hitlcad.bug` | hitlcad |
@@ -306,7 +306,7 @@ A design's files are a document hitlcad keeps, of which the design folder is the
 is what the agent edits with its own tools in the folder, what git diffs, and what the panel's edits merge
 into (see [architecture.md](architecture.md#the-database-holds-the-design-the-folder-is-its-copy)). What
 hitlcad keeps on the machine is one SQLite database, `<data_dir>/hitlcad.db` (`store/sqlite.py`, the standard
-library's `sqlite3`, WAL), beside each revision's files in `<data_dir>/designs/<id>/revisions/<n>/`:
+library's `sqlite3`, WAL), beside the files of the builds that keep them in `<data_dir>/designs/<id>/revisions/<n>/`:
 
 | Table | Holds |
 | --- | --- |
@@ -316,7 +316,7 @@ library's `sqlite3`, WAL), beside each revision's files in `<data_dir>/designs/<
 | `doc_snapshots` | the whole document every 100 versions, so an earlier version replays from near it |
 | `blobs` | the contents of the files kept by their sums (vendor files, pictures) |
 | `events` | each design's events, in order: its history, folded into `DesignState` |
-| `revisions` | each revision in full (what it built from and its report), with its configuration and status |
+| `revisions` | each revision: what it built from, by reference (the version of each design folder's files it read), and its report, with its configuration and status |
 | `results` | each revision's results: code, analysis, subject, status, severity, file, line |
 
 A revision's event lists it (`RevisionInfo`: id, origin, configuration, status, tally, what a failed

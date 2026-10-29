@@ -21,7 +21,7 @@ from hitlcad.app import HitlCad
 from hitlcad.core.report import BuildReport
 from hitlcad.geometry import cadview
 from hitlcad.kernel.errors import Location
-from hitlcad.workspace.document import Snapshot
+from hitlcad.workspace.document import Scanned
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import copy_design, edit_json, results, write_design
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.geometry
 
 
 async def build(core: HitlCad, folder: Path, out: Path, configuration: str | None = None) -> BuildReport:
-    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances, configuration)
+    spec = DesignFolder(folder).spec(Scanned(), core.settings.tolerances, configuration)
     return await core.pipeline.run(spec, folder, out)
 
 
@@ -176,7 +176,7 @@ async def test_structure_is_checked_before_any_geometry(core: HitlCad, tmp_path:
     edit_json(
         folder / "design.json", lambda d: d["mates"].append({"type": "rigid", "a": "base.side", "b": "lid.bottom"})
     )
-    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
+    spec = DesignFolder(folder).spec(Scanned(), core.settings.tolerances)
     found, plan = await core.pipeline.check_structure(spec, folder, tmp_path / "work")
     assert plan and set(plan.placements) == {"base", "lid", "insert", "screw"}
     assert [r.detail for r in found if r.status == "fail"] == [
@@ -648,6 +648,24 @@ async def test_components_are_built_bound_and_counted_and_robot_descriptions_mes
     for rel in ("parts/base.stl", "components/box/parts/base.stl"):
         assert (out / "urdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
         assert (out / "sdf/meshes" / rel).read_bytes() == (out / rel).read_bytes()
+
+
+@pytest.mark.cold_cache
+async def test_part_files_build_beside_the_components_and_are_kept_when_one_fails(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    hinge = copy_design("hinge", tmp_path / "hinge")
+    folder = copy_design("shelf", tmp_path / "shelf")
+    fine = (hinge / "parts/box.py").read_text(encoding="utf-8")
+    edit(hinge / "parts/box.py", "def build(p, i):\n", "def build(p, i):\n    raise ValueError('no box')\n")
+    failed = await build(core, folder, tmp_path / "failed")
+    assert failed.status == "failed"
+    (error,) = failed.results
+    assert (error.code, error.subject) == ("build.component", "box") and "no box" in error.detail, error.detail
+    (hinge / "parts/box.py").write_text(fine, encoding="utf-8")
+    report = await build(core, folder, tmp_path / "out")
+    assert report.status == "succeeded", report.lead()
+    assert {p.name: p.cached for p in report.parts} == {"plate": True}  # built while the box failed
 
 
 async def test_mesh_parts_join_b_rep_parts(core: HitlCad, tmp_path: Path) -> None:

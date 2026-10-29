@@ -125,9 +125,11 @@ named by instance and connector. `explore_design(path, focus="review")` repeats 
 `resolve_pins` with a short reply. Parameter values the human set in the panel are deliberate.
 
 The human edits the same files while you work: parameters and outputs in the panel, and the files themselves.
-Your edits and theirs merge; neither undoes the other. After your tools, the hook says what they changed
-("Meanwhile, in the hitlcad designs you work in"): read a file again before you edit it. Where it says your edit
-and theirs changed the same line at once, the merge kept both: make that line what it should be.
+Your edits and theirs merge; neither undoes the other. Until your turn ends, the design's files on disk stay as your
+tools left them, so you need not read a file again to edit it; builds and tools read the merged design. After your
+tools, the hook says what others changed, with the lines ("Meanwhile, in the hitlcad designs you work in"): read a
+file again only where that matters to what you are doing. Where it says your edit and theirs changed the same line
+at once, the later edit was kept: make that line what it should be.
 
 When the human gives a picture of what to make (a photo, a render, a sketch) with what matters in it,
 it becomes a `silhouette` requirement that every build compares the model with:

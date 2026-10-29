@@ -59,17 +59,17 @@ def cmd_build(args: argparse.Namespace) -> int:
     from hitlcad.core.report import BuildReport, Revision
     from hitlcad.kernel.errors import HitlcadError, agent_text
     from hitlcad.render.base import NullRenderer
-    from hitlcad.workspace.document import Snapshot
+    from hitlcad.workspace.document import Scanned
     from hitlcad.workspace.folder import DesignFolder
 
     settings = get_settings()
-    pipeline = build_pipeline(settings, renderer=NullRenderer() if args.no_render else None)
-    folder = DesignFolder(Path(args.design))
+    folder, scanned = DesignFolder(Path(args.design)), Scanned()
     try:
-        spec = folder.spec(Snapshot.scan, settings.tolerances, args.configuration)  # the folder as it is: no server
+        spec = folder.spec(scanned, settings.tolerances, args.configuration)  # the folder as it is: no server
     except HitlcadError as e:
         print(agent_text(e.diagnostic), file=sys.stderr)
         return 1
+    pipeline = build_pipeline(settings, blobs=scanned.blobs.get, renderer=NullRenderer() if args.no_render else None)
     out = Path(args.out).resolve()
 
     async def build() -> BuildReport:
@@ -108,14 +108,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     settings = get_settings()
     target = Path(args.path).expanduser().resolve()
     backends = BackendRegistry.from_settings(settings).all()
-    hook = agents.command_line(agents.hook_argv(sys.executable, "<agent>", settings.base_url))
+    hook = agents.command_line(agents.hook_argv(sys.executable, "<agent>"))
     hooks = _permission(args.hooks, (
         "Let Claude Code and Codex see what you select, pin and change in the hitlcad panel?\n"
         f"  This adds a hook to {agents.CLAUDE_HOOKS} (yours, not committed) and to Codex's\n"
-        f"  {agents.codex_hooks_file()}. Before each message you send, and around each of the agent's file\n"
-        f"  reads, edits and shell commands, the agent runs:\n  {hook}\n"
-        "  Your selection and open pins are added to the message; the agent's edits merge with yours, and it\n"
-        "  hears what you changed."
+        f"  {agents.codex_hooks_file()}. Before each message you send, around each of the agent's file\n"
+        f"  edits and shell commands, and when it finishes its turn, the agent runs:\n  {hook}\n"
+        "  Your selection and open pins are added to the message; the agent's edits merge with yours, it\n"
+        "  hears what you changed, and what it changed builds once its turn ends."
     ), "--hooks")  # fmt: skip
     codex = _permission(args.codex, f"Add hitlcad's MCP server to Codex's {agents.codex_config_file()}?",
                         "--codex")  # fmt: skip

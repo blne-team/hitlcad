@@ -185,6 +185,9 @@ def test_only_requests_addressed_to_this_machine_or_the_url_agents_are_given_rea
                               json={"path": str(tmp_path / "project")})  # fmt: skip
         assert rebound.status_code == 400 and not (tmp_path / "project").exists()
         assert client.post("/mcp", headers={"Host": "rebound.example:8000"}, json={}).status_code == 400
+        # while it serves, the agents' hook finds it in its data folder
+        assert json.loads((settings.data_dir / "server.json").read_text())["url"] == settings.base_url
+    assert not (settings.data_dir / "server.json").exists()
 
 
 @pytest.mark.geometry

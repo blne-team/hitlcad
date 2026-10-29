@@ -3,6 +3,7 @@ import type { BuildProgress, DesignState, Revision } from "../api/types";
 import { useCapabilities } from "../hooks/useCapabilities";
 import { useDesign } from "../hooks/useDesign";
 import { useShown } from "../hooks/useRevision";
+import { useUndo } from "../hooks/useUndo";
 import { type DesignUi, type InspectorTab, shownBuild, useDesignUi } from "../lib/designUi";
 import { BomPanel } from "./BomPanel";
 import { BriefPanel } from "./BriefPanel";
@@ -112,6 +113,7 @@ export const TABS: Tab[] = [
 export function InspectorView({ id }: { id: string }) {
   const live = useDesign(id);
   const { state } = live;
+  const steps = useUndo(id, state);  // its keys: the edits made here are undone from here too
   const [ui, setUi] = useDesignUi();
   const { revision, base } = useShown(id, state?.revisions ?? [], ui);
   const problems = useCapabilities()?.plugin_problems ?? [];
@@ -134,6 +136,7 @@ export function InspectorView({ id }: { id: string }) {
           {p.message}
         </p>
       ))}
+      {steps.error && <p className="notice fail">{steps.error}</p>}
       <CrossedEdits state={state} seen={ui.crossedSeen} onSeen={(version) => setUi({ crossedSeen: version })} />
       <div className="tabs" role="tablist">
         {TABS.map((t) => {

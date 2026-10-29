@@ -20,9 +20,10 @@ export async function askAgentSetup(dir: string, setup: AgentSetup): Promise<All
       detail:
         `hitlcad adds a hook to ${setup.claude_hooks} in ${path.basename(dir)} (your own Claude Code settings, ` +
         `not committed) and to Codex's ${setup.codex_hooks}. Before each message you send to the agent, it adds your ` +
-        "selection and open pins from the hitlcad panel. Around each of the agent's file reads, edits and shell " +
-        "commands, it tells hitlcad where the agent started, so its edits merge with yours instead of undoing them, " +
-        "and tells the agent what you changed meanwhile. In a folder without designs it adds nothing. Codex asks you " +
+        "selection and open pins from the hitlcad panel. Around each of the agent's file edits and shell " +
+        "commands, it tells hitlcad the edits are the agent's, so they merge with yours instead of undoing them, " +
+        "and tells the agent what you changed meanwhile; when the agent finishes its turn, what it changed builds. " +
+        "In a folder without designs it adds nothing. Codex asks you " +
         "once to approve the hook (/hooks).\n\n" +
         `For Codex it also adds hitlcad's MCP server to ${setup.codex_config}.`,
     },

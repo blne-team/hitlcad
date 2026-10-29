@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.config import DEFAULT_BACKEND
 from hitlcad.core.design import DESIGN_FILE, DesignSpec
 from hitlcad.core.events import (
+    SHOWN,
+    DesignMoved,
     DesignOpened,
     DesignState,
     DesignUpdated,
@@ -28,7 +30,7 @@ from hitlcad.core.events import (
     ErrorRaised,
     Event,
 )
-from hitlcad.core.report import Earlier, Revision
+from hitlcad.core.report import BuildSpec, BuiltFrom, Earlier, Revision
 from hitlcad.core.types import new_id
 from hitlcad.kernel.errors import NOT_FOUND_DESIGN, NOT_FOUND_REVISION, REQUEST_INVALID, STORE_UNREADABLE, HitlcadError
 from hitlcad.services.bus import EventBus
@@ -60,8 +62,8 @@ class DesignService:
         self.registry = registry
         self.bus = EventBus()
         self.folders_changed = asyncio.Event()
-        # designs a panel or an agent opened since the server started, each queued once for the watcher to bring
-        # up to date: the others wait until they are opened, however many are registered
+        # designs a panel or an agent opened since the server started, each queued once for the watcher to build
+        # if its files are not its latest build's: the others wait until they are opened, however many are registered
         self._used: set[str] = set()
         self.first_used: asyncio.Queue[str] = asyncio.Queue()
         self._folders = store.folders()
@@ -69,6 +71,10 @@ class DesignService:
         self.loaded = loaded  # revisions kept in memory: the panel and the tools read the same few
         self._revisions: OrderedDict[tuple[str, int], Revision] = OrderedDict()
         self._lock = threading.Lock()  # revision() runs in worker threads too
+        # each design's edits one at a time: a take-in reads the folder off the event loop, and an edit merged while it
+        # did would be undone by what it read
+        self._editing: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._turns: dict[str, set[str]] = {}  # design id -> the agent turns writing it (`hold`)
 
     # ------------------------------------------------------------------ state & events
 
@@ -101,8 +107,8 @@ class DesignService:
         return [self.store.append(design_id, e) for e in (opened, ErrorRaised(diagnostic=notice))]
 
     def revision(self, design_id: str, revision_id: int) -> Revision:
-        """A revision in full: what it built from and its report. One that does not read sets the design's history
-        aside, as events that do not read do."""
+        """A revision in full: what it built from, its spec made again from that, and its report. One that does not
+        read sets the design's history aside, as events that do not read do."""
         key = (design_id, revision_id)
         with self._lock:
             found = self._revisions.get(key)
@@ -117,12 +123,24 @@ class DesignService:
                 self._cache[design_id] = DesignState.replay(design_id, self._new_history(design_id))
                 raise
             assert found is not None  # its event lists it
+            if found.built is not None:
+                found.spec = self._spec(design_id, found.built, found.configuration)
         with self._lock:
             self._revisions[key] = found
             self._revisions.move_to_end(key)
             while len(self._revisions) > self.loaded:
                 self._revisions.popitem(last=False)
         return found
+
+    def _spec(self, design_id: str, built: BuiltFrom, configuration: str | None) -> BuildSpec:
+        """A revision's build spec, made as it was for its build: of each design's files at the version it read."""
+        read = {Path(path): at for path, at in built.files.items()}
+
+        def files(path: Path) -> Snapshot | None:
+            at = read.get(path)
+            return self.documents.files_at(at.design, at.version) if at else None
+
+        return self.folder(design_id).spec(files, built.tolerances, configuration, plugins=built.plugins)
 
     def earlier(self, design_id: str, revision_id: int, configuration: str | None) -> Earlier | None:
         """What the configuration's revision before this one failed."""
@@ -194,24 +212,38 @@ class DesignService:
             created = folder.scaffold(name or folder.path.name, backend)
         design_id = self.id_for(folder.path)
         if design_id is None:
-            design_id = new_id("dsg")
-            self.store.create(design_id)
             disk = created or Disk.read(folder.path)
-            design = readable(Snapshot(0, disk.texts))
-            self.emit(design_id, DesignOpened(path=str(folder.path), name=design.name if design else folder.path.name,
-                                              backend=design.backend if design else DEFAULT_BACKEND))  # fmt: skip
-            origin = "scaffold" if created else "folder"
-            self._changed(design_id, self.documents.create(design_id, folder.path, disk, origin), origin, "")
-            self.store.bind(str(folder.path), design_id)
-            self._folders[str(folder.path)] = design_id
-            self.folders_changed.set()
-            if str(folder.path) in self.store.set_aside_folders:
-                self.emit(design_id, ErrorRaised(diagnostic=STORE_UNREADABLE.diagnostic(
-                    "This design's history was written by another version of hitlcad: it was set aside with the "
-                    "database it was in. Its revisions start again.")))  # fmt: skip
+            if (design_id := self._moved(disk)) is not None:
+                self._bind(folder.path, design_id)
+                self.emit(design_id, DesignMoved(path=str(folder.path)))
+            else:
+                design_id = new_id("dsg")
+                self.store.create(design_id)
+                design = readable(Snapshot(0, disk.texts))
+                self.emit(design_id, DesignOpened(path=str(folder.path), name=design.name if design else folder.path.name,
+                                                  backend=design.backend if design else DEFAULT_BACKEND))  # fmt: skip
+                origin = "scaffold" if created else "folder"
+                self._changed(design_id, self.documents.create(design_id, folder.path, disk, origin), origin, "")
+                self._bind(folder.path, design_id)
+                if str(folder.path) in self.store.set_aside_folders:
+                    self.emit(design_id, ErrorRaised(diagnostic=STORE_UNREADABLE.diagnostic(
+                        "This design's history was written by another version of hitlcad: it was set aside with the "
+                        "database it was in. Its revisions start again.")))  # fmt: skip
         self.sync(design_id)
         self._use(design_id)
         return self.get(design_id), [*created.texts, *created.sums] if created else []
+
+    def _bind(self, path: Path, design_id: str) -> None:
+        """The design's folder is at `path` (where it was, it is no longer)."""
+        self.store.bind(str(path), design_id)
+        self._folders = {p: i for p, i in self._folders.items() if i != design_id} | {str(path): design_id}
+        self.folders_changed.set()
+
+    def _moved(self, disk: Disk) -> str | None:
+        """The registered design whose folder is gone and whose files are exactly these: its folder was moved or
+        renamed, and it keeps its history, revisions and pins there."""
+        return next((i for p, i in self._folders.items() if not Path(p).is_dir() and self.store.exists(i)
+                     and (self.files(i).texts, self.files(i).assets) == (disk.texts, disk.sums)), None)  # fmt: skip
 
     def ensure(self, path: str | Path) -> DesignState:
         """The design for ``path``, opening the folder if it is not registered yet."""
@@ -253,35 +285,79 @@ class DesignService:
         """The design's files, as its document holds them now."""
         return self.documents.current(design_id)
 
-    def files_at(self, path: Path) -> Snapshot | None:
-        """The files of the design in a folder (registered when it was not yet); None when it holds none."""
+    def design_at(self, path: Path) -> str | None:
+        """The design in a folder (registered when it was not yet); None when it holds none."""
         folder = DesignFolder(path)
         design_id = self.id_for(folder.path)
-        if design_id is None:
-            if not folder.exists():
-                return None
+        if design_id is None and folder.exists():
             design_id = self.open(folder.path)[0].id
-        return self.files(design_id)
+        return design_id
 
-    def change(self, design_id: str, base: int, origin: str, edit: Edit, summary: str = "") -> Change | None:
-        """Make `edit` on the design's files as they were at version `base`, merged with what changed since."""
-        change = self.documents.change(design_id, Path(self.get(design_id).path), base, origin, edit)
-        return self._changed(design_id, change, origin, summary)
+    async def change(self, design_id: str, base: int, origin: str, edit: Edit, summary: str = "",
+                     reverts: int | None = None) -> Change | None:  # fmt: skip
+        """Make `edit` on the design's files as they were at version `base`, merged with what changed since. An edit
+        that `reverts` a version (an Undo or Redo) is a step even when what it takes back is gone already."""
+        async with self._editing[design_id]:
+            change = self.documents.change(design_id, base, origin, edit, always=reverts is not None)
+            self._write(design_id)
+            return self._changed(design_id, change, origin, summary, reverts)
 
-    async def take_in(self, design_id: str, origin: str = "disk", base: int | None = None) -> Change | None:
-        """What the design's folder holds now, written by `origin` from version `base` (unknown: each file from the
-        version it was last written or read at), merged into the design's files."""
+    async def revert(self, design_id: str, version: int, summary: str) -> Change | None:
+        """The panel's Undo or Redo: what version `version` did, taken back on that version (its files made as they
+        were before it) and merged with what changed since."""
+        before = self.documents.files_at(design_id, version - 1)
+        return await self.change(design_id, version, "panel", lambda doc: doc.become(before.texts, before.assets),
+                                 summary, reverts=version)  # fmt: skip
+
+    def saving(self, path: Path, read: str) -> None:
+        """An editor is about to save the file at `path`, from a buffer it read when the file's sum was `read`: a
+        design's file is taken in from the version it had then (`DocumentService.saving`)."""
+        if (design_id := self.owner(path)) is not None:
+            self.documents.saving(design_id, path.relative_to(self.get(design_id).path).as_posix(), read)
+
+    async def take_in(self, design_id: str, origin: str = "disk") -> Change | None:
+        """What the design's folder holds now, written by `origin`, merged into the design's files: each file from
+        the version it was last written or read at."""
         folder = Path(self.get(design_id).path)
-        disk = await asyncio.to_thread(Disk.read, folder)
-        return self._changed(design_id, self.documents.take_in(design_id, folder, disk, base, origin), origin, "")
+        async with self._editing[design_id]:
+            disk = await asyncio.to_thread(Disk.read, folder)
+            change = self.documents.take_in(design_id, disk, origin)
+            self._write(design_id)  # a folder behind the design's files too
+            return self._changed(design_id, change, origin, "")
 
-    def _changed(self, design_id: str, change: Change | None, origin: str, summary: str) -> Change | None:
+    def hold(self, design_id: str, turn: str) -> None:
+        """An agent's turn writes the design: until it ends (`release`), its folder stays as the agent's tools left
+        it, so no file the agent read changes under it (its edits and others' merge in the design's files all the
+        same), and it rebuilds when the turn ends, once."""
+        self._turns.setdefault(design_id, set()).add(turn)
+
+    def held(self, design_id: str) -> bool:
+        return design_id in self._turns
+
+    def release(self, turn: str) -> list[str]:
+        """An agent's turn ended: the designs it held, no other turn holding them, their folders brought up to their
+        files."""
+        released = []
+        for design_id, turns in list(self._turns.items()):
+            turns.discard(turn)
+            if not turns:
+                del self._turns[design_id]
+                self._write(design_id)
+                released.append(design_id)
+        return released
+
+    def _write(self, design_id: str) -> None:
+        if design_id not in self._turns:
+            self.documents.write(design_id, Path(self.get(design_id).path))
+
+    def _changed(self, design_id: str, change: Change | None, origin: str, summary: str,
+                 reverts: int | None = None) -> Change | None:  # fmt: skip
         if change is None:
             return None
         others = sorted({c.origin for c in self.get(design_id).changes if c.version > change.since} - {origin})
-        self.emit(
-            design_id, DocumentChanged(version=change.version, origin=origin, files=change.files, summary=summary)
-        )
+        self.emit(design_id, DocumentChanged(version=change.version, origin=origin, files=change.files, summary=summary,
+                                             reverts=reverts, lines=change.lines[:SHOWN],
+                                             more=max(0, len(change.lines) - SHOWN)))  # fmt: skip
         if change.crossings:
             self.emit(design_id, EditsCrossed(version=change.version, origin=origin, others=others,
                                               crossed=change.crossings))  # fmt: skip

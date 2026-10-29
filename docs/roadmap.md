@@ -69,11 +69,16 @@ images render the views of any revision without them.
 A design's files are a CRDT document in hitlcad's database (pycrdt), of which its folder is the copy on disk, so
 the human and the agents edit the same files at once without undoing each other: every edit is made on a version
 and merged into the current one. The panel's parameter and outputs edits change only their value's text in
-design.json, made on the revision on screen; the agents' hook runs around their file reads, edits and shell
-commands as well as their prompts, so what a tool writes merges from the version it started on (a file written
-whole, from the version it was read at), and the agent is told in one line, with the tool's result, what the human
-changed meanwhile; any other save merges from the version each file was last written or read at. Two edits that
-change the same text at once are both kept, by rule, and shown to the human (and the agents involved) to look at.
+design.json, made on the revision on screen; a write to the folder merges from the version each file was last
+written or read at, what its writer found there; the agents' hook runs around their file edits and shell commands
+as well as their prompts, so what a tool writes is taken in as the agent's, and the agent is told in one line, with
+the tool's result, what the human changed meanwhile. Edits merge by tokens, so a value is changed whole; where two
+change the same value at once, the later is kept, and shown to the human (and the agents involved) to look at. An
+editor's save merges from what its buffer was read from, so saving a buffer older than the file undoes nothing; and
+the designs an agent's turn writes build once the turn ends. There is no save step: every edit reaches the folder
+as it merges, or, while an agent's turn writes the design, once the turn ends, so no file the agent read changes
+under it and it need not read one again; the hook tells it the lines others changed. Undo and Redo in the panel
+take back the human's own edits the same way, made where each was and merged, so what the agents wrote since stays.
 
 ## Next: motion that scales
 
@@ -117,8 +122,9 @@ human judges against what they drew.
   57 faces to their lines and parameters. A value that loses its sources (numpy, `int()`) is found by building the
   part file once more with each parameter nudged.
 - **Dimensions on the model.** Selecting a face shows the dimensions that drive it, on the model: a height arrow
-  on the lid's top face tied to `lid_t`, a thickness between two faces tied to `wall`. Dragging or typing writes
-  the parameter, merged from the revision on screen. A value fixed in code is changed where it is (its literal, by
+  on the lid's top face tied to `lid_t`, a thickness between two faces tied to `wall`. Dragging or typing previews
+  the value in the panel and writes the parameter once, when the drag is released or the value entered (one edit,
+  one Undo), merged from the revision on screen. A value fixed in code is changed where it is (its literal, by
   its columns) or made a parameter (design.json and the code, together) by the panel itself where `p` is in reach,
   by the agent where it is not. Then the deferred drag of a whole part in a locked view, by the parameters that
   place it, is the same edit.

@@ -28,7 +28,7 @@ from hitlcad.kernel.model import Model
 
 Status = Literal["pass", "fail", "unverified"]
 #: What made a revision: files saved, the panel's parameters, or a review (the human watched a traced motion)
-Origin = Literal["file", "parameter_edit", "outputs_edit", "review"]
+Origin = Literal["file", "parameter_edit", "outputs_edit", "undo", "redo", "review"]
 Severity = Literal["error", "warning", "info"]
 
 
@@ -323,12 +323,10 @@ class Artifact(Model):
     name: str
     path: str
     media_type: str
-    role: str = Field(
-        description="source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an "
-        "exporter's name"
-    )
+    role: str = Field(description="view, part_mesh, part_exchange, objects, log, or the output that wrote it "
+                      "(design.json `outputs`: step, stl, native, preview, an exporter's name)")  # fmt: skip
     label: str = Field(default="", description="What the file is, for the panel's file list; empty for the files it "
-                       "shows its own way (sources, the 3D view, the preview)")  # fmt: skip
+                       "shows its own way (the 3D view, the preview)")  # fmt: skip
     sha256: str
     bytes: int
 
@@ -343,7 +341,8 @@ class BuildReport(Model):
     duration_s: float
     durations: dict[str, float] = Field(
         default_factory=dict,
-        description="Seconds each step took, in the order they ran: the plan, components, part files, the scene, "
+        description="Seconds each step took, in the order they started (components and part files run at once, "
+        "each counting its own time): the plan, components, part files, the scene, "
         "measuring connectors, each analysis by its name, the report and the outputs; a build that fails stops early",
     )
     metrics: MeshMetrics | None = Field(default=None, description="The whole placed assembly")
@@ -399,13 +398,33 @@ class RevisionInfo(Model):
     version: int = Field(description="The version of the design's document it built")
 
 
+class DocumentAt(Model):
+    """A design's files at one version of its document, which hitlcad keeps."""
+
+    design: str = Field(description="The design's id")
+    version: int
+
+
+class BuiltFrom(Model):
+    """What a revision built, by reference: the design's files and each component's are their documents' at a
+    version; beside them, what the build took from this hitlcad. Its spec is made again from these, as it was made
+    for the build (`DesignFolder.spec`): a revision keeps no copy of the files."""
+
+    files: dict[str, DocumentAt] = Field(description="Each design folder it read, its own and its components': "
+                                         "path -> its files")  # fmt: skip
+    tolerances: Tolerances = Field(description="hitlcad's default tolerances, which design.json `verification` refines")
+    plugins: dict[str, str] = Field(description="The installed plugins it was built with: distribution -> version")
+
+
 class Revision(Model):
     id: int
     created_at: datetime = Field(default_factory=utcnow)
     origin: Origin
     parent: int | None = None
     configuration: str | None = None
-    spec: BuildSpec | None = Field(description="What it built from; none when design.json did not validate")
+    built: BuiltFrom | None = Field(default=None, description="What it built from; none when design.json did not "
+                                    "validate")  # fmt: skip
+    spec: BuildSpec | None = Field(default=None, description="Its build spec, made again from `built`; not stored")
     version: int = Field(description="The version of the design's document it built: what an edit of it is made on")
     summary: str = ""
     report: BuildReport

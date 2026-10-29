@@ -1,9 +1,10 @@
 """Backend-agnostic build pipeline.
 
     sources → plan (interface values, placements) → components (each a build of its own, cached by its
-    spec) → part files (in parallel worker processes, cached by what each read) → the built design → its
-    3D view (the parts' views placed: seen from here on) → connectors measured → every analysis, each one's
-    results said as it finishes → the outputs design.json names (`OUTPUTS` and the exporters) → report
+    spec, all at once) beside part files (in parallel worker processes, cached by what each read), both reading
+    only the plan → the built design → its 3D view (the parts' views placed: seen from here on) → connectors
+    measured → every analysis, each one's results said as it finishes → the outputs design.json names (`OUTPUTS`
+    and the exporters) → report
 
 A build's directory is self-contained: its sources, its parts in their own frames, its components'
 build directories, the outputs it was asked for and its report. Loading it back (`load_built`) gives the model the
@@ -19,13 +20,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import shutil
 import time
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 
@@ -37,7 +39,7 @@ from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
 from hitlcad.backends.registry import BackendRegistry
 from hitlcad.backends.workers import Superseded, Ticket
 from hitlcad.build import assemble
-from hitlcad.build.cache import Inputs, PartCache
+from hitlcad.build.cache import Inputs, PartCache, link
 from hitlcad.config import Settings
 from hitlcad.core import frames as fr
 from hitlcad.core.report import (
@@ -53,6 +55,7 @@ from hitlcad.core.report import (
     PartResult,
     Result,
 )
+from hitlcad.core.structure import ComponentSpec
 from hitlcad.core.types import Value
 from hitlcad.exporters import Exporter
 from hitlcad.geometry import cadview
@@ -64,9 +67,9 @@ from hitlcad.kernel.errors import (
     BUILD_OUTPUTS,
     BUILD_PART_FILE,
     BUILD_PLACED,
+    FILES_UNMADE,
     HITLCAD_BUG,
     OUTPUT_UNAVAILABLE,
-    SOURCES_CHANGED,
     STRUCTURE_BACKEND,
     STRUCTURE_OUTPUT,
     HitlcadError,
@@ -82,6 +85,8 @@ REPORT_FILE = "report.json"
 SOURCES = "src"
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class Progress(Protocol):
@@ -109,7 +114,8 @@ class _Quiet:
 
 
 class _Clock:
-    """How long each step of a build took, in the order they ran (`BuildReport.durations`)."""
+    """How long each step of a build took, in the order they started (`BuildReport.durations`): steps that run at
+    once (components and part files) each count their own time."""
 
     def __init__(self) -> None:
         self.durations: dict[str, float] = {}
@@ -117,10 +123,15 @@ class _Clock:
     @contextmanager
     def step(self, name: str) -> Iterator[None]:
         started = time.monotonic()
+        self.durations[name] = 0.0
         try:
             yield
         finally:
             self.durations[name] = round(time.monotonic() - started, 3)
+
+    async def timed(self, name: str, step: Awaitable[T]) -> T:
+        with self.step(name):
+            return await step
 
 
 class _Failed(Exception):
@@ -167,24 +178,28 @@ def _artifact(out_dir: Path, rel: str, media_type: str, role: str, label: str = 
                     sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))  # fmt: skip
 
 
-def write_sources(spec: BuildSpec, folder: Path, target: Path) -> None:
-    """The design's code from the spec, and its vendor files from the folder (checked against the spec)."""
+#: The content of a file kept by its sum (sha256): the store's, or a folder's as it was read.
+Blobs = Callable[[str], bytes | None]
+
+
+def write_sources(spec: BuildSpec, blobs: Blobs, target: Path) -> None:
+    """The design's files as its spec has them, where its code runs: the code, and the vendor files by their sums."""
     shutil.rmtree(target, ignore_errors=True)
     for rel, text in spec.sources.items():
         (target / rel).parent.mkdir(parents=True, exist_ok=True)
         (target / rel).write_text(text, encoding="utf-8")
     for rel, digest in spec.assets.items():
-        data = (folder / rel).read_bytes()
-        if hashlib.sha256(data).hexdigest() != digest:
-            raise SOURCES_CHANGED(f"{rel} changed since the build started")
+        data = blobs(digest)
+        assert data is not None, f"no content for {rel}"  # every file a document holds, its blob is kept
         (target / rel).parent.mkdir(parents=True, exist_ok=True)
         (target / rel).write_bytes(data)
 
 
 class BuildPipeline:
     def __init__(self, registry: BackendRegistry, settings: Settings, analyses: Sequence[Analysis],
-                 exporters: dict[str, Exporter], renderer: Renderer | None = None) -> None:  # fmt: skip
+                 exporters: dict[str, Exporter], blobs: Blobs, renderer: Renderer | None = None) -> None:  # fmt: skip
         self.registry = registry
+        self.blobs = blobs  # the vendor files' contents, by the sums a spec names them by
         self.settings = settings
         self.analyses = list(analyses)
         self.exporters = exporters
@@ -227,7 +242,6 @@ class BuildPipeline:
             report = BuildReport(status=status, configuration=spec.configuration, values=values,
                                  duration_s=round(time.monotonic() - started, 3), durations=clock.durations, **fields)  # fmt: skip
             report.artifacts.append(_artifact(out_dir, "build.log", "text/plain", "log"))
-            (out_dir / REPORT_FILE).write_text(report.model_dump_json(indent=2), encoding="utf-8")
             return report
 
         try:
@@ -259,6 +273,20 @@ class BuildPipeline:
             report_fields["results"] += unavailable
         return finish(BuildStatus.SUCCEEDED, **report_fields), built
 
+    async def restore(self, spec: BuildSpec, folder: Path, out_dir: Path, report: BuildReport) -> None:
+        """A revision's files made again into `out_dir`, for one that no longer keeps them: its parts (from the part
+        cache, where it found them), its scene and its outputs. Its analyses are its report's, and are not run."""
+        out_dir.mkdir(parents=True)
+        log: list[str] = []
+        try:
+            built, _ = await self._assemble(spec, folder, out_dir, Ticket(), spec.values(), log, _Clock())
+        except _Failed as e:
+            lead = e.results[0]
+            raise FILES_UNMADE(f"its build now fails: {lead.code} {lead.subject}: {lead.detail}") from None
+        (out_dir / "build.log").write_text("\n".join(log), encoding="utf-8")
+        await asyncio.to_thread(assemble.write_scene, built, out_dir)
+        await self.export(spec.design.outputs, built, out_dir, dict(report), Ticket())
+
     async def check_structure(
         self, spec: BuildSpec, folder: Path, work: Path
     ) -> tuple[list[Result], PlanOutcome | None]:
@@ -267,7 +295,7 @@ class BuildPipeline:
 
         shutil.rmtree(work, ignore_errors=True)
         try:
-            write_sources(spec, folder, work / SOURCES)
+            write_sources(spec, self.blobs, work / SOURCES)
             plan = await self._plan(spec, folder, work / SOURCES, spec.values(), work / "plan", Ticket())
         except HitlcadError as e:
             if e.owner != "design":
@@ -287,51 +315,58 @@ class BuildPipeline:
 
     async def _assemble(self, spec: BuildSpec, folder: Path, out_dir: Path, ticket: Ticket, values: dict[str, Value],
                         log: list[str], clock: _Clock) -> tuple[BuiltDesign, dict[str, Any]]:  # fmt: skip
-        design = spec.design
-        src = out_dir / SOURCES
-        write_sources(spec, folder, src)
-        if missing := self._missing(spec, "build"):
-            raise _Failed(missing)
-        with clock.step("plan"):
-            plan = await self._plan(spec, folder, src, values, out_dir / "work" / "plan", ticket)
-        ticket.check()
-        log.append(plan.log)
-        if plan.error:
-            raise _Failed([reported("build", plan.error)])
-        interfaces = {k: v.value for k, v in plan.interfaces.items()}
-        placements = {k: [fr.as_frame(m) for m in v] for k, v in plan.placements.items()}
-        if unknown := _unknown(spec, plan, "build"):
-            raise _Failed(unknown)
-        with clock.step("components"):
-            components = await self._components(spec, folder, out_dir, ticket, values, interfaces, placements)
-        ticket.check()
-        with clock.step("part files"):
-            outcomes = await self._parts(spec, folder, src, ticket, values, interfaces, out_dir, log)
-        failed: dict[str, list[FileOutcome]] = {}  # files that failed alike (a worker that would not start)
-        for o in outcomes:
-            if o.error:
-                failed.setdefault(o.error.model_dump_json(), []).append(o)
-        if failed:
-            files = design.files()
-            raise _Failed([reported("build", same[0].error, ", ".join(o.file for o in same),  # type: ignore[arg-type]
-                                    [n for o in same for n in files[o.file]]) for same in failed.values()])  # fmt: skip
-        parts = {}
-        for outcome in outcomes:
-            for bp in outcome.parts:
-                parts[bp.name] = self._geometry(spec, out_dir, outcome, bp)
-        built = BuiltDesign(
-            spec=design, folder=folder, values=values, interfaces=interfaces,
-            interface_reads={k: v.reads for k, v in plan.interfaces.items()}, assembly_reads=plan.assembly_reads,
-            parts=parts, placements=placements, components={n: c[1] for n, c in components.items()},
-            materials=materials.for_design(folder), tolerances=spec.tolerances,
-        )  # fmt: skip
-        fields = {
-            "interfaces": [InterfaceValue(name=k, value=v.value, reads=v.reads) for k, v in plan.interfaces.items()],
-            "assembly_reads": plan.assembly_reads,
-            "components": {n: c[0] for n, c in components.items()},
-        }
-        shutil.rmtree(out_dir / "work", ignore_errors=True)
-        return built, fields
+        """What its code builds: the plan, its components and its parts, run from a copy of its code in `work/`,
+        which goes once they are built."""
+        try:
+            design = spec.design
+            src = out_dir / "work" / SOURCES
+            write_sources(spec, self.blobs, src)
+            if missing := self._missing(spec, "build"):
+                raise _Failed(missing)
+            with clock.step("plan"):
+                plan = await self._plan(spec, folder, src, values, out_dir / "work" / "plan", ticket)
+            ticket.check()
+            log.append(plan.log)
+            if plan.error:
+                raise _Failed([reported("build", plan.error)])
+            interfaces = {k: v.value for k, v in plan.interfaces.items()}
+            placements = {k: [fr.as_frame(m) for m in v] for k, v in plan.placements.items()}
+            if unknown := _unknown(spec, plan, "build"):
+                raise _Failed(unknown)
+            # Components and part files read only the plan, not each other: they build at once.
+            components, outcomes = await _settled(
+                clock.timed("components",
+                            self._components(spec, folder, out_dir, ticket, values, interfaces, placements)),
+                clock.timed("part files", self._parts(spec, folder, src, ticket, values, interfaces, out_dir, log)),
+            )  # fmt: skip
+            failed: dict[str, list[FileOutcome]] = {}  # files that failed alike (a worker that would not start)
+            for o in outcomes:
+                if o.error:
+                    failed.setdefault(o.error.model_dump_json(), []).append(o)
+            if failed:
+                files = design.files()
+                raise _Failed([reported("build", same[0].error, ", ".join(o.file for o in same),  # type: ignore[arg-type]
+                                        [n for o in same for n in files[o.file]]) for same in failed.values()])  # fmt: skip
+            parts = {}
+            for outcome in outcomes:
+                for bp in outcome.parts:
+                    parts[bp.name] = self._geometry(spec, out_dir, outcome, bp)
+            built = BuiltDesign(
+                spec=design, folder=folder, values=values, interfaces=interfaces,
+                interface_reads={k: v.reads for k, v in plan.interfaces.items()}, assembly_reads=plan.assembly_reads,
+                parts=parts, placements=placements, components={n: c[1] for n, c in components.items()},
+                materials=materials.for_design(folder), tolerances=spec.tolerances,
+            )  # fmt: skip
+            fields = {
+                "interfaces": [
+                    InterfaceValue(name=k, value=v.value, reads=v.reads) for k, v in plan.interfaces.items()
+                ],
+                "assembly_reads": plan.assembly_reads,
+                "components": {n: c[0] for n, c in components.items()},
+            }
+            return built, fields
+        finally:
+            shutil.rmtree(out_dir / "work", ignore_errors=True)
 
     async def _plan(
         self, spec: BuildSpec, folder: Path, src: Path, values: dict[str, Value], work: Path, ticket: Ticket
@@ -368,49 +403,53 @@ class BuildPipeline:
     async def _components(self, spec: BuildSpec, folder: Path, out_dir: Path, ticket: Ticket, values: dict[str, Value],
                           interfaces: dict[str, Any], placements: dict[str, list[fr.Frame]]
                           ) -> dict[str, tuple[BuildReport, BuiltDesign]]:  # fmt: skip
-        out = {}
-        for name, use in spec.design.components.items():
-            if name not in placements:
-                continue
-            child = spec.components[name]
-            child_folder = (folder / use.design).resolve()
-            by_name = {p.name: p for p in child.design.parameters}
-            overrides = {}
-            for param, ref in use.bind.items():
-                if param not in by_name:
-                    raise BUILD_BINDING(f"component {name}: {use.design} has no parameter {param!r} to bind",
-                                        Location(address=name))  # fmt: skip
-                try:
-                    overrides[param] = by_name[param].coerce(_ref_value(ref, values, interfaces))
-                except (KeyError, ValueError) as e:
-                    raise BUILD_BINDING(
-                        f"component {name}: binding {param} = {ref}: {e}", Location(address=name)
-                    ) from None
-            bound = child.model_copy(update={"configuration": use.configuration, "overrides": overrides})
-            # A cached component is reused while everything its report came from is as it was: its spec, its
-            # backends, the materials it sees and the analyses that judged it.
-            backends = sorted({child.design.part_backend(p) for p in child.design.parts} | {child.design.backend})
-            registry = {n: m.model_dump() for n, m in materials.for_design(child_folder).items()}
-            key = json.dumps([bound.key, [self._backend(b).fingerprint() for b in backends], registry, analysis_code()],
-                             sort_keys=True)  # fmt: skip
-            target = self.components_dir / hashlib.sha256(key.encode()).hexdigest()
-            report_file = target / REPORT_FILE
-            async with self._component_locks[target.name]:  # two designs may build the same component at once
-                if (
-                    report_file.is_file()
-                    and (cached := BuildReport.model_validate_json(report_file.read_text(encoding="utf-8"))).status
-                    == "succeeded"
-                ):
-                    report = cached
-                else:
-                    report, _ = await self._build(bound, child_folder, target, ticket, _Quiet(), outputs=False)
-            if report.status != "succeeded":
-                lead = report.lead()
-                why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
-                raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
-            shutil.copytree(target, out_dir / "components" / name)
-            out[name] = (report, load_built(report, bound, child_folder, out_dir / "components" / name, self.shapes))
-        return out
+        """Each component placed, all at once: their bindings read only this design's plan, never another component."""
+        placed = [(name, use) for name, use in spec.design.components.items() if name in placements]
+        built = await _settled(*(self._component(name, use, spec, folder, out_dir, ticket, values, interfaces)
+                                 for name, use in placed))  # fmt: skip
+        return {name: b for (name, _), b in zip(placed, built, strict=True)}
+
+    async def _component(self, name: str, use: ComponentSpec, spec: BuildSpec, folder: Path, out_dir: Path,
+                         ticket: Ticket, values: dict[str, Value], interfaces: dict[str, Any]
+                         ) -> tuple[BuildReport, BuiltDesign]:  # fmt: skip
+        """One component, built as its own design with the values this one binds, cached by its bound spec."""
+        child = spec.components[name]
+        child_folder = (folder / use.design).resolve()
+        by_name = {p.name: p for p in child.design.parameters}
+        overrides = {}
+        for param, ref in use.bind.items():
+            if param not in by_name:
+                raise BUILD_BINDING(f"component {name}: {use.design} has no parameter {param!r} to bind",
+                                    Location(address=name))  # fmt: skip
+            try:
+                overrides[param] = by_name[param].coerce(_ref_value(ref, values, interfaces))
+            except (KeyError, ValueError) as e:
+                raise BUILD_BINDING(f"component {name}: binding {param} = {ref}: {e}", Location(address=name)) from None
+        bound = child.model_copy(update={"configuration": use.configuration, "overrides": overrides})
+        # A cached component is reused while everything its report came from is as it was: its spec, its
+        # backends, the materials it sees and the analyses that judged it.
+        backends = sorted({child.design.part_backend(p) for p in child.design.parts} | {child.design.backend})
+        registry = {n: m.model_dump() for n, m in materials.for_design(child_folder).items()}
+        key = json.dumps([bound.key, [self._backend(b).fingerprint() for b in backends], registry, analysis_code()],
+                         sort_keys=True)  # fmt: skip
+        target = self.components_dir / hashlib.sha256(key.encode()).hexdigest()
+        report_file = target / REPORT_FILE
+        async with self._component_locks[target.name]:  # two components may be the same design bound alike
+            if (
+                report_file.is_file()
+                and (cached := BuildReport.model_validate_json(report_file.read_text(encoding="utf-8"))).status
+                == "succeeded"
+            ):
+                report = cached
+            else:
+                report, _ = await self._build(bound, child_folder, target, ticket, _Quiet(), outputs=False)
+                report_file.write_text(report.model_dump_json(), encoding="utf-8")
+        if report.status != "succeeded":
+            lead = report.lead()
+            why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
+            raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
+        shutil.copytree(target, out_dir / "components" / name, copy_function=os.link)
+        return report, load_built(report, bound, child_folder, out_dir / "components" / name, self.shapes)
 
     async def _parts(self, spec: BuildSpec, folder: Path, src: Path, ticket: Ticket, values: dict[str, Value],
                      interfaces: dict[str, Any], out_dir: Path, log: list[str]) -> list[FileOutcome]:  # fmt: skip
@@ -434,20 +473,13 @@ class BuildPipeline:
             if not outcome.error:
                 for part in outcome.parts:
                     for rel in part.files():
-                        (out_dir / rel).parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(work / rel, out_dir / rel)
+                        link(work / rel, out_dir / rel)
                 self.parts_cache.store(outcome, declared[file], work, inputs[backend.name])
             return outcome, printed
 
-        # Every file to its end, the ones already running included, before saying a newer build superseded this one:
-        # what they built reaches the part cache for it, and nothing writes here once this build stops.
-        built = await asyncio.gather(*(one(n, file) for n, file in enumerate(files)), return_exceptions=True)
-        for raised in sorted(
-            (b for b in built if isinstance(b, BaseException)), key=lambda e: isinstance(e, Superseded)
-        ):
-            raise raised
-        log.extend(printed for _, printed in built if printed)  # type: ignore[misc]
-        return [outcome for outcome, _ in built]  # type: ignore[misc]
+        built = await _settled(*(one(n, file) for n, file in enumerate(files)))
+        log.extend(printed for _, printed in built if printed)
+        return [outcome for outcome, _ in built]
 
     def _geometry(self, spec: BuildSpec, out_dir: Path, outcome: FileOutcome, bp: BuiltPart) -> PartGeometry:
         mesh, step, objects = out_dir / bp.mesh, out_dir / bp.step if bp.step else None, out_dir / bp.objects
@@ -546,9 +578,8 @@ class BuildPipeline:
             shutil.rmtree(work, ignore_errors=True)
 
     def _files(self, built: BuiltDesign, out_dir: Path) -> list[Artifact]:
-        """What every build writes, for review: its sources, each part's own files and the 3D view."""
-        artifacts = [_artifact(out_dir, rel.relative_to(out_dir).as_posix(), "text/x-python", "source")
-                     for rel in sorted((out_dir / SOURCES).rglob("*.py"))]  # fmt: skip
+        """What every build writes, for review: each part's own files and the 3D view."""
+        artifacts = []
         for part in built.parts.values():
             artifacts.append(
                 _artifact(out_dir, part.mesh_file.relative_to(out_dir).as_posix(), "model/stl", "part_mesh")
@@ -561,6 +592,16 @@ class BuildPipeline:
                 _artifact(out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects")
             )
         return [*artifacts, _artifact(out_dir, cadview.SCENE_FILE, "application/json", "view")]
+
+
+async def _settled(*steps: Awaitable[Any]) -> list[Any]:
+    """What each step returned, every one run to its end, the ones already running included, before saying a newer
+    build superseded this one: what they built reaches the caches for it, and nothing writes here once this build
+    stops. Else what the first of them raised, a newer build only when nothing else stopped this one."""
+    done = await asyncio.gather(*steps, return_exceptions=True)
+    for raised in sorted((d for d in done if isinstance(d, BaseException)), key=lambda e: isinstance(e, Superseded)):
+        raise raised
+    return done
 
 
 def _run(analysis: Analysis, ctx: Context) -> list[Result]:

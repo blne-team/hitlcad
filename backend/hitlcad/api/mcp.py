@@ -52,6 +52,7 @@ Tools addressing a design take its folder's absolute path.
 
 def build_mcp(core: HitlCad) -> MCPServer:
     designs, builds, feedback, explore, registry = core.designs, core.builds, core.feedback, core.explore, core.registry
+    revisions = core.revisions
     mcp = MCPServer("hitlcad", instructions=INSTRUCTIONS)
 
     def guard(fn: Any) -> Any:
@@ -73,13 +74,13 @@ def build_mcp(core: HitlCad) -> MCPServer:
 
     async def previewed(design_id: str, rev: Revision) -> Path | None:
         """A revision's rendered views: its `preview` output, else rendered now and kept with it."""
-        directory = feedback.revision_dir(design_id, rev)
+        directory = await revisions.files(design_id, rev)
         if written := rev.report.artifact("preview"):
             return directory / written.path
         async with rendering[directory]:
             if (directory / PREVIEW_FILE).is_file():
                 return directory / PREVIEW_FILE
-            return await core.pipeline.preview(feedback.built(design_id, rev), directory, rev.report.metrics)
+            return await core.pipeline.preview(await revisions.built(design_id, rev), directory, rev.report.metrics)
 
     async def images(design_id: str, rev: Revision) -> list[str | Image]:
         out: list[str | Image] = []
@@ -88,7 +89,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         leads = [rev.report.results[p.findings[0].results[0]] for p in rev.report.problems if p.status == "fail"]
         failing = [r for r in leads if r.analysis in ("mate", "fastener", "relation")]  # one per problem
         if failing and rev.report.status == "succeeded":
-            built = feedback.built(design_id, rev)
+            built = await revisions.built(design_id, rev)
             for result in failing[:3]:
                 cut = joint_frames(built, result)
                 if cut is None:
@@ -105,7 +106,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         checks = {req.text: req.check for req in rev.spec.design.requirements if req.check} if rev.spec else {}
         pictured = [(r, checks[r.subject]) for r in leads if r.analysis == "requirement" and r.subject in checks]
         if pictured and rev.report.status == "succeeded":
-            bodies = BuildBodies(feedback.built(design_id, rev), core.pipeline.analysis_settings,
+            bodies = BuildBodies(await revisions.built(design_id, rev), core.pipeline.analysis_settings,
                                  core.pipeline.results_cache)  # fmt: skip
             for result, check in pictured:
                 if png := check.figure(bodies):
@@ -240,7 +241,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         "face 9 of lid[0]" is faces()[9] of build/parts/lid.step, placed."""
         state = designs.ensure(path)
         rev = feedback.built_revision(state.id, revision)
-        built = await asyncio.to_thread(feedback.built, state.id, rev)
+        built = await revisions.built(state.id, rev)
         return f"Revision {rev.id}\n" + await asyncio.to_thread(measure.list_geometry, built, target, kind)
 
     @mcp.tool(structured_output=False)
@@ -251,7 +252,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         "lid.screws[2]" (its origin, Z as direction), or a point "(0, 0, 10)" in mm."""
         state = designs.ensure(path)
         rev = feedback.built_revision(state.id, revision)
-        built = await asyncio.to_thread(feedback.built, state.id, rev)
+        built = await revisions.built(state.id, rev)
         return f"Revision {rev.id}\n" + await asyncio.to_thread(measure.measure, built, a, b)
 
     @mcp.tool(structured_output=False)

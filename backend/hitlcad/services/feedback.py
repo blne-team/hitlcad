@@ -4,28 +4,22 @@ their parts' B-rep or meshes, their connectors) and carried onto each new build.
 from __future__ import annotations
 
 import asyncio
-import threading
-from collections import OrderedDict
-from pathlib import Path
 from typing import Any
 
-from hitlcad.analysis.model import BuiltDesign, Shapes
 from hitlcad.core.events import PinsChanged, SelectionChanged
 from hitlcad.core.report import Revision
 from hitlcad.core.types import Pick, Pin, PinMotion, SelectionItem
 from hitlcad.kernel.errors import NOT_FOUND_PIN, NOT_FOUND_REVISION
 from hitlcad.review.anchors import AnchorSettings
 from hitlcad.services.designs import DesignService
+from hitlcad.services.revisions import RevisionFiles
 
 
 class FeedbackService:
-    def __init__(self, designs: DesignService, anchors: AnchorSettings, loaded: int, shapes: Shapes) -> None:
+    def __init__(self, designs: DesignService, anchors: AnchorSettings, revisions: RevisionFiles) -> None:
         self.designs = designs
         self.anchors = anchors
-        self.loaded = loaded  # built revisions kept in memory: picks and carries reload the same few
-        self.shapes = shapes  # the builds' part shapes: a revision loaded back shares those its files hold
-        self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
-        self._lock = threading.Lock()  # built() runs in worker threads
+        self.revisions = revisions
 
     # ------------------------------------------------------------------ builds of revisions
 
@@ -39,31 +33,11 @@ class FeedbackService:
             )
         return self.designs.revision(design_id, rev.id)
 
-    def revision_dir(self, design_id: str, rev: Revision) -> Path:
-        return self.designs.store.revision_dir(design_id, rev.id)
-
-    def built(self, design_id: str, rev: Revision) -> BuiltDesign:
-        from hitlcad.build.pipeline import load_built
-
-        key = (design_id, rev.id)
-        with self._lock:
-            built = self._loaded.get(key)
-        if built is None:  # loaded outside the lock: other builds stay available meanwhile
-            assert rev.spec is not None  # a revision that built
-            built = load_built(rev.report, rev.spec, Path(self.designs.get(design_id).path),
-                               self.revision_dir(design_id, rev), self.shapes)  # fmt: skip
-        with self._lock:
-            self._loaded[key] = built
-            self._loaded.move_to_end(key)
-            while len(self._loaded) > self.loaded:
-                self._loaded.popitem(last=False)
-        return built
-
     async def describe_picks(self, design_id: str, revision: int | None, picks: list[Pick]) -> list[SelectionItem]:
         from hitlcad.review.selection import describe_build_pick
 
         rev = self.built_revision(design_id, revision)
-        built = await asyncio.to_thread(self.built, design_id, rev)
+        built = await self.revisions.built(design_id, rev)
         items = []
         for pick in picks:
             item = await asyncio.to_thread(describe_build_pick, built, pick.point, pick.normal, pick.component)
@@ -77,7 +51,7 @@ class FeedbackService:
         from hitlcad.review.measure import measure
 
         rev = self.built_revision(design_id, revision)
-        built = await asyncio.to_thread(self.built, design_id, rev)
+        built = await self.revisions.built(design_id, rev)
         refs = []
         for pick in items:
             ref = pick.component
@@ -141,7 +115,7 @@ class FeedbackService:
         from hitlcad.review.anchors import carry
 
         state = self.designs.get(design_id)
-        target = await asyncio.to_thread(self.built, design_id, revision)
+        target = await self.revisions.built(design_id, revision)
         same = {r.id for r in state.revisions if r.configuration == revision.configuration}
         pins = [p for p in state.pins if not p.resolved and p.revision in same and p.revision != revision.id]
         items = [i for i in state.selection if i.revision in same and i.revision != revision.id]
@@ -155,7 +129,7 @@ class FeedbackService:
             picks = [
                 (Pick(point=x.point, normal=x.normal, component=x.component), x.connector, x.instance) for x in batch
             ]
-            built = await asyncio.to_thread(self.built, design_id, old)
+            built = await self.revisions.built(design_id, old)
             carried = await asyncio.to_thread(carry, built, target, picks, self.anchors)
             moved |= {x.id: pick for x, pick in zip(batch, carried, strict=True) if pick is not None}
         if not moved:

@@ -13,6 +13,7 @@ import { MODEL_VIEW_TYPE, ModelViewerProvider } from "./modelViewer";
 import { DesignPanels } from "./panels";
 import { usePython } from "./python";
 import { config, ServerManager, serverUrl } from "./server";
+import { trackSaves } from "./saving";
 import { registerStatusBar } from "./statusBar";
 import { SelectionStore } from "./webview";
 
@@ -34,6 +35,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
   );
 
   registerCommands(ctx, { api, server, panels, selections });
+  ctx.subscriptions.push(trackSaves(api));
   registerStatusBar(ctx);
   ctx.subscriptions.push(
     vscode.window.registerCustomEditorProvider(MODEL_VIEW_TYPE, new ModelViewerProvider(server, selections, ctx.extensionUri), {

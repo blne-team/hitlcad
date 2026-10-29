@@ -3,8 +3,8 @@ import * as path from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, openPanel, WORK, writeDesign } from "../helpers";
 
-/** An edit made on an earlier version merges with what was written since; two that changed the same value at once
- * are both kept, by rule, and the Design view says so until dismissed. */
+/** An edit made on an earlier version merges with what was written since; of two that changed the same value at
+ * once, the later is kept, and the Design view says so until dismissed. */
 
 const MODEL = `from build123d import *
 
@@ -35,6 +35,7 @@ test("a panel edit on an earlier version keeps an agent's write, and crossing it
   const now = await api<{ version: number }>("POST", `/api/designs/${id}/build`);
   fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace('"value": 40', '"value": 45'));  // the agent again
   await api("POST", `/api/designs/${id}/parameters`, { values: { width: 50 }, base: now.version });  // made before it
+  expect([45, 50]).toContain(JSON.parse(fs.readFileSync(file, "utf8")).parameters[0].value);  // one of them, whole
 
   await openPanel(page, { name: "inspector", id });
   const notice = page.getByRole("status", { name: "Edits that crossed" });

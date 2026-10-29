@@ -419,7 +419,7 @@ class Scene:
                 "loc": _loc(transform @ _frame(template["loc"]))}  # fmt: skip
 
     def write(self, tree: dict[str, Any], name: str = SCENE_FILE) -> None:
-        corners = np.vstack(self._corners)
+        corners = np.vstack(self._corners) if self._corners else np.zeros((1, 3))  # nothing placed: an empty scene
         lo, hi = corners.min(axis=0), corners.max(axis=0)
         tree["bb"] = {
             f"{axis}{end}": float(v[i]) for end, v in (("min", lo), ("max", hi)) for i, axis in enumerate("xyz")

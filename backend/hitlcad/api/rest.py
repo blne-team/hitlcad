@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import sys
@@ -31,6 +32,7 @@ from hitlcad.core.events import DesignState, Event, RevisionCreated
 from hitlcad.core.report import BuildStatus, Origin, Result, Revision
 from hitlcad.core.types import Pick, Pin, PinMotion, SelectionItem
 from hitlcad.geometry import cadview
+from hitlcad.hook import SERVER_FILE
 from hitlcad.kernel.errors import (
     FILE_UNREADABLE,
     NOT_FOUND_FILE,
@@ -127,6 +129,11 @@ class DescribeFilePick(Pick):
     path: str
 
 
+class Saving(BaseModel):
+    path: str = Field(description="The file an editor is about to save (absolute)")
+    read: str = Field(description="The sha256 of the file's content on disk when the editor's buffer was read")
+
+
 class MeasureSelection(BaseModel):
     revision: int
     items: tuple[Pick, Pick]
@@ -152,6 +159,10 @@ class EditParameters(BaseModel):
     values: dict[str, Any]
     base: int = Field(description="The version of the design's files the edit was made on (the revision on screen's): "
                       "what changed since is kept, the edit merged into it")  # fmt: skip
+
+
+class Revert(BaseModel):
+    version: int = Field(description="The step to take back: the latest of the design's `undo` (Undo) or `redo` (Redo)")
 
 
 class EditOutputs(BaseModel):
@@ -245,6 +256,7 @@ def design_summary(s: DesignState) -> DesignSummary:
 def create_app(core: HitlCad | None = None) -> FastAPI:
     core = core or HitlCad.create()
     designs, builds, feedback, settings = core.designs, core.builds, core.feedback, core.settings
+    revisions = core.revisions
     mcp = build_mcp(core)
     # The middleware below checks Host and Origin for /mcp as for every route, from one list of each.
     unchecked = TransportSecuritySettings(enable_dns_rebinding_protection=False)
@@ -252,10 +264,15 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        core.start()
-        async with mcp.session_manager.run():
-            yield
-        await core.shutdown()
+        await core.start()
+        served = core.settings.data_dir / SERVER_FILE  # where the agents' hook finds this server
+        served.write_text(json.dumps({"url": core.settings.base_url}), encoding="utf-8")
+        try:
+            async with mcp.session_manager.run():
+                yield
+        finally:
+            served.unlink(missing_ok=True)
+            await core.shutdown()
 
     app = FastAPI(title="hitlcad", version=version("hitlcad"), lifespan=lifespan)
     app.state.core = core
@@ -386,6 +403,12 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def edit_outputs(design_id: str, body: EditOutputs) -> Revision:
         return await builds.edit_outputs(design_id, body.outputs, body.base)
 
+    @app.post("/api/designs/{design_id}/revert", status_code=201)
+    async def revert(design_id: str, body: Revert) -> Revision:
+        """The panel's Undo or Redo: a panel edit, or an undo, taken back where it was, merged with what changed
+        since, then built."""
+        return await builds.revert(design_id, body.version)
+
     @app.get("/api/designs/{design_id}/revisions/{revision_id}")
     async def get_revision(design_id: str, revision_id: int) -> Revision:
         """A revision in full: what it built from and its report. The design's state lists them."""
@@ -398,7 +421,9 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         running = designs.get(design_id).building
         building = running if running is not None and running.revision == revision_id else None
         rev = None if building else designs.revision(design_id, revision_id)  # raises for one that does not exist
-        root = designs.store.revision_dir(design_id, revision_id).resolve()
+        root = (
+            await revisions.files(design_id, rev) if rev else designs.store.revision_dir(design_id, revision_id)
+        ).resolve()
         if building is not None:
             if path == building.scene:
                 return FileResponse(root / path, media_type="application/json")
@@ -452,7 +477,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.post("/api/agents/hook", response_class=PlainTextResponse)
     async def agent_hook(body: AgentHook) -> str:
         """An agent's hitlcad hook (`hitlcad.hook`): a prompt gets what the human points at and what changed in the
-        designs; a tool that can write a design's files is merged from the version it started on, and gets what
+        designs; what a tool that can write a design's files wrote is taken in as the agent's, and it gets what
         others changed while it ran."""
         return await core.sessions.hook(body.agent, body.event)
 
@@ -478,7 +503,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def agent_setup(path: str) -> agents.AgentSetup:
         """Whether the project has the agents' hooks and Codex's config, so the extension asks
         the human about what is missing."""
-        return agents.status(project_path(path))
+        return agents.status(project_path(path), sys.executable)
 
     def model_file(raw: str) -> Path:
         path = Path(raw).expanduser()
@@ -509,6 +534,12 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
             raise NOT_FOUND_FILE(f"no scene file {key}/{name}")
         media = "application/json" if name == cadview.SCENE_FILE else "application/octet-stream"
         return FileResponse(file, media_type=media)
+
+    @app.post("/api/files/saving", status_code=204)
+    async def saving(body: Saving) -> None:
+        """An editor is about to save a file: what it was read from, so a design's file is merged from there and the
+        edits written since stay."""
+        designs.saving(Path(body.path).expanduser().resolve(), body.read)
 
     @app.post("/api/files/describe")
     async def describe_file(body: DescribeFilePick) -> SelectionItem:

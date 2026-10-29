@@ -17,7 +17,7 @@ Unpack the hitlcad release (`hitlcad-<version>.tar.gz`) and run `./install.sh`, 
    - `CLAUDE.md` and `AGENTS.md`, which point the agents at hitlcad's skills
    - `.claude/skills/` and `.agents/skills/`, hitlcad's skills for Claude Code and Codex: how to work with designs, and the code contract of each backend
    - `.gitignore`
-   - if you allow it (hitlcad asks first): a hook that adds your selection and open pins to each message you send, and around the agent's file reads, edits and shell commands merges its edits with yours and tells it what you changed, in `.claude/settings.local.json` (your own Claude Code settings, not committed) and in Codex's user `~/.codex/hooks.json` (it adds nothing in folders without designs), and for Codex, hitlcad's MCP server in `~/.codex/config.toml`. Codex then asks you once to approve the hook (`/hooks`).
+   - if you allow it (hitlcad asks first): a hook that adds your selection and open pins to each message you send, and around the agent's file edits and shell commands merges its edits with yours and tells it what you changed, in `.claude/settings.local.json` (your own Claude Code settings, not committed) and in Codex's user `~/.codex/hooks.json` (it adds nothing in folders without designs), and for Codex, hitlcad's MCP server in `~/.codex/config.toml`. Codex then asks you once to approve the hook (`/hooks`).
 
    Existing files are kept, except hitlcad's own `hitlcad*` skills, which are brought up to date.
 3. Choose **Open Project**. The extension points VS Code's Python at the interpreter hitlcad builds with, so part files resolve `build123d`: through the Python extension, which keeps that choice for you in this workspace rather than in a committed file.
@@ -32,7 +32,7 @@ The extension starts the server (`hitlcad serve`) when it is needed. It stops it
 4. **Review in the panel.** The design's tab shows the 3D assembly; its Pins, Structure, Parameters, Changes, Results, BOM and Brief are in the **hitlcad › Design** view (bottom panel by default; drag it to either sidebar like any VS Code view). The view follows the design tab you are looking at.
    - **Results**: what every build verified, by analysis: mates and fits, relations (gears), fastener sets (seating, clearance, thread engagement), collisions (also through each mate's range of motion), manufacturability per process, requirements.
    - **Structure**: the parts and components, and the mates, relations and fastener sets between them, coloured by their results. Click a part to select it.
-   - **Parameters**: tune them with sliders (written to `design.json` and rebuilt), and switch between configurations, the design's variants.
+   - **Parameters**: tune them with sliders (written to `design.json` and rebuilt), and switch between configurations, the design's variants. **Undo** and **Redo** (↶ ↷ in the design's tab, or Ctrl+Z and Ctrl+Shift+Z, ⌘ on macOS) take back your panel edits; what the agent wrote since stays.
    - **Compare** with an earlier revision (ghost overlay; the **Changes** tab lists parameters, size, results that changed and every file's diff).
    - **BOM**: the bill of materials, made and bought, with quantities.
    - Place pins with notes, then tell the agent *"address my pins"*. It resolves them when done.

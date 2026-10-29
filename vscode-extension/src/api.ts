@@ -16,6 +16,9 @@ export type AgentSetup = Schemas["AgentSetup"];
 /** What the human allowed of the agent setup. */
 export type Allowed = Pick<AgentSetup, "hooks" | "codex">;
 
+/** How long a save waits for the server to hear what it was read from: a save is never held up for long. */
+const SAVING_WAIT_MS = 1000;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -47,6 +50,8 @@ export class Api {
   createProject = (path: string, allowed: Allowed) => this.request<ProjectCreated>("POST", "/api/projects", { path, ...allowed });
   agentSetup = (path: string) => this.request<AgentSetup>("GET", `/api/projects/agents?path=${encodeURIComponent(path)}`);
   /** Selections and open pins of the designs under `root`, as chat text ("" when there are none). */
+  /** An editor is about to save `path`, from a buffer read when the file's sha256 was `read`. */
+  saving = (path: string, read: string) => this.send("POST", "/api/files/saving", { path, read }, SAVING_WAIT_MS).then(() => undefined);
   context = (root: string) => this.send("GET", `/api/context?root=${encodeURIComponent(root)}`).then((res) => res.text());
   /** A revision's file, by its path in the revision. */
   revisionFile = async (file: RevisionFile) => {

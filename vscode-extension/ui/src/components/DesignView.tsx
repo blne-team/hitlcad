@@ -5,6 +5,7 @@ import { useDesign } from "../hooks/useDesign";
 import { useShown } from "../hooks/useRevision";
 import { useSelection } from "../hooks/useSelection";
 import { useScene } from "../hooks/useScene";
+import { MOD, useUndo } from "../hooks/useUndo";
 import { type CadMarker, exactShapes } from "../lib/cadView";
 import { rangeAt, shown } from "../lib/motion";
 import { currentRevision, shownBuild, useDesignUi, type InspectorTab } from "../lib/designUi";
@@ -38,6 +39,7 @@ function viewOf(designId: string, revision: Revision | null): { url: string | nu
 export function DesignView({ id }: { id: string }) {
   const live = useDesign(id);
   const { state } = live;
+  const steps = useUndo(id, state);
   const [ui, setUi] = useDesignUi();
   // A view error belongs to the view it came from: another revision's view starts without one
   const [viewError, setViewError] = useState<{ url: string | null; message: string } | null>(null);
@@ -140,6 +142,16 @@ export function DesignView({ id }: { id: string }) {
           <StatusLine design={state} connected={live.connected} />
         </div>
         <div className="stage-actions" role="toolbar" aria-label="Design">
+          <div className="undo-redo">
+            <button type="button" className="icon-button" aria-label="Undo" disabled={!steps.undo} onClick={() => steps.revert(steps.undo)}
+              title={steps.undo ? `Undo ${steps.undo.summary} (${MOD}Z)` : "Undo: no panel edit to take back"}>
+              ↶
+            </button>
+            <button type="button" className="icon-button" aria-label="Redo" disabled={!steps.redo} onClick={() => steps.revert(steps.redo)}
+              title={steps.redo ? `Redo ${steps.redo.summary} (${MOD}Shift+Z)` : "Redo: nothing undone to make again"}>
+              ↷
+            </button>
+          </div>
           <div className="rev-switch">
             <button
               type="button"
@@ -218,6 +230,7 @@ export function DesignView({ id }: { id: string }) {
         )}
         {modelError && <p className="viewport-message fail">{modelError}</p>}
         {pinError && <p className="viewport-message fail">{pinError}</p>}
+        {steps.error && <p className="viewport-message fail">{steps.error}</p>}
 
         {data !== null && !modelError && !building && revision && revision.report.motions.length > 0 && (
           <MotionControl key={revision.id} designId={id} revision={revision} watched={state.watched} at={ui.motion}

@@ -44,6 +44,8 @@ export const api = {
     send<Revision>("POST", `/api/designs/${id}/parameters`, { values, base }),
   editOutputs: (id: string, outputs: string[], base: number) =>
     send<Revision>("POST", `/api/designs/${id}/outputs`, { outputs, base }),
+  /** Undo or Redo: takes back the latest step of the design's `undo` or `redo`, merged with what changed since. */
+  revert: (id: string, version: number) => send<Revision>("POST", `/api/designs/${id}/revert`, { version }),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
   structure: (id: string, configuration: string | null) =>
     request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),

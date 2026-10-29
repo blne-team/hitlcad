@@ -58,8 +58,10 @@ class DesignFolder:
                                                                    for f in r.check.files()})}  # fmt: skip
 
     def spec(self, files: Files, defaults: Tolerances, configuration: str | None = None, *,
-             _stack: tuple[Path, ...] = ()) -> BuildSpec:  # fmt: skip
-        """What a build of the design's files depends on, with its components' specs."""
+             plugins: dict[str, str] | None = None, _stack: tuple[Path, ...] = ()) -> BuildSpec:  # fmt: skip
+        """What a build of the design's files depends on, with its components' specs: with the plugins installed
+        for a build now, and with a revision's own (`BuiltFrom.plugins`) to make its spec again."""
+        plugins = registry().versions() if plugins is None else plugins
         mine = files(self.path)
         design = self.load(mine.design if mine else None)
         assert mine is not None
@@ -73,13 +75,13 @@ class DesignFolder:
             if files(child.path) is None:
                 raise BUILD_COMPONENT(f"component {name}: no {DESIGN_FILE} in {child.path}", where)
             try:
-                components[name] = child.spec(files, defaults, _stack=(*_stack, self.path))
+                components[name] = child.spec(files, defaults, plugins=plugins, _stack=(*_stack, self.path))
             except HitlcadError as e:
                 raise BUILD_COMPONENT(f"component {name} ({use.design}): {e.diagnostic.message}", where) from None
         return BuildSpec(design=design, sources=mine.sources(), assets=mine.vendor(), checked=self.checked(design, mine),
                          configuration=configuration,
                          tolerances=design.verification.resolve(defaults), components=components,
-                         plugins=registry().versions())  # fmt: skip
+                         plugins=plugins)  # fmt: skip
 
     def components(self, files: Snapshot) -> list[Path]:
         """The folders of the designs this one uses."""
@@ -101,7 +103,7 @@ class DesignFolder:
         staging.mkdir()
         written = []
         for artifact in report.artifacts:
-            if artifact.role != "source" and (revision_dir / artifact.path).is_file():  # the sources are here already
+            if (revision_dir / artifact.path).is_file():
                 (staging / artifact.path).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(revision_dir / artifact.path, staging / artifact.path)
                 written.append(artifact.path)

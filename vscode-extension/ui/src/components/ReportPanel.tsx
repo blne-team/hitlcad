@@ -9,6 +9,10 @@ import { OutputsChoice } from "./OutputsChoice";
 export const MARK = { pass: "✓", fail: "✗", unverified: "?" } as const;
 const WARNING = "!";
 const order = { fail: 0, unverified: 1, pass: 2 } as const;
+/** What the human did in the panel that made a revision. */
+const ORIGINS: Partial<Record<Revision["origin"], string>> = {
+  parameter_edit: ", from your parameter edit", outputs_edit: ", from your choice of outputs", undo: ", from your undo", redo: ", from your redo",
+};
 
 const rowClass = (r: Pick<Result, "status" | "severity">) =>
   r.status === "pass" ? "pass" : r.status === "unverified" || r.severity === "info" ? "miss sev-info" : `miss sev-${r.severity}`;
@@ -188,7 +192,7 @@ export function ReportPanel({ designId, revision, building, onInspect }: {
         </strong>{" "}
         <span className="muted">
           in {report.duration_s.toFixed(1)} s{report.configuration ? `, configuration ${report.configuration}` : ""}
-          {revision.origin === "parameter_edit" ? ", from your parameter edit" : revision.origin === "outputs_edit" ? ", from your choice of outputs" : ""}
+          {ORIGINS[revision.origin]}
         </span>
       </p>
       {report.results.length > 0 && <p className="tally">{report.tally.text}</p>}

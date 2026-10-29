@@ -7,14 +7,14 @@ function who(origin: string): string {
   return origin === "disk" ? "a save to the folder" : "hitlcad";
 }
 
-/** Edits that changed the same text at once: the merge kept both, by rule, so the human looks at what it made. Shown
+/** Edits that changed the same text at once: the later one was kept, so the human looks at what it kept. Shown
  * until dismissed (`seen`: the version dismissed up to). */
 export function CrossedEdits({ state, seen, onSeen }: { state: DesignState; seen: number; onSeen: (version: number) => void }) {
   const unseen = state.crossed.filter((x) => x.version > seen);
   if (!unseen.length) return null;
   return (
     <section className="notice crossed" role="status" aria-label="Edits that crossed">
-      <p>Two edits changed the same text at once, and the merge kept both. Check what it made:</p>
+      <p>Two edits changed the same text at once, and the later one was kept. Check that it is what you want:</p>
       <ul>
         {unseen.flatMap((x) =>
           x.crossed.map((c) => (

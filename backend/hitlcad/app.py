@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hitlcad.analysis.base import Analysis, default_analyses
 from hitlcad.backends.registry import BackendRegistry
-from hitlcad.build.pipeline import BuildPipeline
+from hitlcad.build.pipeline import Blobs, BuildPipeline
 from hitlcad.config import Settings, get_settings
 from hitlcad.exporters import Exporter, discover
 from hitlcad.render.base import Renderer, preview_renderer
@@ -19,6 +19,7 @@ from hitlcad.services.context import ContextFeed
 from hitlcad.services.designs import DesignService
 from hitlcad.services.explore import ExploreService
 from hitlcad.services.feedback import FeedbackService
+from hitlcad.services.revisions import RevisionFiles
 from hitlcad.services.sessions import AgentSessions
 from hitlcad.services.watcher import FolderWatcher
 from hitlcad.store.sqlite import SqliteStore
@@ -27,15 +28,17 @@ from hitlcad.store.sqlite import SqliteStore
 def build_pipeline(
     settings: Settings,
     *,
+    blobs: Blobs,
     registry: BackendRegistry | None = None,
     renderer: Renderer | None = None,
     analyses: Sequence[Analysis] | None = None,
     exporters: dict[str, Exporter] | None = None,
 ) -> BuildPipeline:
-    """The build pipeline, whatever is not given from ``settings``: the server's, and ``hitlcad build``'s."""
+    """The build pipeline, whatever is not given from ``settings``: the server's (`blobs`: its store's), and
+    ``hitlcad build``'s (the folder's, as it read them)."""
     return BuildPipeline(registry or BackendRegistry.from_settings(settings), settings,
                          default_analyses() if analyses is None else analyses,
-                         discover() if exporters is None else exporters, renderer or preview_renderer(settings))  # fmt: skip
+                         discover() if exporters is None else exporters, blobs, renderer or preview_renderer(settings))  # fmt: skip
 
 
 @dataclass
@@ -44,6 +47,7 @@ class HitlCad:
     registry: BackendRegistry
     pipeline: BuildPipeline
     designs: DesignService
+    revisions: RevisionFiles
     builds: BuildService
     feedback: FeedbackService
     explore: ExploreService
@@ -66,22 +70,26 @@ class HitlCad:
         """Defaults come from ``settings``; tests replace the backends (theirs to close: they outlive the server),
         the renderer and the analyses."""
         settings = settings or get_settings()
-        pipeline = build_pipeline(settings, registry=registry, renderer=renderer, analyses=analyses,
+        store = SqliteStore(settings.data_dir)
+        pipeline = build_pipeline(settings, blobs=store.blob, registry=registry, renderer=renderer, analyses=analyses,
                                   exporters=exporters)  # fmt: skip
-        designs = DesignService(SqliteStore(settings.data_dir), pipeline.registry, settings.loaded_revisions)
+        designs = DesignService(store, pipeline.registry, settings.loaded_revisions)
+        revisions = RevisionFiles(designs, pipeline, settings.loaded_builds)
         feedback = FeedbackService(designs, AnchorSettings(reach=settings.anchor_reach, tie=settings.anchor_tie,
-                                                           aligned_deg=settings.anchor_aligned_deg),
-                                   settings.loaded_builds, pipeline.shapes)  # fmt: skip
-        builds = BuildService(designs, pipeline, feedback, settings)
+                                                           aligned_deg=settings.anchor_aligned_deg), revisions)  # fmt: skip
+        builds = BuildService(designs, pipeline, revisions, feedback, settings)
         context = ContextFeed(designs)
         sessions = AgentSessions(designs, builds, context)
-        return cls(settings, pipeline.registry, pipeline, designs, builds, feedback, ExploreService(designs, settings),
+        return cls(settings, pipeline.registry, pipeline, designs, revisions, builds, feedback, ExploreService(designs, settings),
                    context, sessions, FolderWatcher(designs, builds, sessions), registry is None)  # fmt: skip
 
-    def start(self) -> None:
+    async def start(self) -> None:
+        """Warm the backends, watch the design folders and take in what was written to them while no server ran,
+        before anything reads a design."""
         for backend in self.registry.all():
             backend.warm()
         self.watcher.start()
+        await self.watcher.catch_up()
 
     async def shutdown(self) -> None:
         """Once; again, nothing."""

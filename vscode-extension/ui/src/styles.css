@@ -350,7 +350,8 @@ code {
   align-items: center;
 }
 
-.rev-switch {
+.rev-switch,
+.undo-redo {
   display: flex;
   align-items: center;
   border: 1px solid var(--rule);

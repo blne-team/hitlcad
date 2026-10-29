@@ -144,6 +144,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/designs/{design_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert
+         * @description The panel's Undo or Redo: a panel edit, or an undo, taken back where it was, merged with what changed
+         *     since, then built.
+         */
+        post: operations["revert_api_designs__design_id__revert_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/designs/{design_id}/revisions/{revision_id}": {
         parameters: {
             query?: never;
@@ -323,7 +344,7 @@ export interface paths {
         /**
          * Agent Hook
          * @description An agent's hitlcad hook (`hitlcad.hook`): a prompt gets what the human points at and what changed in the
-         *     designs; a tool that can write a design's files is merged from the version it started on, and gets what
+         *     designs; what a tool that can write a design's files wrote is taken in as the agent's, and it gets what
          *     others changed while it ran.
          */
         post: operations["agent_hook_api_agents_hook_post"];
@@ -405,6 +426,27 @@ export interface paths {
         get: operations["cad_scene_file_api_files_cad__key___name__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/saving": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Saving
+         * @description An editor is about to save a file: what it was read from, so a design's file is merged from there and the
+         *     edits written since stay.
+         */
+        post: operations["saving_api_files_saving_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -525,12 +567,12 @@ export interface components {
             media_type: string;
             /**
              * Role
-             * @description source, mesh, exchange, native, view, part_mesh, part_exchange, objects, preview, log, report, or an exporter's name
+             * @description view, part_mesh, part_exchange, objects, log, or the output that wrote it (design.json `outputs`: step, stl, native, preview, an exporter's name)
              */
             role: string;
             /**
              * Label
-             * @description What the file is, for the panel's file list; empty for the files it shows its own way (sources, the 3D view, the preview)
+             * @description What the file is, for the panel's file list; empty for the files it shows its own way (the 3D view, the preview)
              * @default
              */
             label: string;
@@ -723,7 +765,7 @@ export interface components {
             duration_s: number;
             /**
              * Durations
-             * @description Seconds each step took, in the order they ran: the plan, components, part files, the scene, measuring connectors, each analysis by its name, the report and the outputs; a build that fails stops early
+             * @description Seconds each step took, in the order they started (components and part files run at once, each counting its own time): the plan, components, part files, the scene, measuring connectors, each analysis by its name, the report and the outputs; a build that fails stops early
              */
             durations: {
                 [key: string]: number;
@@ -823,6 +865,30 @@ export interface components {
          * @enum {string}
          */
         BuildStatus: "succeeded" | "failed";
+        /**
+         * BuiltFrom
+         * @description What a revision built, by reference: the design's files and each component's are their documents' at a
+         *     version; beside them, what the build took from this hitlcad. Its spec is made again from these, as it was made
+         *     for the build (`DesignFolder.spec`): a revision keeps no copy of the files.
+         */
+        BuiltFrom: {
+            /**
+             * Files
+             * @description Each design folder it read, its own and its components': path -> its files
+             */
+            files: {
+                [key: string]: components["schemas"]["DocumentAt"];
+            };
+            /** @description hitlcad's default tolerances, which design.json `verification` refines */
+            tolerances: components["schemas"]["Tolerances"];
+            /**
+             * Plugins
+             * @description The installed plugins it was built with: distribution -> version
+             */
+            plugins: {
+                [key: string]: string;
+            };
+        };
         /**
          * CamRelation
          * @description A cam (a: Z along its axis, X where its law's angle is 0) lifting a follower (b: at the point its lift is
@@ -945,6 +1011,18 @@ export interface components {
             metadata: {
                 [key: string]: number | boolean | string;
             };
+        };
+        /**
+         * ChangedLine
+         * @description A line an edit changed: its number and text in the version the edit made; empty where it removed lines.
+         */
+        ChangedLine: {
+            /** Path */
+            path: string;
+            /** Line */
+            line: number;
+            /** Now */
+            now: string;
         };
         /**
          * ClearanceCheck
@@ -1121,7 +1199,7 @@ export interface components {
         };
         /**
          * CrossedEdit
-         * @description Where two edits made on the same version changed the same text: the merge kept both, by rule.
+         * @description Where two edits made on the same version changed the same text: the one merged later is kept.
          */
         CrossedEdit: {
             /** Path */
@@ -1353,6 +1431,16 @@ export interface components {
              * @description The latest 20 edits that crossed others
              */
             crossed: components["schemas"]["EditsCrossed"][];
+            /**
+             * Undo
+             * @description The panel edits Undo takes back, latest last
+             */
+            undo: components["schemas"]["PanelEdit"][];
+            /**
+             * Redo
+             * @description The undos Redo takes back, latest last
+             */
+            redo: components["schemas"]["PanelEdit"][];
         };
         /** DesignSummary */
         DesignSummary: {
@@ -1404,6 +1492,19 @@ export interface components {
             note: string;
         };
         /**
+         * DocumentAt
+         * @description A design's files at one version of its document, which hitlcad keeps.
+         */
+        DocumentAt: {
+            /**
+             * Design
+             * @description The design's id
+             */
+            design: string;
+            /** Version */
+            version: number;
+        };
+        /**
          * DocumentChanged
          * @description The design's files changed: a new version of its document, made by `origin` (the folder it was read from,
          *     a new design's files, the panel, an agent session, or a write to the folder by someone else).
@@ -1442,6 +1543,22 @@ export interface components {
              * @default
              */
             summary: string;
+            /**
+             * Reverts
+             * @description The version it took back: the panel's Undo or Redo
+             */
+            reverts: number | null;
+            /**
+             * Lines
+             * @description The first 5 lines it changed
+             */
+            lines: components["schemas"]["ChangedLine"][];
+            /**
+             * More
+             * @description How many more lines it changed
+             * @default 0
+             */
+            more: number;
         };
         /** EditOutputs */
         EditOutputs: {
@@ -2323,6 +2440,22 @@ export interface components {
             summary: string;
         };
         /**
+         * PanelEdit
+         * @description An edit the human made in the panel, which Undo takes back, or an Undo, which Redo takes back.
+         */
+        PanelEdit: {
+            /**
+             * Version
+             * @description The version that made it: what Undo or Redo takes back
+             */
+            version: number;
+            /**
+             * Summary
+             * @description The panel edit, as its change says
+             */
+            summary: string;
+        };
+        /**
          * ParamSpec
          * @description A named, user-tunable input of a parametric model.
          */
@@ -2773,6 +2906,14 @@ export interface components {
              */
             cause: string;
         };
+        /** Revert */
+        Revert: {
+            /**
+             * Version
+             * @description The step to take back: the latest of the design's `undo` (Undo) or `redo` (Redo)
+             */
+            version: number;
+        };
         /** Revision */
         Revision: {
             /** Id */
@@ -2786,12 +2927,14 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
             /** Parent */
             parent: number | null;
             /** Configuration */
             configuration: string | null;
             /** @description What it built from; none when design.json did not validate */
+            built: components["schemas"]["BuiltFrom"] | null;
+            /** @description Its build spec, made again from `built`; not stored */
             spec: components["schemas"]["BuildSpec"] | null;
             /**
              * Version
@@ -2821,7 +2964,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
             /**
              * Parent
              * @description The configuration's latest successful revision before it
@@ -2920,6 +3063,19 @@ export interface components {
              * @default 0
              */
             offset: number;
+        };
+        /** Saving */
+        Saving: {
+            /**
+             * Path
+             * @description The file an editor is about to save (absolute)
+             */
+            path: string;
+            /**
+             * Read
+             * @description The sha256 of the file's content on disk when the editor's buffer was read
+             */
+            read: string;
         };
         /**
          * ScrewRelation
@@ -3441,6 +3597,29 @@ export interface components {
              */
             index: number;
         };
+        /**
+         * DesignMoved
+         * @description The design's folder was moved or renamed: found at `path` with exactly the files it had.
+         */
+        DesignMoved: {
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "design_moved";
+            /** Path */
+            path: string;
+        };
         /** DesignOpened */
         DesignOpened: {
             /**
@@ -3597,7 +3776,7 @@ export interface components {
             /** Items */
             items: components["schemas"]["SelectionItem"][];
         };
-        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildProgress"] | components["schemas"]["BuildStopped"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["DocumentChanged"] | components["schemas"]["EditsCrossed"] | components["schemas"]["FeedbackDelivered"];
+        DesignEvent: components["schemas"]["DesignOpened"] | components["schemas"]["DesignMoved"] | components["schemas"]["DesignUpdated"] | components["schemas"]["BuildProgress"] | components["schemas"]["BuildStopped"] | components["schemas"]["RevisionCreated"] | components["schemas"]["ErrorRaised"] | components["schemas"]["SelectionChanged"] | components["schemas"]["PinsChanged"] | components["schemas"]["MotionsWatched"] | components["schemas"]["DocumentChanged"] | components["schemas"]["EditsCrossed"] | components["schemas"]["FeedbackDelivered"];
         /**
          * BuildActivity
          * @description A build that finished, one message of the /api/activity WebSocket.
@@ -3626,7 +3805,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
             /** @description What a failed build failed on: the result that leads its first problem */
             failure: components["schemas"]["Result"] | null;
         };
@@ -3889,6 +4068,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["EditOutputs"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revert_api_designs__design_id__revert_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Revert"];
             };
         };
         responses: {
@@ -4400,6 +4614,37 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    saving_api_files_saving_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Saving"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -18,7 +18,7 @@ from hitlcad.core.design import DesignSpec
 from hitlcad.kernel import plugins
 from hitlcad.kernel.errors import HitlcadError, catalog
 from hitlcad.kernel.plugins import Registry, hookimpl, registry
-from hitlcad.workspace.document import Snapshot
+from hitlcad.workspace.document import Scanned
 from hitlcad.workspace.folder import DesignFolder
 
 from .conftest import write_design
@@ -111,7 +111,7 @@ async def test_a_plugin_s_process_and_building_block_build_and_its_failures_are_
     from hitlcad_lasercut.process import LaserCutProcess
 
     folder = write_design(tmp_path / "plate", PLATE)
-    spec = DesignFolder(folder).spec(Snapshot.scan, core.settings.tolerances)
+    spec = DesignFolder(folder).spec(Scanned(), core.settings.tolerances)
     assert spec.plugins == {"hitlcad-lasercut": "0.1.0"}
     report = await core.pipeline.run(spec, folder, tmp_path / "out")  # the part file imports the plugin's block
     assert report.status == "succeeded", report.lead()

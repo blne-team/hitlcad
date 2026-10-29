@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from hitlcad.analysis.base import reported
@@ -24,11 +25,21 @@ from hitlcad.build.pipeline import BuildPipeline
 from hitlcad.config import Settings
 from hitlcad.core.design import DESIGN_FILE
 from hitlcad.core.events import BuildProgress, BuildStopped, ErrorRaised, MotionsWatched
-from hitlcad.core.report import BuildReport, BuildSpec, BuildStatus, Result, Revision, results_key
+from hitlcad.core.report import (
+    BuildReport,
+    BuildSpec,
+    BuildStatus,
+    BuiltFrom,
+    DocumentAt,
+    Result,
+    Revision,
+    results_key,
+)
 from hitlcad.core.types import WatchedMotion, apply_values, utcnow
 from hitlcad.kernel.errors import (
     DESIGN_UNREADABLE,
     EXPORT_FAILED,
+    NOT_UNDOABLE,
     OUTPUT_UNKNOWN,
     PARAMETER_INVALID,
     REQUEST_INVALID,
@@ -38,7 +49,8 @@ from hitlcad.kernel.errors import (
 )
 from hitlcad.services.designs import DesignService, readable
 from hitlcad.services.feedback import FeedbackService
-from hitlcad.workspace.document import Document, json_set
+from hitlcad.services.revisions import RevisionFiles
+from hitlcad.workspace.document import Document, Snapshot, json_set
 from hitlcad.workspace.folder import DesignFolder, load_design
 
 log = logging.getLogger(__name__)
@@ -47,10 +59,11 @@ DEBOUNCE_MS = 400
 
 
 class BuildService:
-    def __init__(self, designs: DesignService, pipeline: BuildPipeline, feedback: FeedbackService,
-                 settings: Settings) -> None:  # fmt: skip
+    def __init__(self, designs: DesignService, pipeline: BuildPipeline, revisions: RevisionFiles,
+                 feedback: FeedbackService, settings: Settings) -> None:  # fmt: skip
         self.designs = designs
         self.pipeline = pipeline
+        self.revisions = revisions
         self.feedback = feedback
         self.settings = settings
         self._built: dict[str, str] = {}  # design id -> spec key of the last build of its default configuration
@@ -59,15 +72,28 @@ class BuildService:
         self._pending: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
 
-    def _load(self, design_id: str, configuration: str | None) -> tuple[int, BuildSpec | list[Result]]:
-        """The version of the design's files and their build spec, its design.json synced into the log; or, when the
-        files do not make one, the results that say why."""
+    def _load(
+        self, design_id: str, configuration: str | None
+    ) -> tuple[int, BuildSpec | list[Result], BuiltFrom | None]:
+        """The version of the design's files, their build spec and what it was made from (the files of each design
+        folder it read, by version), its design.json synced into the log; or, when the files do not make one, the
+        results that say why."""
         files, folder = self.designs.files(design_id), self.designs.folder(design_id)
+        read = {folder.path: DocumentAt(design=design_id, version=files.version)}
+
+        def at(path: Path) -> Snapshot | None:
+            if path == folder.path:
+                return files
+            if (other := self.designs.design_at(path)) is None:
+                return None
+            found = self.designs.files(other)
+            read[path] = DocumentAt(design=other, version=found.version)
+            return found
+
         try:
-            spec = folder.spec(lambda path: files if path == folder.path else self.designs.files_at(path),
-                               self.settings.tolerances, configuration)  # fmt: skip
+            spec = folder.spec(at, self.settings.tolerances, configuration)
         except DesignInvalid as e:
-            return files.version, [reported("build", p) for p in e.problems]
+            return files.version, [reported("build", p) for p in e.problems], None
         except (OSError, HitlcadError) as e:  # a component's folder that does not read
             d = (
                 DESIGN_UNREADABLE.diagnostic(f"cannot read a component of {folder.path}: {e}")
@@ -75,11 +101,13 @@ class BuildService:
                 else e.diagnostic
             )
             if d.owner == "design":  # a component's
-                return files.version, [reported("build", d)]
+                return files.version, [reported("build", d)], None
             self.designs.emit(design_id, ErrorRaised(diagnostic=d))  # a plugin missing: the panel says so
             raise HitlcadError(d) from e
         self.designs.sync(design_id, spec.design)
-        return files.version, spec
+        built = BuiltFrom(files={str(path): at for path, at in read.items()}, tolerances=self.settings.tolerances,
+                          plugins=spec.plugins)  # fmt: skip
+        return files.version, spec, built
 
     async def build(self, design_id: str, summary: str = "", origin: str = "file",
                     configuration: str | None = None) -> Revision:  # fmt: skip
@@ -91,7 +119,7 @@ class BuildService:
         await self._supersede(design_id, configuration)
         try:
             async with self._locks[design_id]:
-                version, spec = self._load(design_id, configuration)
+                version, spec, built = self._load(design_id, configuration)
                 if isinstance(spec, list):
                     return self._invalid(design_id, version, spec, summary, origin, configuration)
                 if not spec.design.parts and not spec.design.components:
@@ -99,7 +127,7 @@ class BuildService:
                 if configuration is not None and configuration not in spec.design.configurations:
                     raise REQUEST_INVALID(f"no configuration {configuration!r}; configurations: "
                                           + (", ".join(spec.design.configurations) or "none"))  # fmt: skip
-                return await self._run(design_id, folder, version, spec, summary, origin)
+                return await self._run(design_id, folder, version, spec, built, summary, origin)
         except Superseded:
             async with self._locks[design_id]:  # the build of the newer files holds the design until it is done
                 state = self.designs.get(design_id)
@@ -117,22 +145,21 @@ class BuildService:
 
     async def check_structure(self, design_id: str) -> tuple[list[Result], PlanOutcome | None]:
         await self.designs.take_in(design_id)
-        _, spec = self._load(design_id, None)
+        _, spec, _ = self._load(design_id, None)
         if isinstance(spec, list):
             return spec, None
         work = self.settings.cache_dir / "structure" / design_id
         return await self.pipeline.check_structure(spec, self.designs.folder(design_id).path, work)
 
     async def rebuild(self, design_id: str) -> Revision | None:
-        """Build after the files changed; None when there are no parts yet or the files are the last build's (one
-        before the server started included)."""
+        """Build after the files changed (taken in by whoever scheduled it); None when there are no parts yet or the
+        files are the last build's (one before the server started included)."""
         folder = self.designs.folder(design_id)
-        await self.designs.take_in(design_id)
         await self._supersede(design_id, None)
         async with self._locks[design_id]:
             if design_id not in self._built and (latest := self.designs.get(design_id).latest(None)):
                 self._built[design_id] = latest.key  # type: ignore[assignment]
-            version, spec = self._load(design_id, None)
+            version, spec, built = self._load(design_id, None)
             if isinstance(spec, list):
                 key = results_key(spec)
                 if self._built.get(design_id) == key:
@@ -142,7 +169,9 @@ class BuildService:
             if not spec.design.parts and not spec.design.components or self._built.get(design_id) == spec.key:
                 return None
             try:
-                return await self._run(design_id, folder, version, spec, "Rebuilt after the files changed", "file")
+                return await self._run(
+                    design_id, folder, version, spec, built, "Rebuilt after the files changed", "file"
+                )
             except Superseded:
                 return None
 
@@ -151,7 +180,7 @@ class BuildService:
         running = self._running.get((design_id, configuration))
         if running is None:
             return
-        _, spec = self._load(design_id, configuration)
+        _, spec, _ = self._load(design_id, configuration)
         if isinstance(spec, list) or spec.key != running.key:
             await self.pipeline.registry.supersede(running)
 
@@ -161,14 +190,14 @@ class BuildService:
         state = self.designs.get(design_id)
         previous = state.latest(configuration)
         report = BuildReport(status=BuildStatus.FAILED, configuration=configuration, duration_s=0.0, results=results)
-        revision = Revision(id=len(state.revisions) + 1, origin=origin, configuration=configuration, spec=None,  # type: ignore[arg-type]
+        revision = Revision(id=len(state.revisions) + 1, origin=origin, configuration=configuration,  # type: ignore[arg-type]
                             version=version, report=report, summary=summary,
                             parent=previous.id if previous else None)  # fmt: skip
         self.designs.add_revision(design_id, revision)
         return revision
 
-    async def _run(self, design_id: str, folder: DesignFolder, version: int, spec: BuildSpec, summary: str,
-                   origin: str) -> Revision:  # fmt: skip
+    async def _run(self, design_id: str, folder: DesignFolder, version: int, spec: BuildSpec, built: BuiltFrom | None,
+                   summary: str, origin: str) -> Revision:  # fmt: skip
         designs = self.designs
         if spec.configuration is None:
             self._built[design_id] = spec.key
@@ -196,13 +225,14 @@ class BuildService:
             if self._running.get((design_id, spec.configuration)) is ticket:
                 del self._running[design_id, spec.configuration]
         previous = state.latest(spec.configuration)
-        revision = Revision(id=rev_id, origin=origin, configuration=spec.configuration, spec=spec, version=version,  # type: ignore[arg-type]
-                            report=report, summary=summary, parent=previous.id if previous else None)  # fmt: skip
+        revision = Revision(id=rev_id, origin=origin, configuration=spec.configuration, built=built, spec=spec,  # type: ignore[arg-type]
+                            version=version, report=report, summary=summary, parent=previous.id if previous else None)  # fmt: skip
         designs.add_revision(design_id, revision)
         if report.status == "succeeded":
             if spec.configuration is None:
                 self._export(design_id, folder, revision)  # after the revision: its event clears the design's error
             await self.feedback.carry(design_id, revision)
+            self.revisions.prune(design_id)  # after carrying: the pins and selection moved off the builds before
             for user in designs.where_used(design_id):
                 self.schedule_build(user)
         return revision
@@ -215,7 +245,11 @@ class BuildService:
                 f"revision {revision.id} built, but {folder.build_dir} could not be written: {e}")))  # fmt: skip
 
     def schedule_build(self, design_id: str) -> None:
-        """Debounced rebuild, skipped when the inputs did not change."""
+        """Debounced rebuild, skipped when the inputs did not change; none for a design an agent's turn writes, which
+        rebuilds once the turn ends (`DesignService.hold`). A build asked for (the agent's, the panel's) does not
+        wait."""
+        if self.designs.held(design_id):
+            return
         if design_id in self._pending:
             return
         self._pending.add(design_id)
@@ -270,7 +304,7 @@ class BuildService:
             doc.write_text(DESIGN_FILE, text or "")
 
         summary = "Parameter edit: " + ", ".join(f"{k}={v}" for k, v in values.items())
-        self.designs.change(design_id, base, "panel", edit, summary)
+        await self.designs.change(design_id, base, "panel", edit, summary)
         return await self.build(design_id, summary, "parameter_edit")
 
     async def edit_outputs(self, design_id: str, outputs: list[str], base: int) -> Revision:
@@ -288,8 +322,20 @@ class BuildService:
                 raise REQUEST_INVALID(str(e)) from None
 
         summary = "Outputs: " + (", ".join(outputs) or "none")
-        self.designs.change(design_id, base, "panel", edit, summary)
+        await self.designs.change(design_id, base, "panel", edit, summary)
         return await self.build(design_id, summary, "outputs_edit")
+
+    async def revert(self, design_id: str, version: int) -> Revision:
+        """The human's Undo or Redo in the panel: the panel edit at `version`, the latest the design's state lists in
+        `undo`, or the undo at it, the latest in `redo`, taken back where it was (merged with what changed since),
+        then built. Naming the step keeps a second click from taking back one the human has not seen."""
+        state = self.designs.get(design_id)
+        for steps, origin in ((state.undo, "undo"), (state.redo, "redo")):
+            if steps and steps[-1].version == version:
+                summary = f"{origin.capitalize()}: {steps[-1].summary}"
+                await self.designs.revert(design_id, version, summary)
+                return await self.build(design_id, summary, origin)
+        raise NOT_UNDOABLE(f"version {version} is neither the latest panel edit nor its latest undo")
 
 
 class _Progress:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,14 @@ from hitlcad.backends.base import FileOutcome
 from hitlcad.core.report import Reads
 
 OUTCOME = "outcome.json"
+
+
+def link(source: Path, target: Path) -> None:
+    """`target` as the same file as `source`, taking no more room (a hard link): the part files the cache and the
+    builds share are written once and never again."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.unlink(missing_ok=True)
+    os.link(source, target)
 
 
 @dataclass(frozen=True)
@@ -73,8 +82,7 @@ class PartCache:
         shutil.rmtree(staging, ignore_errors=True)
         for part in outcome.parts:
             for rel in part.files():
-                (staging / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(work / rel, staging / rel)
+                link(work / rel, staging / rel)
         staging.mkdir(parents=True, exist_ok=True)
         (staging / OUTCOME).write_text(outcome.model_dump_json(), encoding="utf-8")
         shutil.rmtree(target, ignore_errors=True)
@@ -89,5 +97,4 @@ class PartCache:
     def restore(self, key: str, outcome: FileOutcome, out: Path) -> None:
         for part in outcome.parts:
             for rel in part.files():
-                (out / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(self.root / key / rel, out / rel)
+                link(self.root / key / rel, out / rel)

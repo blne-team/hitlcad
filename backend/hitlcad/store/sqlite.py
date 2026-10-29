@@ -1,14 +1,14 @@
 """The store: one SQLite database for what hitlcad keeps on this machine, beside the revisions' files.
 
     <data_dir>/hitlcad.db                        folders, events, revisions, their results, the designs' documents
-    <data_dir>/designs/<id>/revisions/<n>/       each revision's files: parts, assembly, view, exports, log
+    <data_dir>/designs/<id>/revisions/<n>/       a revision's files, while it keeps them: parts, view, outputs, log
     <data_dir>/designs/<id>/unreadable-<time>/   a design's history that did not read, set aside
 
 A design's files are its document (`workspace.document`): the updates that made it, one per version, with a
 snapshot every `SNAPSHOT_EVERY` versions so that an earlier version replays from near it, and the content of its
 other files by their sums. A design's events are its history, folded into its state; a revision's event lists
-it, and the revision itself (what it built from and its report) is read when asked for. Its results are a table too, so what one revision
-failed is a query. A database of another layout (`SCHEMA`) is set aside whole when this one opens it, as
+it, and the revision itself (what it built from, by reference to those documents, and its report) is read when
+asked for. Its results are a table too, so what one revision failed is a query. A database of another layout (`SCHEMA`) is set aside whole when this one opens it, as
 ``hitlcad.<time>.db``; a design's history that does not read is set aside on its own.
 
 One server keeps a data folder: it holds ``hitlcad.lock`` while it runs, and another refuses to start on it
@@ -35,7 +35,7 @@ from hitlcad.kernel.errors import STORE_IN_USE, STORE_UNREADABLE
 
 #: The tables' layout and what their rows hold (the events' types): a database of another is set aside. Raise it
 #: with every change to either.
-SCHEMA = 3
+SCHEMA = 4
 DATABASE = "hitlcad.db"
 LOCK = "hitlcad.lock"
 
@@ -154,7 +154,7 @@ class SqliteStore:
     def add_revision(self, design_id: str, revision: Revision) -> Event:
         with self._transaction() as db:
             db.execute("INSERT INTO revisions VALUES (?, ?, ?, ?, ?)", (design_id, revision.id, revision.configuration,
-                       revision.report.status.value, revision.model_dump_json()))  # fmt: skip
+                       revision.report.status.value, revision.model_dump_json(exclude={"spec"})))  # fmt: skip
             db.executemany("INSERT INTO results VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
                 (design_id, revision.id, k, r.code, r.analysis, r.subject, r.status, r.severity,
                  r.where.file if r.where else None, r.where.line if r.where else None)
@@ -234,6 +234,4 @@ class SqliteStore:
         return self.designs_dir / design_id
 
     def revision_dir(self, design_id: str, revision_id: int) -> Path:
-        d = self._dir(design_id) / "revisions" / str(revision_id)
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._dir(design_id) / "revisions" / str(revision_id)

@@ -29,6 +29,8 @@ export type Pin = Schemas["Pin"];
 /** Where a range of motion was when a pin was placed. */
 export type PinMotion = Schemas["PinMotion"];
 export type DesignState = Schemas["DesignState"];
+/** A panel edit Undo takes back, or an undo Redo takes back. */
+export type PanelEdit = Schemas["PanelEdit"];
 export type BuildProgress = Schemas["BuildProgress"];
 
 /** One message of a design's event stream. */
