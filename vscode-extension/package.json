@@ -2,7 +2,7 @@
   "name": "hitlcad",
   "displayName": "hitlcad",
   "description": "Human-in-the-loop CAD: design folders that Claude Code and Codex edit, with a live 3D review panel.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "hitlcad-local",
   "license": "MIT",
   "icon": "media/icon.png",
