@@ -1,5 +1,5 @@
-"""Composition root: wires settings, storage, backends, analyses, exporters, rendering, the design services
-and the watcher."""
+"""Composition root: wires settings, storage, backends, analyses, exporters, rendering, the design services,
+the agents' sessions and the watcher."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from hitlcad.services.context import ContextFeed
 from hitlcad.services.designs import DesignService
 from hitlcad.services.explore import ExploreService
 from hitlcad.services.feedback import FeedbackService
+from hitlcad.services.sessions import AgentSessions
 from hitlcad.services.watcher import FolderWatcher
 from hitlcad.store.sqlite import SqliteStore
 
@@ -47,6 +48,7 @@ class HitlCad:
     feedback: FeedbackService
     explore: ExploreService
     context: ContextFeed
+    sessions: AgentSessions
     watcher: FolderWatcher
     owns_backends: bool  # made from the settings, not given: it closes them
     stopped: bool = False
@@ -71,8 +73,10 @@ class HitlCad:
                                                            aligned_deg=settings.anchor_aligned_deg),
                                    settings.loaded_builds, pipeline.shapes)  # fmt: skip
         builds = BuildService(designs, pipeline, feedback, settings)
+        context = ContextFeed(designs)
+        sessions = AgentSessions(designs, builds, context)
         return cls(settings, pipeline.registry, pipeline, designs, builds, feedback, ExploreService(designs, settings),
-                   ContextFeed(designs), FolderWatcher(designs, builds), registry is None)  # fmt: skip
+                   context, sessions, FolderWatcher(designs, builds, sessions), registry is None)  # fmt: skip
 
     def start(self) -> None:
         for backend in self.registry.all():

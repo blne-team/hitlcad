@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -129,34 +128,18 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_context(args: argparse.Namespace) -> int:
-    """Print what the human selected or pinned in the panel. With --hook AGENT, act as that agent's
-    UserPromptSubmit hook: read the hook's JSON from stdin and print what the session has not been
-    told yet."""
+    """Print what the human selected or pinned in the panel (the agents' hook adds it to each prompt:
+    ``python -m hitlcad.hook``)."""
     import urllib.parse
     import urllib.request
 
-    from hitlcad.workspace.agents import SERVER_WAIT_S
+    from hitlcad.hook import SERVER_WAIT_S
 
     server = (args.server or get_settings().base_url).rstrip("/")
-
-    def fetch(request: urllib.request.Request) -> str:
-        with urllib.request.urlopen(request, timeout=SERVER_WAIT_S) as res:
-            return res.read().decode()
-
-    if args.hook:
-        try:
-            payload = json.load(sys.stdin)
-            body = {"root": payload["cwd"], "agent": args.hook, "session": payload["session_id"]}
-            text = fetch(urllib.request.Request(f"{server}/api/context/deliveries", data=json.dumps(body).encode(),
-                                                headers={"Content-Type": "application/json"}, method="POST"))  # fmt: skip
-        except Exception:  # a hook never fails the prompt: whatever went wrong, it adds nothing
-            return 0
-        if text:
-            print(text)
-        return 0
     query = urllib.parse.urlencode({"root": str(Path(args.root).resolve())})
     try:
-        text = fetch(urllib.request.Request(f"{server}/api/context?{query}"))
+        with urllib.request.urlopen(f"{server}/api/context?{query}", timeout=SERVER_WAIT_S) as res:
+            text = res.read().decode()
     except OSError as e:
         print(f"hitlcad server not reachable at {server}: {e}", file=sys.stderr)
         return 1
@@ -202,9 +185,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="add hitlcad to Codex's config.toml and trust the project (asked when not given)")  # fmt: skip
     p.set_defaults(fn=cmd_init)
 
-    p = sub.add_parser("context", help="print the panel's selections and open pins (the agents' prompt hook)")
+    p = sub.add_parser("context", help="print the panel's selections and open pins")
     p.add_argument("--root", default=".", help="designs under this folder")
-    p.add_argument("--hook", choices=["claude", "codex"], help="run as this agent's UserPromptSubmit hook")
     p.add_argument("--server", help="hitlcad server URL (default: from settings)")
     p.set_defaults(fn=cmd_context)
 

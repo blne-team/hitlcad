@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import os
 import subprocess
 import sys
 import threading
-import urllib.request
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -18,7 +16,6 @@ import httpx
 import pytest
 import trimesh
 
-from hitlcad import cli
 from hitlcad.api.rest import _until_gone, create_app
 from hitlcad.app import HitlCad
 from hitlcad.config import Settings
@@ -231,17 +228,6 @@ async def test_a_stream_that_falls_behind_is_closed_so_its_client_resyncs() -> N
 
 async def _collect(items: AsyncIterator[Any]) -> list[Any]:
     return [item async for item in items]
-
-
-def test_the_context_hook_never_fails_the_prompt(monkeypatch: Any, capsys: Any) -> None:
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": "/x", "session_id": "s"})))
-
-    def down(*_: Any, **__: Any) -> Any:
-        raise urllib.error.URLError("refused")
-
-    monkeypatch.setattr(urllib.request, "urlopen", down)
-    assert cli.main(["context", "--hook", "claude", "--server", "http://127.0.0.1:9"]) == 0
-    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.geometry

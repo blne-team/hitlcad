@@ -167,25 +167,23 @@ class Document:
         if self._assets.get(path) != digest:
             self._assets[path] = digest
 
-    def remove(self, path: str) -> None:
-        for files in (self._texts, self._assets):
-            if path in files:
-                del files[path]
+    def put(self, path: str, text: str | None, digest: str | None) -> None:
+        """Make one file this text, or this content (its sum), or remove it (neither)."""
+        with self.doc.transaction():
+            if text is None and path in self._texts:
+                del self._texts[path]
+            if digest is None and path in self._assets:
+                del self._assets[path]
+            if text is not None:
+                self.write_text(path, text)
+            if digest is not None:
+                self.write_asset(path, digest)
 
     def become(self, texts: dict[str, str], sums: dict[str, str]) -> None:
         """Make the files exactly these: as a folder holds them after someone wrote it."""
         with self.doc.transaction():
-            for path in [*self._texts.keys(), *self._assets.keys()]:
-                if path not in texts and path not in sums:
-                    self.remove(path)
-            for path, new in texts.items():
-                if path in self._assets:
-                    del self._assets[path]
-                self.write_text(path, new)
-            for path, digest in sums.items():
-                if path in self._texts:
-                    del self._texts[path]
-                self.write_asset(path, digest)
+            for path in sorted({*self._texts.keys(), *self._assets.keys(), *texts, *sums}):
+                self.put(path, texts.get(path), sums.get(path))
 
 
 # ---------------------------------------------------------------------- edits that crossed

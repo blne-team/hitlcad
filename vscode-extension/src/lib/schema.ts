@@ -311,7 +311,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/context/deliveries": {
+    "/api/agents/hook": {
         parameters: {
             query?: never;
             header?: never;
@@ -321,11 +321,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Deliver Context
-         * @description Context for an agent session's next prompt (what its hitlcad hook adds): what changed since
-         *     that session was last told, in full, and a reminder of the rest.
+         * Agent Hook
+         * @description An agent's hitlcad hook (`hitlcad.hook`): a prompt gets what the human points at and what changed in the
+         *     designs; a tool that can write a design's files is merged from the version it started on, and gets what
+         *     others changed while it ran.
          */
-        post: operations["deliver_context_api_context_deliveries_post"];
+        post: operations["agent_hook_api_agents_hook_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -458,6 +459,21 @@ export interface components {
             revision?: number | null;
             /** @description Where a range of motion was in the view */
             motion?: components["schemas"]["PinMotion"] | null;
+        };
+        /** AgentHook */
+        AgentHook: {
+            /**
+             * Agent
+             * @enum {string}
+             */
+            agent: "claude" | "codex";
+            /**
+             * Event
+             * @description What the agent gave its hook, as it gave it: the hook's event, its session, working directory and tool
+             */
+            event: {
+                [key: string]: unknown;
+            };
         };
         /**
          * AgentSetup
@@ -1152,21 +1168,6 @@ export interface components {
              */
             type: "cylindrical";
             limits: components["schemas"]["Limits"] | null;
-        };
-        /** Delivery */
-        Delivery: {
-            /**
-             * Root
-             * @description The agent's working directory: designs under it count
-             */
-            root: string;
-            /**
-             * Agent
-             * @enum {string}
-             */
-            agent: "claude" | "codex";
-            /** Session */
-            session: string;
         };
         /** DescribeFilePick */
         DescribeFilePick: {
@@ -4251,7 +4252,7 @@ export interface operations {
             };
         };
     };
-    deliver_context_api_context_deliveries_post: {
+    agent_hook_api_agents_hook_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4260,7 +4261,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Delivery"];
+                "application/json": components["schemas"]["AgentHook"];
             };
         };
         responses: {

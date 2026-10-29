@@ -1,6 +1,7 @@
 """Take into each design's document what is written to its folder (by a person, an agent, git: anyone but hitlcad,
 whose own writes match the document and change nothing), then rebuild it; and so for a design first opened since
-the server started, whose folder may have changed while nothing watched it."""
+the server started, whose folder may have changed while nothing watched it. While an agent's tool that can write a
+design runs, its writes are that tool's to take in, from the version it started on (`AgentSessions`)."""
 
 from __future__ import annotations
 
@@ -10,15 +11,17 @@ from pathlib import Path
 
 from hitlcad.services.builds import DEBOUNCE_MS, BuildService
 from hitlcad.services.designs import DesignService
+from hitlcad.services.sessions import AgentSessions
 from hitlcad.workspace.document import in_design
 
 log = logging.getLogger(__name__)
 
 
 class FolderWatcher:
-    def __init__(self, designs: DesignService, builds: BuildService) -> None:
+    def __init__(self, designs: DesignService, builds: BuildService, sessions: AgentSessions) -> None:
         self.designs = designs
         self.builds = builds
+        self.sessions = sessions
         self._tasks: list[asyncio.Task[None]] = []
 
     def start(self) -> None:
@@ -54,8 +57,7 @@ class FolderWatcher:
 
         changed = self.designs.folders_changed
         while True:
-            registered = self.designs.folders()
-            folders = [Path(f) for f in registered]
+            folders = [Path(f) for f in self.designs.folders()]
             changed.clear()
             if not folders:
                 await changed.wait()
@@ -66,8 +68,8 @@ class FolderWatcher:
             try:
                 async for changes in awatch(*folders, stop_event=stop, debounce=DEBOUNCE_MS, recursive=True,
                                             watch_filter=lambda _, path, f=folders: _relevant(f, Path(path))):  # fmt: skip
-                    for design_id in {_owner(registered, Path(path)) for _, path in changes}:
-                        if design_id and await self._take_in(design_id):
+                    for design_id in {self.designs.owner(Path(path)) for _, path in changes}:
+                        if design_id and not self.sessions.busy(design_id) and await self._take_in(design_id):
                             self.builds.schedule_build(design_id)
             except FileNotFoundError:
                 await asyncio.sleep(1)  # a folder vanished; folders() drops it next round
@@ -84,9 +86,3 @@ def _relevant(folders: list[Path], path: Path) -> bool:
     """Changes to a design's files: not hitlcad's own outputs, caches or editors' temporary files. Only the part of
     `path` inside its design folder counts: the folder itself may be anywhere, under build/ too."""
     return any(in_design(path.relative_to(f)) for f in folders if path.is_relative_to(f))
-
-
-def _owner(folders: dict[str, str], path: Path) -> str | None:
-    """The design whose folder holds `path` (the innermost, when design folders nest)."""
-    owners = [(len(f), i) for f, i in folders.items() if path == Path(f) or Path(f) in path.parents]
-    return max(owners)[1] if owners else None

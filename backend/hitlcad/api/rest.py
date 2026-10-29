@@ -112,10 +112,10 @@ class InitProject(ProjectPath):
     codex: bool = Field(default=False, description="The human allowed changing Codex's config.toml")
 
 
-class Delivery(BaseModel):
-    root: str = Field(description="The agent's working directory: designs under it count")
+class AgentHook(BaseModel):
     agent: Literal["claude", "codex"]
-    session: str
+    event: dict[str, Any] = Field(description="What the agent gave its hook, as it gave it: the hook's event, its "
+                                  "session, working directory and tool")  # fmt: skip
 
 
 class SetSelection(BaseModel):
@@ -449,11 +449,12 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         """Selections and open pins of the designs under ``root``, as text to paste into an agent's chat."""
         return core.context.read(root)
 
-    @app.post("/api/context/deliveries", response_class=PlainTextResponse)
-    async def deliver_context(body: Delivery) -> str:
-        """Context for an agent session's next prompt (what its hitlcad hook adds): what changed since
-        that session was last told, in full, and a reminder of the rest."""
-        return core.context.deliver(body.root, body.agent, body.session)
+    @app.post("/api/agents/hook", response_class=PlainTextResponse)
+    async def agent_hook(body: AgentHook) -> str:
+        """An agent's hitlcad hook (`hitlcad.hook`): a prompt gets what the human points at and what changed in the
+        designs; a tool that can write a design's files is merged from the version it started on, and gets what
+        others changed while it ran."""
+        return await core.sessions.hook(body.agent, body.event)
 
     # ------------------------------------------------------------------ projects & loose model files
 

@@ -1,11 +1,12 @@
 """How a design project's coding agents reach hitlcad, each piece set up only with the human's permission:
 
-- prompt hooks (``hooks``): a UserPromptSubmit hook that adds what the human selected and pinned in the
-  panel to every message they send. It runs this machine's interpreter, so it goes where only this
-  machine reads it: Claude Code's `.claude/settings.local.json` in the project (its per-user settings,
-  kept out of the repository) and Codex's user `hooks.json`, as Codex has no per-user file for one
-  project (in a folder without designs the hook adds nothing). Codex asks the human to approve the
-  hook once (`/hooks`);
+- hooks (``hooks``): hitlcad's hook (`hitlcad.hook`) around every message the human sends, adding what they
+  selected and pinned in the panel, and around every tool call that can read or write a design's files, so that
+  what the agent writes is merged from the version it started on and it hears what others changed meanwhile. It
+  runs this machine's interpreter, so it goes where only this machine reads it: Claude Code's
+  `.claude/settings.local.json` in the project (its per-user settings, kept out of the repository) and Codex's
+  user `hooks.json`, as Codex has no per-user file for one project (in a folder without designs the hook adds
+  nothing). Codex asks the human to approve the hook once (`/hooks`);
 - Codex's user config (``codex``): hitlcad's MCP server in `config.toml`.
 """
 
@@ -23,12 +24,19 @@ from typing import Any
 import tomlkit
 from pydantic import Field
 
+from hitlcad.hook import SERVER_WAIT_S
 from hitlcad.kernel.model import Model
 
 CLAUDE_SETTINGS = ".claude/settings.json"
 CLAUDE_HOOKS = ".claude/settings.local.json"
-SERVER_WAIT_S = 3  # how long the hook waits for the server before it adds nothing
-HOOK_TIMEOUT_S = SERVER_WAIT_S + 2  # what the agents allow the hook: that wait, and Python starting
+HOOK_TIMEOUT_S = SERVER_WAIT_S + 2  # what the agents allow the hook: its wait for the server, and Python starting
+#: The events hitlcad's hook handles in each agent, with the tools it is run around (None: every prompt): those that
+#: read a design's files (Claude Code's Read, for what a whole-file Write starts from) or can write them.
+EVENTS: dict[str, dict[str, str | None]] = {
+    "claude": dict.fromkeys(["PreToolUse", "PostToolUse"], "Read|Write|Edit|MultiEdit|NotebookEdit|Bash")
+    | {"UserPromptSubmit": None},
+    "codex": dict.fromkeys(["PreToolUse", "PostToolUse"], "Bash|apply_patch") | {"UserPromptSubmit": None},
+}
 
 
 class AgentSetup(Model):
@@ -42,9 +50,8 @@ class AgentSetup(Model):
 
 
 def hook_argv(python: str, agent: str, server_url: str) -> list[str]:
-    """The agents' UserPromptSubmit hook: adds what the human points at in the panel to each prompt. Runs
-    hitlcad's own interpreter, so it does not depend on PATH."""
-    return [python, "-m", "hitlcad.cli", "context", "--hook", agent, "--server", server_url]
+    """hitlcad's hook for one agent. Runs hitlcad's own interpreter, so it does not depend on PATH."""
+    return [python, "-m", "hitlcad.hook", agent, "--server", server_url]
 
 
 def command_line(argv: list[str]) -> str:
@@ -63,25 +70,24 @@ def hook_handler(python: str, agent: str, server_url: str) -> dict[str, Any]:
 
 def _is_ours(handler: dict[str, Any]) -> bool:
     words = " ".join([handler.get("command", ""), *handler.get("args", [])])
-    return "hitlcad.cli" in words and "context" in words
+    return "hitlcad.hook" in words or "hitlcad.cli" in words and "context" in words  # the prompt hook it replaces
 
 
-def _handlers(config: dict[str, Any]) -> list[dict[str, Any]]:
-    return [h for g in config.get("hooks", {}).get("UserPromptSubmit", []) for h in g.get("hooks", [])]
-
-
-def prompt_hook(config: dict[str, Any], wanted: dict[str, Any]) -> bool:
-    """Add hitlcad's UserPromptSubmit hook to a Claude Code or Codex hooks config, or bring it up to
-    date. Returns True when ``config`` was changed."""
-    for handler in filter(_is_ours, _handlers(config)):
-        if handler == wanted:
-            return False
-        handler.clear()
-        handler.update(wanted)
-        return True
-    groups = config.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
-    groups.append({"hooks": [wanted]})
-    return True
+def hooks(config: dict[str, Any], agent: str, wanted: dict[str, Any]) -> bool:
+    """Put hitlcad's hook on each event it handles in a Claude Code or Codex hooks config, around the tools it
+    watches, in place of any of its own already there. Returns True when ``config`` was changed."""
+    changed = False
+    events = config.setdefault("hooks", {})
+    for event, tools in EVENTS[agent].items():
+        group = {"hooks": [wanted]} | ({"matcher": tools} if tools else {})
+        groups = events.setdefault(event, [])
+        if [g for g in groups if any(map(_is_ours, g.get("hooks", [])))] == [group]:
+            continue
+        for g in groups:
+            g["hooks"] = [h for h in g.get("hooks", []) if not _is_ours(h)]
+        groups[:] = [g for g in groups if g["hooks"]] + [group]
+        changed = True
+    return changed
 
 
 def json_file(file: Path, update: Callable[[dict[str, Any]], bool]) -> bool:
@@ -128,11 +134,13 @@ def codex_config(mcp_url: str) -> bool:
 
 
 def status(root: Path) -> AgentSetup:
-    def hooked(file: Path) -> bool:
-        return file.is_file() and any(map(_is_ours, _handlers(json.loads(file.read_text(encoding="utf-8")))))
+    def hooked(file: Path, agent: str) -> bool:
+        config = json.loads(file.read_text(encoding="utf-8")) if file.is_file() else {}
+        return all(any(map(_is_ours, (h for g in config.get("hooks", {}).get(event, []) for h in g.get("hooks", []))))
+                   for event in EVENTS[agent])  # fmt: skip
 
     file = codex_config_file()
     doc = tomlkit.parse(file.read_text(encoding="utf-8")) if file.is_file() else tomlkit.document()
-    return AgentSetup(hooks=hooked(root / CLAUDE_HOOKS) and hooked(codex_hooks_file()),
+    return AgentSetup(hooks=hooked(root / CLAUDE_HOOKS, "claude") and hooked(codex_hooks_file(), "codex"),
                       codex="hitlcad" in doc.get("mcp_servers", {}), claude_hooks=CLAUDE_HOOKS,
                       codex_hooks=str(codex_hooks_file()), codex_config=str(file))  # fmt: skip

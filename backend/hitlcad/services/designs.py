@@ -160,6 +160,17 @@ class DesignService:
         """Registered folders that still exist: path -> design id."""
         return {p: i for p, i in self._folders.items() if self.store.exists(i) and Path(p).is_dir()}
 
+    def owner(self, path: Path) -> str | None:
+        """The design whose folder holds `path` (the innermost, when design folders nest)."""
+        owners = [(len(f), i) for f, i in self.folders().items() if path == Path(f) or Path(f) in path.parents]
+        return max(owners)[1] if owners else None
+
+    def under(self, root: str | Path | None) -> list[DesignState]:
+        """The designs in `root` (all without it): an agent's working directory holds those it works on."""
+        base = Path(root).expanduser().resolve() if root else None
+        return [self.get(design_id) for path, design_id in sorted(self.folders().items())
+                if base is None or base == Path(path) or base in Path(path).parents]  # fmt: skip
+
     def id_for(self, path: str | Path) -> str | None:
         return self.folders().get(str(DesignFolder(Path(path)).path))
 
@@ -190,7 +201,7 @@ class DesignService:
             self.emit(design_id, DesignOpened(path=str(folder.path), name=design.name if design else folder.path.name,
                                               backend=design.backend if design else DEFAULT_BACKEND))  # fmt: skip
             origin = "scaffold" if created else "folder"
-            self._changed(design_id, self.documents.create(design_id, folder.path, disk, origin), origin, 0, "")
+            self._changed(design_id, self.documents.create(design_id, folder.path, disk, origin), origin, "")
             self.store.bind(str(folder.path), design_id)
             self._folders[str(folder.path)] = design_id
             self.folders_changed.set()
@@ -255,22 +266,19 @@ class DesignService:
     def change(self, design_id: str, base: int, origin: str, edit: Edit, summary: str = "") -> Change | None:
         """Make `edit` on the design's files as they were at version `base`, merged with what changed since."""
         change = self.documents.change(design_id, Path(self.get(design_id).path), base, origin, edit)
-        return self._changed(design_id, change, origin, base, summary)
+        return self._changed(design_id, change, origin, summary)
 
     async def take_in(self, design_id: str, origin: str = "disk", base: int | None = None) -> Change | None:
-        """What the design's folder holds now, written by `origin` from version `base` (unknown: the version last
-        written there), merged into the design's files."""
+        """What the design's folder holds now, written by `origin` from version `base` (unknown: each file from the
+        version it was last written or read at), merged into the design's files."""
         folder = Path(self.get(design_id).path)
         disk = await asyncio.to_thread(Disk.read, folder)
-        since = self.files(design_id).version if base is None else base
-        return self._changed(
-            design_id, self.documents.take_in(design_id, folder, disk, base, origin), origin, since, ""
-        )
+        return self._changed(design_id, self.documents.take_in(design_id, folder, disk, base, origin), origin, "")
 
-    def _changed(self, design_id: str, change: Change | None, origin: str, base: int, summary: str) -> Change | None:
+    def _changed(self, design_id: str, change: Change | None, origin: str, summary: str) -> Change | None:
         if change is None:
             return None
-        others = sorted({c.origin for c in self.get(design_id).changes if c.version > base} - {origin})
+        others = sorted({c.origin for c in self.get(design_id).changes if c.version > change.since} - {origin})
         self.emit(
             design_id, DocumentChanged(version=change.version, origin=origin, files=change.files, summary=summary)
         )

@@ -7,6 +7,7 @@ import { type DesignUi, type InspectorTab, shownBuild, useDesignUi } from "../li
 import { BomPanel } from "./BomPanel";
 import { BriefPanel } from "./BriefPanel";
 import { ChangesPanel } from "./ChangesPanel";
+import { CrossedEdits } from "./CrossedEdits";
 import { ParametersPanel } from "./ParametersPanel";
 import { deliveryStatus } from "../lib/delivery";
 import { PinsPanel } from "./PinsPanel";
@@ -133,6 +134,7 @@ export function InspectorView({ id }: { id: string }) {
           {p.message}
         </p>
       ))}
+      <CrossedEdits state={state} seen={ui.crossedSeen} onSeen={(version) => setUi({ crossedSeen: version })} />
       <div className="tabs" role="tablist">
         {TABS.map((t) => {
           const count = t.badge?.(ctx) ?? 0;

@@ -16,6 +16,7 @@ import psutil
 import pytest
 from mcp.client import Client
 
+from hitlcad import hook
 from hitlcad.api.mcp import build_mcp
 from hitlcad.app import HitlCad
 from hitlcad.backends.workers import Superseded
@@ -267,7 +268,7 @@ def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp
     assert "def build(p, i)" in guide and "frames(" in guide
 
 
-def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(
+def test_the_hooks_reach_the_agents_without_their_shell_in_the_way(
     core: HitlCad, tmp_path: Path, monkeypatch: Any
 ) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
@@ -275,34 +276,93 @@ def test_the_prompt_hooks_reach_the_agents_without_their_shell_in_the_way(
     server = core.settings.base_url
     project = tmp_path / "project"
     old = {"type": "command", "command": "python -m hitlcad.cli context --hook codex --server http://x", "timeout": 5}
-    agents.json_file(agents.codex_hooks_file(), lambda c: agents.prompt_hook(c, old))
+    agents.json_file(agents.codex_hooks_file(), lambda c: c.setdefault("hooks", {}).setdefault(
+        "UserPromptSubmit", []).append({"hooks": [old]}) or True)  # fmt: skip
     written = init_project(project, core.settings, python, core.registry.all(), hooks=True, codex=True)
     setup = agents.status(project)
     assert setup.hooks and setup.codex and setup.codex_config == str(tmp_path / "codex" / "config.toml")
 
-    def handlers(file: Path) -> list[dict[str, Any]]:
-        config = json.loads(file.read_text(encoding="utf-8"))
-        return [h for g in config.get("hooks", {}).get("UserPromptSubmit", []) for h in g["hooks"]]
+    def groups(file: Path) -> dict[str, list[dict[str, Any]]]:
+        return json.loads(file.read_text(encoding="utf-8")).get("hooks", {})
 
     # The hooks name this machine's interpreter: only this machine reads them. The project's committed files
     # name the server alone.
     assert {agents.CLAUDE_HOOKS, ".gitignore"} <= set(written)
     assert agents.CLAUDE_HOOKS in (project / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert not handlers(project / agents.CLAUDE_SETTINGS) and python not in (project / ".mcp.json").read_text()
-    # Claude Code starts the hook from its argv, with no shell in between.
+    assert not groups(project / agents.CLAUDE_SETTINGS) and python not in (project / ".mcp.json").read_text()
+    # Claude Code starts the hook from its argv, with no shell in between, around prompts and the tools that read
+    # or write files.
     claude = agents.hook_argv(python, "claude", server)
-    assert handlers(project / agents.CLAUDE_HOOKS) == [
-        {"type": "command", "command": python, "args": claude[1:], "timeout": agents.HOOK_TIMEOUT_S}
-    ]
+    handler = {"type": "command", "command": python, "args": claude[1:], "timeout": agents.HOOK_TIMEOUT_S}
+    assert groups(project / agents.CLAUDE_HOOKS) == {
+        "PreToolUse": [{"hooks": [handler], "matcher": "Read|Write|Edit|MultiEdit|NotebookEdit|Bash"}],
+        "PostToolUse": [{"hooks": [handler], "matcher": "Read|Write|Edit|MultiEdit|NotebookEdit|Bash"}],
+        "UserPromptSubmit": [{"hooks": [handler]}],
+    }
     # Codex hands a command line to its shell (cmd.exe /C on Windows, sh elsewhere): once that shell has read it,
-    # it is the hook's argv again. The old hook is brought up to date, not doubled.
+    # it is the hook's argv again. The old prompt hook is replaced, not doubled; setting up again changes nothing.
     codex = agents.hook_argv(python, "codex", server)
-    [handler] = handlers(agents.codex_hooks_file())
-    assert handler["command"] == agents.command_line(codex)
+    hooked = groups(agents.codex_hooks_file())
+    assert [g["hooks"][0]["command"] for g in hooked["UserPromptSubmit"]] == [agents.command_line(codex)]
+    assert hooked["PostToolUse"][0]["matcher"] == "Bash|apply_patch"
+    assert not agents.json_file(
+        agents.codex_hooks_file(), lambda c: agents.hooks(c, "codex", hooked["PreToolUse"][0]["hooks"][0])
+    )
     echo = agents.command_line([sys.executable, "-c", "import json, sys; print(json.dumps(sys.argv[1:]))", *codex])
     shell = f'cmd.exe /C "{echo}"' if sys.platform == "win32" else ["/bin/sh", "-c", echo]
     assert json.loads(subprocess.run(shell, capture_output=True, encoding="utf-8", check=True).stdout) == codex
     assert f'url = "{core.settings.mcp_url}"' in agents.codex_config_file().read_text(encoding="utf-8")
+
+
+def test_the_hook_starts_on_the_standard_library_alone_and_never_stops_the_agent() -> None:
+    """It runs around every tool call: nothing of hitlcad's to import, and a server not there adds nothing."""
+    loaded = subprocess.run([sys.executable, "-c", "import sys, hitlcad.hook; print(sorted(m for m in sys.modules "
+                             "if m.startswith('hitlcad')))"], capture_output=True, encoding="utf-8", check=True)  # fmt: skip
+    assert loaded.stdout.strip() == "['hitlcad', 'hitlcad.hook']"
+    gone = subprocess.run([sys.executable, "-m", "hitlcad.hook", "claude", "--server", "http://127.0.0.1:9"],
+                          input='{"hook_event_name": "PostToolUse"}', capture_output=True, encoding="utf-8")  # fmt: skip
+    assert (gone.returncode, gone.stdout) == (0, "")
+    said = json.loads(hook.output("PostToolUse", "the human set width"))
+    assert said == {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "the human set width"}}
+    assert hook.output("UserPromptSubmit", "pointing at") == "pointing at"
+
+
+async def test_an_agent_s_write_merges_from_what_it_read_and_it_hears_what_the_human_changed(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    """Claude Code reads design.json, the human sets the width in the panel, then the agent writes the file whole
+    from what it read, renamed: merged from the version it read, the human's width stays, and the agent is told of
+    it with the tool's result. While its tool runs, the watcher leaves the design to it."""
+    project = tmp_path / "project"
+    folder = copy_design("tiny", project / "designs" / "tiny")
+    state, _ = core.designs.open(folder)
+    session = {"session_id": "s1", "cwd": str(project)}
+    sessions = core.sessions
+
+    async def hook(event: str, **more: Any) -> str:
+        return await sessions.hook("claude", session | {"hook_event_name": event} | more)
+
+    assert await hook("UserPromptSubmit") == ""  # first seen: nothing to catch up on
+    read = {"tool_name": "Read", "tool_use_id": "t1", "tool_input": {"file_path": str(folder / "design.json")}}
+    await hook("PreToolUse", **read)
+    await hook("PostToolUse", **read)
+    text = (folder / "design.json").read_text()
+    await core.builds.edit_parameters(state.id, {"width": 20}, core.designs.get(state.id).version)
+    write = {"tool_name": "Write", "tool_use_id": "t2", "tool_input": {"file_path": str(folder / "design.json")}}
+    await hook("PreToolUse", **write)
+    assert sessions.busy(state.id)
+    (folder / "design.json").write_text(text.replace('"name": "Tiny"', '"name": "Theirs"'), encoding="utf-8")
+    told = await hook("PostToolUse", **write)
+    merged = json.loads((folder / "design.json").read_text())
+    assert (merged["name"], merged["parameters"][0]["value"]) == ("Theirs", 20) and not sessions.busy(state.id)
+    assert core.designs.get(state.id).changes[-1].origin == "agent:claude:s1"
+    assert "the human, in the panel, changed design.json: Parameter edit: width=20" in told
+    assert await hook("UserPromptSubmit") == ""  # told once
+
+    patch = "*** Begin Patch\n*** Update File: designs/tiny/parts/box.py\n@@\n*** End Patch"
+    assert sessions._touched({"tool_name": "apply_patch", "tool_input": {"command": patch}}, str(project)) == {
+        state.id: ["parts/box.py"]}  # fmt: skip
+    assert sessions._touched({"tool_name": "Bash", "tool_input": {"command": "ls"}}, str(project)) == {state.id: []}
 
 
 def test_the_watcher_ignores_outputs_inside_a_design_wherever_the_design_is(tmp_path: Path) -> None:

@@ -23,6 +23,8 @@ export interface DesignUi {
   /** Where a range of motion of a revision is in the view; null, or another revision's: as built. */
   motion: MotionAt | null;
   inspection: Inspection | null;
+  /** Edits that crossed (`DesignState.crossed`) are shown until dismissed: the version dismissed up to. */
+  crossedSeen: number;
 }
 
 /** A range of motion (by its frames and kind) of one revision at one value: what the slider shows, and where a
@@ -35,7 +37,7 @@ export interface MotionAt {
 }
 
 const INITIAL: DesignUi = {
-  revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null,
+  revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
 };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;

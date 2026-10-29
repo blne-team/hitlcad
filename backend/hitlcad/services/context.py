@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hitlcad.agent import describe
-from hitlcad.core.events import DesignState, FeedbackDelivered
+from hitlcad.core.events import FeedbackDelivered
 from hitlcad.services.designs import DesignService
 
 HEADER = "The human is pointing at these in the hitlcad panel (model space, mm, Z up):"
@@ -16,17 +16,9 @@ class ContextFeed:
     def __init__(self, designs: DesignService) -> None:
         self.designs = designs
 
-    def _under(self, root: str | Path | None) -> list[DesignState]:
-        base = Path(root).expanduser().resolve() if root else None
-        return [
-            self.designs.get(design_id)
-            for path, design_id in sorted(self.designs.folders().items())
-            if base is None or base == Path(path) or base in Path(path).parents
-        ]
-
     def read(self, root: str | Path | None = None) -> str:
         """Selections and open pins of the designs under ``root`` (all designs without it)."""
-        sections = [describe.pointing_text(s) for s in self._under(root) if s.selection or s.open_pins]
+        sections = [describe.pointing_text(s) for s in self.designs.under(root) if s.selection or s.open_pins]
         return "\n\n".join([HEADER, *sections]) if sections else ""
 
     def deliver(self, root: str | Path, agent: str, session: str) -> str:
@@ -35,7 +27,7 @@ class ContextFeed:
         panel shows it); unchanged ones get a one-line reminder, so they survive the agent
         summarising its history; one cleared since then is reported as cleared."""
         full, unchanged, cleared = [], [], []
-        for state in self._under(root):
+        for state in self.designs.under(root):
             selection, pins = state.pointing()
             last = state.deliveries.get(session)
             if last is not None and (last.selection, last.pins) == (selection, pins):
