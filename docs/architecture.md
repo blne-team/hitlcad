@@ -19,19 +19,20 @@ flowchart LR
     PANEL[hitlcad panel<br/>React + three-cad-viewer webview]
   end
   CC -- MCP /mcp --> MCP[api/mcp.py]
-  CC -. UserPromptSubmit hook<br/>hitlcad context --hook .-> API
+  CC -. hooks: prompts, tool calls<br/>python -m hitlcad.hook .-> API
   CC -- edits --> F[(design folder<br/>design.json · interfaces.py<br/>parts/ · assembly.py)]
   EXT -- REST --> API[api/rest.py]
   PANEL -- REST + WebSocket --> API
   F -- watchfiles --> W[FolderWatcher]
-  W --> S
+  W -- taken in --> S
+  S -- written --> F
   API --> S[services<br/>services/]
   MCP --> S
   S --> P[BuildPipeline] --> B[CAD backends<br/>model runtime in build workers]
   P --> A[analyses]
   P --> X[assembly STEP · mesh · 3D view · exporters]
   S --> G[design graph]
-  S --> ST[(DesignStore<br/>hitlcad.db · revisions/)]
+  S --> ST[(DesignStore<br/>hitlcad.db: documents, events<br/>revisions/)]
   REG[plugin registry<br/>hitlcad.builtin · installed] -. members, backends,<br/>catalogs, exporters .-> P
   S -- events --> BUS[EventBus] --> API
 ```
@@ -44,9 +45,9 @@ hitlcad's own plugins (`builtin/`).
 
 | Layer | Package | Responsibility | Extension point |
 | --- | --- | --- | --- |
-| Surfaces | `cli.py`, `api/`, `app.py` | `rest.py`: REST and WebSocket streams for the panel and extension (its OpenAPI schema generates the extension's and the panel's types, `vscode-extension/src/lib/schema.ts`, with `scripts/api-types.sh`). `mcp.py`: the agents' tools. `cli.py`: the CLI and the prompt hook. `app.py`: `HitlCad.create(...)` wires everything from `Settings`; tests swap in their own backends, renderer, analyses and exporters | — |
-| Services | `services/` | `designs.py`: folders bound to event logs, revisions read when asked for, where-used. `builds.py`: builds on request, after parameter and outputs edits and debounced after saves, each announcing its progress and the results found so far; configurations; structure checks; dependents. `watcher.py`: saves to builds. `feedback.py`: selection and pins, carried across rebuilds. `explore.py`: the graph with staleness, revision comparisons. `context.py`: what the agent's hook is told. `bus.py`: design events to live subscribers. Never call an LLM | — |
-| Workspace, store | `workspace/`, `store/` | `folder.py`: a design folder and its files. `project.py`: scaffolding a project. `agents.py`: the agents' hooks and Codex's config. `store/`: the SQLite database of folders, events, revisions and results in the data folder | `DesignStore` protocol |
+| Surfaces | `cli.py`, `api/`, `app.py` | `rest.py`: REST and WebSocket streams for the panel and extension (its OpenAPI schema generates the extension's and the panel's types, `vscode-extension/src/lib/schema.ts`, with `scripts/api-types.sh`). `mcp.py`: the agents' tools. `cli.py`: the CLI. `hook.py`: the agents' hook, on the standard library alone. `app.py`: `HitlCad.create(...)` wires everything from `Settings`; tests swap in their own backends, renderer, analyses and exporters | — |
+| Services | `services/` | `designs.py`: designs bound to their folders, documents and event logs; every edit (`change`) and every write to a folder (`take_in`); revisions read when asked for, where-used. `documents.py`: each design's document, versions replayed, edits merged from the version they were made on, the folder written. `builds.py`: builds on request, after parameter and outputs edits and debounced after changes, each announcing its progress and the results found so far; configurations; structure checks; dependents. `watcher.py`: writes to the folders taken in, then built. `sessions.py`: the agents' hooks: their writes merged from where their tools started, and what they are told. `feedback.py`: selection and pins, carried across rebuilds. `explore.py`: the graph with staleness, revision comparisons. `context.py`: what the human points at, as the agent's hook tells it. `bus.py`: design events to live subscribers. Never call an LLM | — |
+| Workspace, store | `workspace/`, `store/` | `document.py`: a design's files as one CRDT document (pycrdt), its snapshots, span edits of design.json (tree-sitter-json), edits that crossed. `folder.py`: a design folder, its build spec from a snapshot, build/. `project.py`: scaffolding a project. `agents.py`: the agents' hooks and Codex's config. `store/`: the SQLite database of folders, documents, events, revisions and results in the data folder | `DesignStore` protocol |
 | Build | `build/` | `pipeline.py`: the build (below). `cache.py`: part files by their recorded reads. `assemble.py`: the assembly as STEP product structure, as one mesh, as the instanced 3D view, and as the tree a backend writes its own assembly file from | — |
 | Agent, review, preview | `agent/`, `review/`, `render/` | `agent/`: what the agent reads. `graph.py`, the design graph: a projection of design.json, the latest build report and the review state, answering in the address grammar, with impact. `describe.py`: picks described, the guides generated from the installed members, the playbook from the error catalog. `sections.py`: section views through failing joints. `skills/`: the skills a project gets. `review/`: what the human points at. `selection.py`: picks described. `anchors.py`: picks and pins carried across rebuilds. `measure.py`: every face, edge and vertex of a build, and the distances between them. `render/`: the preview sheet (iso/front/right/top), in Blender | `Renderer` protocol |
 | Analysis | `analysis/` | `base.py`: the `Analysis` protocol, the stages analyses run at, results. `model.py`: the built design (parts, placements, components, connector frames, bodies). The analyses, each looping over what a design declares and asking each member to verify itself: `structure.py`, `checks.py` (parts, connectors, manufacturing, requirements), `mates.py`, `relations.py`, `fasteners.py`, `coverage.py`, `interference.py`, `motion/` (`plans.py`: the inputs and each one's stages; `path.py`: an input's positions, traced through its blocks; `sweep.py`: the one collision sweep, exact or at the positions traced; `findings.py`: what a sweep finds, its first contacts, least gaps and the pairs it leaves out; `turning.py`: what of a solid is round about an axis, so a sweep moves only the rest) | `Analysis` protocol, through plugins |
@@ -57,26 +58,58 @@ hitlcad's own plugins (`builtin/`).
 | Kernel, model SDK | `kernel/`, `sdk/` | `kernel/`: `model.py`, the base of every model; `errors.py`, diagnostics (a code, its owner, a message, where), the catalog of their kinds with each one's usual fix, and how each surface presents them; `plugins.py`, the plugin hooks and the registry that gathers what plugins contribute. `sdk/`: what model code imports (`mate_to`, `CatalogPart`); it imports nothing | `ErrorKind`, the `hitlcad.plugins` entry-point group |
 | Built-in plugins | `builtin/` | hitlcad's own, registered as any installed plugin is: `joints` (frame, face, hole and shaft connectors; the mate types), `gears` (the gear connector; gear, rack and screw relations), `checks` (requirement checks), `processes` (the five processes and their checks), `build123d` and `blender` (the backends), `catalogs` (bd_warehouse and vendor STEP), `exports` (BOM, 3MF), `robot` (URDF, SDF), `materials`. Nothing else in hitlcad imports it | — |
 
-## Design folders are the source of truth
+## The database holds the design; the folder is its copy
 
 A design is any folder holding `design.json` and its code (layout and format:
-[assembly-model.md](assembly-model.md)). People and agents edit these files with normal tools and
-commit them. hitlcad keeps everything machine-local in `<data_dir>`:
+[assembly-model.md](assembly-model.md)). hitlcad keeps a design's files as one CRDT document in its database
+(`workspace/document.py`, pycrdt): design.json and the Python files as text that merges character by
+character, every other file by its content (sha256). The folder is the document's copy on disk: people and
+agents read it, edit it with their own tools and commit it, and hitlcad merges what they write into the
+document and writes the merge back. Builds, the panel and the agent's tools read the document, never the folder.
+
+**One write path.** Every edit is made on a version of the document and merged into the current one
+(`DesignService.change`), so what others changed since is kept:
+
+| Writer | Edits from | How |
+| --- | --- | --- |
+| The panel (parameters, outputs) | the version the revision on screen built (`Revision.version`) | the value's own span in design.json (tree-sitter-json), every other character as it was |
+| An agent's tool (its hooks: `services/sessions.py`) | the version the design was at when the tool started; a file Claude Code writes whole, from the version it read it at | what the folder holds after the tool, taken in |
+| Anyone else (an editor's save, git, an agent without hooks) | each file from the version it was last written or read at | what the folder holds, taken in by the watcher and before every build |
+
+Writes to the folder are taken in by `FolderWatcher` (`watchfiles`, ignoring `build/`, `.git`, caches and
+editors' temporary files), and before every build, so a build asked for right after a save builds what was
+saved; while an agent's tool that can write a design runs, the watcher leaves it to that tool. Taking in
+diffs each file against the version it was written from (diff-match-patch) and merges that edit; the folder is
+then written file by file, atomically, never over a file that changed on disk since it was last read (that
+write is taken in next). An edit that changed nothing makes no version.
+
+**Edits that crossed.** Two edits made on the same version that change the same text both stay, by the CRDT's
+rule (the same number set to 5 and to 6 at once can read 56). hitlcad does not refuse either: it records
+where (`edits_crossed`: the file, the line, the line as merged, whose edits), the Design view shows it until the
+human dismisses it, and the agent's hook tells the session it involves. The human looks at what the merge made.
+
+hitlcad keeps everything machine-local in `<data_dir>`:
 
 - `hitlcad.db`, one SQLite database (`store/sqlite.py`):
   - `folders` maps folder paths to design ids, so committed files hold no ids.
-  - `events` is each design's review history: `design_opened`, `design_updated` (name, backend,
-    brief), `revision_created`, `error`, `selection_changed`, `pins_changed`, `feedback_delivered`.
-    `DesignState` is a pure fold of it. A revision's event lists it (`RevisionInfo`: its status,
-    tally, what a failed build failed on). The build running (`build_progress`: the revision it makes,
-    its scene once shown, what it does now; `build_stopped` when newer files replace it) is live only:
-    applied to the state and sent to the streams, never kept, so a server that stops mid-build starts
-    again with none running.
+  - `doc_updates` holds each design's document as the updates that made it, one per version, with its
+    origin (`folder`, `scaffold`, `panel`, `agent:<agent>:<session>`, `disk`); `doc_snapshots` the whole
+    document every 100 versions, so an earlier version replays from near it; `blobs` other files' contents
+    by their sums.
+  - `events` is each design's history: `design_opened`, `design_updated` (name, backend, brief),
+    `document_changed` (a version, its origin, the files it changed, the panel's summary), `edits_crossed`,
+    `revision_created`, `error`, `selection_changed`, `pins_changed`, `feedback_delivered`.
+    `DesignState` is a pure fold of it, with the latest document version and its recent changes. A revision's
+    event lists it (`RevisionInfo`: its status, tally, what a failed build failed on, the version it built).
+    The build running (`build_progress`: the revision it makes, its scene once shown, what it does now;
+    `build_stopped` when newer files replace it) is live only: applied to the state and sent to the
+    streams, never kept, so a server that stops mid-build starts again with none running.
   - `revisions` holds each revision in full (what it built from and its report), read when asked
     for: opening a design reads none of them. `results` holds their results, so what a revision
     failed is a query (the build summary's "Same as revision 6").
-  - A database of another layout is set aside whole (`hitlcad.<time>.db`) and a new one started; a
-    design's history that does not read is set aside on its own.
+  - A database of another layout is set aside whole (`hitlcad.<time>.db`) and a new one started (its
+    designs' documents start again from their folders); a design's history that does not read is set aside
+    on its own.
 - `hitlcad.lock`, held by the server that keeps the folder: a second server on it refuses to start.
 - `designs/<id>/revisions/<n>/` holds each build, self-contained: its sources (`src/`), each part
   in its own frame (`parts/`), each component's own build (`components/<name>/`, the same layout),
@@ -97,23 +130,18 @@ swapped in whole, so people and agents can open the files from the workspace. Th
 its own `.gitignore` (`*`) and is replaced only when that marker shows hitlcad created it. A failed
 build leaves the last good outputs in place.
 
-`FolderWatcher` watches registered folders recursively (`watchfiles`), ignoring `build/` and editors'
-temporary files. A change schedules a debounced rebuild of the design whose folder holds it. The
-rebuild is skipped when the folder's `BuildSpec` (design.json without the brief, the code, the
-vendor files' checksums, those of the files its requirement checks read (`Check.files`: reference
-pictures), the components' specs, the installed plugins' versions) hashes the same as the
-last build's. A build of other files than the one running for the same design and configuration
-supersedes it: the running one stops at its next stage (after the plan, after the part files, between
-analyses, before the outputs), its part files still waiting for a worker dropped and those running
-finished into the part cache, which the newer build then takes them from; a caller waiting on the
-superseded build gets the newer one's revision. A parameter edit in the panel names the values it was
-made on, and design.json is written only where it still has them and has not changed while being
-edited (`conflict.design_changed`, 409), so an agent's edit is never silently undone. A design that
-builds schedules the designs that use it as a component; their specs include its own, so they
-rebuild only when it changed. A design whose files changed while the server was down is built the
-first time a panel or an agent opens it, not at startup: the server knows every design it ever opened,
-and most of them nobody is looking at. Parameter edits from the panel are written to
-`design.json` and built at once; the hash check stops that write from building twice.
+A change to a design's document schedules a debounced rebuild. The rebuild is skipped when the
+`BuildSpec` (design.json without the brief, the code, the vendor files' checksums, those of the files its
+requirement checks read (`Check.files`: reference pictures), the components' specs, the installed plugins'
+versions) hashes the same as the last build's. A build of other files than the one running for the same design
+and configuration supersedes it: the running one stops at its next stage (after the plan, after the part files,
+between analyses, before the outputs), its part files still waiting for a worker dropped and those running
+finished into the part cache, which the newer build then takes them from; a caller waiting on the superseded
+build gets the newer one's revision. A design that builds schedules the designs that use it as a component;
+their specs include its own, so they rebuild only when it changed. A design whose folder changed while the
+server was down takes it in, and builds, the first time a panel or an agent opens it, not at startup: the
+server knows every design it ever opened, and most of them nobody is looking at. `hitlcad build` (the CLI,
+outside the server) builds a folder as it is on disk.
 
 ## Builds
 
@@ -203,7 +231,7 @@ shapes three-cad-viewer draws; the viewer is pinned, and its shape format checke
   nearer than any other; thresholds in settings); a mesh point moves to the nearest point of the
   same instance. A pick without a match stays on its revision; the panel and the agent say so.
 - **Tabs**: Pins; Structure (the design graph, laid out with dagre, coloured by results);
-  Parameters (written to `design.json` and rebuilt) with configurations; Changes (against any
+  Parameters (merged into `design.json` from the revision on screen, and rebuilt) with configurations; Changes (against any
   earlier revision, with an X-ray ghost); Results (every analysis, each as it finishes while a
   build runs; the parts, components, renders and files, and the outputs each build writes, ticked
   into design.json `outputs` the way parameters are written); BOM; Brief.
@@ -217,34 +245,41 @@ shapes three-cad-viewer draws; the viewer is pinned, and its shape format checke
   same geometry service the agent uses. Exact topology gives minimum distances and applicable angles;
   point selections measure the picked points. The user can save the result and a note as an existing
   pin. Its note records the measured revision, so carrying the pin to another build does not present
-  the old measurement as a new one. The existing context hook delivers it to the agent.
+  the old measurement as a new one. The agent's hook delivers it to the agent.
 
-What the human points at reaches the agent with their next message, the same way for Claude Code
-and Codex. With the human's permission (`workspace/agents.py`; `hitlcad init` asks on a terminal or
-takes `--hooks`/`--codex`, the extension asks in a dialog when it creates a project and offers it for
-a project that lacks it), `hitlcad init` writes a `UserPromptSubmit` hook for each. The hook names
-this machine's interpreter, so it goes where only this machine reads it: Claude Code's per-user
-`.claude/settings.local.json` in the project (kept out of the repository by the project's
-`.gitignore`), and Codex's user `~/.codex/hooks.json`, as Codex has no per-user file for one project
-(the hook adds nothing in a folder without designs). The committed `.mcp.json` and
-`.claude/settings.json` (which pre-approves the project's `hitlcad` MCP server) name only the
-server's URL. Nor does the project commit an interpreter for VS Code's Python: the extension sets
-hitlcad's (`Capabilities.python`) for the workspace through the Python extension's API, which keeps it
-in that user's state of the workspace. With the separate permission for Codex's user config it also adds hitlcad's MCP
-server to `~/.codex/config.toml` (tomlkit, every other line kept). Both hooks run `<hitlcad's
-python> -m hitlcad.cli context --hook <agent> --server <url>`, so they depend on neither PATH nor
-environment. On each
-prompt the hook posts the agent's working directory and session id to `/api/context/deliveries`,
-and `ContextFeed.deliver` answers for every design under that folder:
+What the human points at reaches the agent with their next message, and what the human changes reaches it
+while it works, the same way for Claude Code and Codex. With the human's permission (`workspace/agents.py`;
+`hitlcad init` asks on a terminal or takes `--hooks`/`--codex`, the extension asks in a dialog when it creates
+a project and offers it for a project that lacks it), `hitlcad init` writes hitlcad's hook for each, on
+`UserPromptSubmit` and on `PreToolUse` and `PostToolUse` of the tools that read or write files (Claude Code's
+`Read|Write|Edit|MultiEdit|NotebookEdit|Bash`, Codex's `Bash|apply_patch`). The hook names this machine's
+interpreter, so it goes where only this machine reads it: Claude Code's per-user `.claude/settings.local.json`
+in the project (kept out of the repository by the project's `.gitignore`), and Codex's user
+`~/.codex/hooks.json`, as Codex has no per-user file for one project (the hook adds nothing in a folder without
+designs). The committed `.mcp.json` and `.claude/settings.json` (which pre-approves the project's `hitlcad` MCP
+server) name only the server's URL. Nor does the project commit an interpreter for VS Code's Python: the
+extension sets hitlcad's (`Capabilities.python`) for the workspace through the Python extension's API, which
+keeps it in that user's state of the workspace. With the separate permission for Codex's user config it also
+adds hitlcad's MCP server to `~/.codex/config.toml` (tomlkit, every other line kept). Both hooks run `<hitlcad's
+python> -m hitlcad.hook <agent> --server <url>`, so they depend on neither PATH nor environment; it imports the
+standard library alone and starts in about 95 ms, since it runs twice around each tool call. It posts what the
+agent gave it to `/api/agents/hook`, and `AgentSessions` (`services/sessions.py`) answers:
 
-- **changed** since this session was last told: the selection and open pins in full (labels in the
-  address grammar, pin ids, notes, revision), and a `FeedbackDelivered` event records what went to
-  which session;
-- **unchanged**: a one-line reminder with the open pin ids, so the context survives the agent
-  summarising its history (`explore_design` repeats the details);
-- **cleared** since then: one line saying so, once.
+- **a prompt**: for every design under the agent's working directory, from `ContextFeed.deliver`, what the
+  human points at: **changed** since this session was last told, the selection and open pins in full (labels
+  in the address grammar, pin ids, notes, revision), and a `FeedbackDelivered` event records what went to
+  which session; **unchanged**, a one-line reminder with the open pin ids, so the context survives the agent
+  summarising its history (`explore_design` repeats the details); **cleared** since then, one line saying so,
+  once. Then what others changed, as after a tool.
+- **a tool starting**: the version each design it can write is at (the designs of the files it names, or every
+  design under the working directory for a shell command); for Claude Code's Write, a file written whole, the
+  version the session read that file at.
+- **a tool ending**: what the folders hold, taken in from those versions; then, one line each, what others (the
+  human in the panel, saves to the folder, other sessions) changed in the session's designs since it was last
+  told, and where its edits crossed theirs, as context added to the tool's result. A session is told only of
+  what happens after it is first seen.
 
-The hook prints nothing when there is nothing to say and never fails a prompt (a server that is
+The hook prints nothing when there is nothing to say and never fails a prompt or a tool (a server that is
 down adds nothing). The panel compares the latest delivery with the current selection and pins and
 shows "Sent to Claude Code at 14:02" or "Goes to your agent with your next message". Codex runs the
 hook only once the human has also approved it (`/hooks`). **Copy for chat** copies `/api/context`

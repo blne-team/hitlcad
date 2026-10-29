@@ -110,10 +110,12 @@ def cmd_init(args: argparse.Namespace) -> int:
     backends = BackendRegistry.from_settings(settings).all()
     hook = agents.command_line(agents.hook_argv(sys.executable, "<agent>", settings.base_url))
     hooks = _permission(args.hooks, (
-        "Let Claude Code and Codex see what you select and pin in the hitlcad panel?\n"
-        f"  This adds a prompt hook to {agents.CLAUDE_HOOKS} (yours, not committed) and to Codex's\n"
-        f"  {agents.codex_hooks_file()}. Before each message you send, the agent runs:\n  {hook}\n"
-        "  and your selection and open pins are added to the message."
+        "Let Claude Code and Codex see what you select, pin and change in the hitlcad panel?\n"
+        f"  This adds a hook to {agents.CLAUDE_HOOKS} (yours, not committed) and to Codex's\n"
+        f"  {agents.codex_hooks_file()}. Before each message you send, and around each of the agent's file\n"
+        f"  reads, edits and shell commands, the agent runs:\n  {hook}\n"
+        "  Your selection and open pins are added to the message; the agent's edits merge with yours, and it\n"
+        "  hears what you changed."
     ), "--hooks")  # fmt: skip
     codex = _permission(args.codex, f"Add hitlcad's MCP server to Codex's {agents.codex_config_file()}?",
                         "--codex")  # fmt: skip
@@ -180,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("init", help="create a design project workspace (designs/, agent config)")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--hooks", action=argparse.BooleanOptionalAction,
-                   help="add the agents' prompt hook (asked when not given)")  # fmt: skip
+                   help="add the agents' hook (asked when not given)")  # fmt: skip
     p.add_argument("--codex", action=argparse.BooleanOptionalAction,
                    help="add hitlcad to Codex's config.toml and trust the project (asked when not given)")  # fmt: skip
     p.set_defaults(fn=cmd_init)

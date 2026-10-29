@@ -359,7 +359,7 @@ export interface paths {
         };
         /**
          * Agent Setup
-         * @description Whether the project has the agents' prompt hooks and Codex's config, so the extension asks
+         * @description Whether the project has the agents' hooks and Codex's config, so the extension asks
          *     the human about what is missing.
          */
         get: operations["agent_setup_api_projects_agents_get"];
@@ -1923,7 +1923,7 @@ export interface components {
             path: string;
             /**
              * Hooks
-             * @description The human allowed the agents' prompt hooks
+             * @description The human allowed the agents' hooks
              * @default false
              */
             hooks: boolean;

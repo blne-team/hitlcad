@@ -4,7 +4,7 @@ import type { SelectionStore } from "./webview";
 
 /**
  * Copy what the human points at, to paste into any chat: the selections and open pins of every
- * design in the workspace (the same text the agents' prompt hook adds), plus model-file selections.
+ * design in the workspace (the same text the agents' hook adds), plus model-file selections.
  */
 export async function copyForChat(api: Api, selections: SelectionStore): Promise<void> {
   const parts: string[] = [];

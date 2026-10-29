@@ -5,21 +5,24 @@ import type { AgentSetup, Allowed } from "./api";
 const NEVER_ASK = "hitlcad.agentSetup.neverAsk";
 
 /**
- * Ask the human whether hitlcad may set up the agents for the project at `dir`: the prompt hook that
- * adds their selection and pins to each message, and Codex's config. Nothing is changed without
- * this. `setup` names the files (the server's). Returns what they allowed (both false when they decline).
+ * Ask the human whether hitlcad may set up the agents for the project at `dir`: the hook that adds their
+ * selection and pins to each message and merges the agent's file edits with theirs, and Codex's config. Nothing
+ * is changed without this. `setup` names the files (the server's). Returns what they allowed (both false when
+ * they decline).
  */
 export async function askAgentSetup(dir: string, setup: AgentSetup): Promise<Allowed> {
   const both = "Allow";
   const hooksOnly = "Allow Without Codex Config";
   const answer = await vscode.window.showInformationMessage(
-    "Let Claude Code and Codex see what you select and pin in hitlcad?",
+    "Let Claude Code and Codex see what you select, pin and change in hitlcad?",
     {
       modal: true,
       detail:
-        `hitlcad adds a prompt hook to ${setup.claude_hooks} in ${path.basename(dir)} (your own Claude Code settings, ` +
+        `hitlcad adds a hook to ${setup.claude_hooks} in ${path.basename(dir)} (your own Claude Code settings, ` +
         `not committed) and to Codex's ${setup.codex_hooks}. Before each message you send to the agent, it adds your ` +
-        "selection and open pins from the hitlcad panel; in a folder without designs it adds nothing. Codex asks you " +
+        "selection and open pins from the hitlcad panel. Around each of the agent's file reads, edits and shell " +
+        "commands, it tells hitlcad where the agent started, so its edits merge with yours instead of undoing them, " +
+        "and tells the agent what you changed meanwhile. In a folder without designs it adds nothing. Codex asks you " +
         "once to approve the hook (/hooks).\n\n" +
         `For Codex it also adds hitlcad's MCP server to ${setup.codex_config}.`,
     },

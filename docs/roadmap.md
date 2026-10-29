@@ -11,7 +11,7 @@ design folders, connectors, mates, fits, fastener sets, components, configuratio
 catalogs, materials, five manufacturing processes, exports. Every check gives a verdict the agent
 can act on: a failure is a real problem, says where, and appears once per root cause. The VS Code
 extension shows builds in 3D, takes picks and pins, and hands them to Claude Code and Codex through
-the prompt hook; an explode pulls an assembly apart, and a STEP, STL or glTF file opens in the same
+their hook; an explode pulls an assembly apart, and a STEP, STL or glTF file opens in the same
 view, its picks measured on the mesh a build would make. A part is built again only when something
 it depends on changes, wherever its design folder is. It runs on Linux, macOS and Windows, which CI
 checks, release installer included. Four reference designs build and verify in every configuration.
@@ -66,6 +66,15 @@ the assembly's STEP and mesh, the Blender scene, the rendered views and the expo
 design.json `outputs` names them, which the agent edits or the human ticks in the panel, and the agent's
 images render the views of any revision without them.
 
+A design's files are a CRDT document in hitlcad's database (pycrdt), of which its folder is the copy on disk, so
+the human and the agents edit the same files at once without undoing each other: every edit is made on a version
+and merged into the current one. The panel's parameter and outputs edits change only their value's text in
+design.json, made on the revision on screen; the agents' hook runs around their file reads, edits and shell
+commands as well as their prompts, so what a tool writes merges from the version it started on (a file written
+whole, from the version it was read at), and the agent is told in one line, with the tool's result, what the human
+changed meanwhile; any other save merges from the version each file was last written or read at. Two edits that
+change the same text at once are both kept, by rule, and shown to the human (and the agents involved) to look at.
+
 ## Next: motion that scales
 
 Motion follows a mechanism's inputs, placing what each moves stage by stage: about fixed axes by laws
@@ -91,6 +100,45 @@ follower kept in contact).
 
 Done when the V8 engine's whole cycle is one input's sweep, every valve lifting by its cam, in under
 5 s of motion analysis.
+
+## Next: editing in the panel
+
+The human edits a design in the panel as in a CAD tool, and only what needs code written goes to the agent:
+editing a value never costs tokens. Real CAD tools let the human select geometry, see the dimensions that drive
+it there, and drag or type them; their sketches stay editable. A Python part file has no feature tree to edit, so
+hitlcad records one as the file runs, and anything structural is a request the agent turns into code, which the
+human judges against what they drew.
+
+- **The feature tree of a part file.** The build worker records each build123d operation as a part file runs
+  (primitives, booleans, placements, sketches, extrudes, fillets, in builder and algebra code): its file, line and
+  columns, its arguments' values, and which parameters and which literals of the source each value came from, with
+  its rate (numbers that carry their sources and derivatives). Each face of the result maps to the operation that
+  made it (OpenCascade's history of booleans, else the surface it lies on). A prototype on the enclosure mapped all
+  57 faces to their lines and parameters. A value that loses its sources (numpy, `int()`) is found by building the
+  part file once more with each parameter nudged.
+- **Dimensions on the model.** Selecting a face shows the dimensions that drive it, on the model: a height arrow
+  on the lid's top face tied to `lid_t`, a thickness between two faces tied to `wall`. Dragging or typing writes
+  the parameter, merged from the revision on screen. A value fixed in code is changed where it is (its literal, by
+  its columns) or made a parameter (design.json and the code, together) by the panel itself where `p` is in reach,
+  by the agent where it is not. Then the deferred drag of a whole part in a locked view, by the parameters that
+  place it, is the same edit.
+- **The editor in the document.** Open editors join the design's document (Yjs in the extension, pycrdt-websocket
+  in the server), so the human's unsaved typing merges with the panel's and the agent's edits as they happen.
+- **Sketches as requests.** On a face or a part's datum plane the human draws lines, arcs, circles, rectangles and
+  slots, with typed dimensions (a parameter's name or a value) and snaps recorded as intent (centred, on an edge),
+  and gives each closed profile an operation: pocket, boss, cut through, hole, with a pattern. It reaches the agent
+  as a pin carrying the sketch in the part's own frame; the agent writes the code, and the panel draws the sketch
+  over the new build for the human to accept or send back.
+- **Predefined objects.** Catalog parts (the providers `search_catalog` searches) dropped on a picked connector or
+  hole pattern, sketch templates (bolt circle, slot, hex pocket, vent grid) and simple parts (box, cylinder, plate,
+  standoff) on a face: requests too, from what the plugins give, so v0.4's building blocks appear here without
+  panel code.
+- **Suggestions.** An edit tried before it is written: built from the document with it, beside the current build,
+  then kept or dropped; and the same for an agent's proposal (as JupyterCAD's forks).
+
+Done when, on the enclosure, the human drags the lid's thickness and changes a boss radius fixed in code, draws a
+vent the agent turns into a pocket, and tries a wider box as a suggestion, all while the agent edits the same
+files, with no edit lost and no agent turn for a value.
 
 ## v0.2: a build seen as it is built
 

@@ -21,7 +21,7 @@ Skills are installed in `.claude/skills/` and `.agents/skills/` (`hitlcad init .
 Build, measure, export and render through hitlcad tools; other CAD skills serve as API reference.
 """
 
-IGNORED = ["__pycache__/", agents.CLAUDE_HOOKS]  # the prompt hook names this machine's interpreter
+IGNORED = ["__pycache__/", agents.CLAUDE_HOOKS]  # the agents' hook names this machine's interpreter
 
 
 def _claude_settings(config: dict[str, Any]) -> bool:
@@ -49,7 +49,7 @@ def init_project(
 ) -> list[str]:
     """Create the project skeleton without overwriting the human's files; `python` is the interpreter
     that builds models (hitlcad's own). hitlcad's entries in the agents' configs and its skills are
-    kept current. `hooks` and `codex` are the human's permission for the agents' prompt hooks and
+    kept current. `hooks` and `codex` are the human's permission for the agents' hooks and
     for Codex's user config (see `agents`). Returns the paths written/updated."""
     root = path.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)

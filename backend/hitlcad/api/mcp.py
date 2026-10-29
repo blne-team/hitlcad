@@ -39,6 +39,7 @@ Tools addressing a design take its folder's absolute path.
 
 - Read the hitlcad skill for the design workflow and hitlcad-<backend> before editing model code;
   load their references when needed. Edit source files with your own file tools; never edit build/.
+  The human edits the same files from the panel: edits merge, and the hook says what they changed.
 - Declare structure in design.json, then build_design(path, scope="structure") before geometry.
   Search the catalog before modelling standard hardware; compute shared values in interfaces.py.
 - build_design returns a compact problem summary. Use explore_design(path, focus) for details;

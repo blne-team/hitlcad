@@ -70,7 +70,7 @@ def hook_handler(python: str, agent: str, server_url: str) -> dict[str, Any]:
 
 def _is_ours(handler: dict[str, Any]) -> bool:
     words = " ".join([handler.get("command", ""), *handler.get("args", [])])
-    return "hitlcad.hook" in words or "hitlcad.cli" in words and "context" in words  # the prompt hook it replaces
+    return "hitlcad.hook" in words or "hitlcad.cli" in words and "context" in words  # the prompt-only hook it replaces
 
 
 def hooks(config: dict[str, Any], agent: str, wanted: dict[str, Any]) -> bool:

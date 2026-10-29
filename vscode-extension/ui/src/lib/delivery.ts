@@ -3,7 +3,7 @@ import type { DesignState } from "../api/types";
 const AGENTS: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
 
 /**
- * Whether the agent has what the human points at in this design. The agents' prompt hook adds the
+ * Whether the agent has what the human points at in this design. The agents' hook adds the
  * selection and open pins to the next message and records the delivery; this compares the latest
  * delivery (to any session) with what is pointed at now. Null when nothing is pointed at.
  */

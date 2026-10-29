@@ -108,7 +108,7 @@ class ProjectPath(BaseModel):
 
 
 class InitProject(ProjectPath):
-    hooks: bool = Field(default=False, description="The human allowed the agents' prompt hooks")
+    hooks: bool = Field(default=False, description="The human allowed the agents' hooks")
     codex: bool = Field(default=False, description="The human allowed changing Codex's config.toml")
 
 
@@ -476,7 +476,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
 
     @app.get("/api/projects/agents")
     async def agent_setup(path: str) -> agents.AgentSetup:
-        """Whether the project has the agents' prompt hooks and Codex's config, so the extension asks
+        """Whether the project has the agents' hooks and Codex's config, so the extension asks
         the human about what is missing."""
         return agents.status(project_path(path))
 

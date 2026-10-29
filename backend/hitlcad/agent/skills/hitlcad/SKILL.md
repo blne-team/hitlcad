@@ -119,10 +119,15 @@ A passing build verifies only its reported checks; judge appearance from the act
 
 ## Reading the human
 
-When the human says "this", "here", "the selected …" or mentions pins, hitlcad's prompt hook has added
+When the human says "this", "here", "the selected …" or mentions pins, hitlcad's hook has added
 what they point at to their message ("The human is pointing at these in the hitlcad panel"),
 named by instance and connector. `explore_design(path, focus="review")` repeats it. After addressing pins, call
 `resolve_pins` with a short reply. Parameter values the human set in the panel are deliberate.
+
+The human edits the same files while you work: parameters and outputs in the panel, and the files themselves.
+Your edits and theirs merge; neither undoes the other. After your tools, the hook says what they changed
+("Meanwhile, in the hitlcad designs you work in"): read a file again before you edit it. Where it says your edit
+and theirs changed the same line at once, the merge kept both: make that line what it should be.
 
 When the human gives a picture of what to make (a photo, a render, a sketch) with what matters in it,
 it becomes a `silhouette` requirement that every build compares the model with:

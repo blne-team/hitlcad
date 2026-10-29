@@ -103,7 +103,7 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 - **The analyses** above, and **the result contract**: `Result`, `Cause`, problems, the tally, the
   build summary.
 - Services, the store, the design graph, picks, pins and anchors, the REST API, the MCP tools, the
-  prompt hook, the skill installer, the preview renderer.
+  agents' hook, the skill installer, the preview renderer.
 
 **Not plugins, on purpose**: MCP tools, API routes and the panel (plugins add vocabulary, not
 interface: agents do better with a small fixed set of tools, and a plugin reaches the agent through
@@ -302,21 +302,25 @@ This is a bug in hitlcad, not in the design: do not change the design to avoid i
 
 ## The store
 
-The design folder stays the source of truth: design.json is what the agent edits with its own tools,
-what git diffs and what the panel writes parameters to. What hitlcad keeps on the machine is one
-SQLite database, `<data_dir>/hitlcad.db` (`store/sqlite.py`, the standard library's `sqlite3`, WAL),
-beside each revision's files in `<data_dir>/designs/<id>/revisions/<n>/`:
+A design's files are a document hitlcad keeps, of which the design folder is the copy on disk: design.json
+is what the agent edits with its own tools in the folder, what git diffs, and what the panel's edits merge
+into (see [architecture.md](architecture.md#the-database-holds-the-design-the-folder-is-its-copy)). What
+hitlcad keeps on the machine is one SQLite database, `<data_dir>/hitlcad.db` (`store/sqlite.py`, the standard
+library's `sqlite3`, WAL), beside each revision's files in `<data_dir>/designs/<id>/revisions/<n>/`:
 
 | Table | Holds |
 | --- | --- |
 | `folders` | folder path → design id |
 | `designs` | the design ids |
+| `doc_updates` | each design's document as the updates that made it, one per version, with its origin |
+| `doc_snapshots` | the whole document every 100 versions, so an earlier version replays from near it |
+| `blobs` | the contents of the files kept by their sums (vendor files, pictures) |
 | `events` | each design's events, in order: its history, folded into `DesignState` |
 | `revisions` | each revision in full (what it built from and its report), with its configuration and status |
 | `results` | each revision's results: code, analysis, subject, status, severity, file, line |
 
 A revision's event lists it (`RevisionInfo`: id, origin, configuration, status, tally, what a failed
-build failed on, its spec's key); the revision itself is read when asked for, and the panel fetches it
+build failed on, its spec's key, the version of the document it built); the revision itself is read when asked for, and the panel fetches it
 by id (`GET /api/designs/{id}/revisions/{n}`). Opening a design reads no revision's spec or report.
 What a revision failed is a query (`DesignStore.failing`), which is how a build tells the agent it
 repeats a problem.

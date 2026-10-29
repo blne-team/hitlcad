@@ -11,7 +11,7 @@ type OpenedDesign = Schemas["OpenedDesign"];
 type Capabilities = Schemas["Capabilities"];
 type Revision = Schemas["Revision"];
 type ProjectCreated = Schemas["ProjectCreated"];
-/** The permission-gated parts of a project's agent setup (the prompt hooks, Codex's config.toml) and their files. */
+/** The permission-gated parts of a project's agent setup (the agents' hooks, Codex's config.toml) and their files. */
 export type AgentSetup = Schemas["AgentSetup"];
 /** What the human allowed of the agent setup. */
 export type Allowed = Pick<AgentSetup, "hooks" | "codex">;
