@@ -62,7 +62,7 @@ def main() -> None:
     for repetition in range(args.repeat):
         bodies = BuildBodies(built, settings, ResultCache(defaults.cache_dir / "analysis"))
         for name, process in processes.items():
-            body = bodies.part(name)
+            body = bodies.made(name, process)
             started = time.perf_counter()
             if profile is not None:
                 profile.enable()

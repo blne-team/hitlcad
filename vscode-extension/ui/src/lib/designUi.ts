@@ -3,7 +3,7 @@ import type { BuildProgress, RevisionInfo } from "../api/types";
 import { toExtension } from "./host";
 import type { Inspection } from "./inspection";
 
-export type InspectorTab = "pins" | "structure" | "parameters" | "changes" | "report" | "bom" | "brief";
+export type InspectorTab = "pins" | "structure" | "parameters" | "changes" | "report" | "print" | "bom" | "brief";
 
 /**
  * UI state a design's 3D editor and its Design view share. They are separate webviews: each sends
@@ -15,6 +15,8 @@ export interface DesignUi {
   /** Revision compared against; null means the one before `revision`. */
   base: number | null;
   compare: boolean;
+  /** The main view shows the print view: the printed parts lying as they print, with their plan. */
+  printing: boolean;
   placing: boolean;
   activePin: string | null;
   tab: InspectorTab;
@@ -37,7 +39,7 @@ export interface MotionAt {
 }
 
 const INITIAL: DesignUi = {
-  revision: null, base: null, compare: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
+  revision: null, base: null, compare: false, printing: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
 };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;

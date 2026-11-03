@@ -9,7 +9,13 @@ const MODEL = `from build123d import *
 
 
 def build(p, i):
-    return {"box": (Box(p["width"], 20, p["height"], align=(Align.CENTER, Align.CENTER, Align.MIN)), {})}
+    with BuildPart() as box:
+        with BuildSketch(Plane.XY):
+            Rectangle(p["width"], 20)
+        extrude(amount=p["height"])
+        with BuildSketch(Plane.XY.offset(p["height"]), mode=Mode.PRIVATE):
+            Rectangle(p["width"], 20)
+    return {"box": (box.part, {})}
 `;
 const ASSEMBLY = `from build123d import Pos
 
@@ -42,6 +48,51 @@ test.beforeAll(async () => {
 });
 
 const tab = (page: Page, name: string) => page.locator(".tab", { hasText: name }).click();
+
+test("2D looks straight at a recorded sketch or along the toolbar's view directions, and 3D comes back", async ({ page }) => {
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  const stage = page.locator(".cad-stage");
+  const canvas = await stage.locator("canvas").elementHandle();
+  const toolbox = page.getByRole("toolbar", { name: "View" });
+  const view3d = toolbox.getByRole("button", { name: "3D view" });
+  const view2d = toolbox.getByRole("button", { name: "2D view" });
+  await expect(view3d).toHaveAttribute("aria-pressed", "true");
+
+  const shown = toolbox.getByRole("button", { name: "Show sketches" });
+  await shown.click();
+  await expect(shown).toHaveAttribute("aria-pressed", "true");
+  await shown.click();
+  const picker = stage.getByLabel("Sketch", { exact: true });
+  await expect(picker.locator("option:not([disabled])")).toHaveText(["box · parts/box.py:6", "box · parts/box.py:9"]);
+  await view2d.click();
+  await expect(stage).toHaveAttribute("data-view", "2d");
+  await expect(picker.locator("option:checked")).toHaveText("box · parts/box.py:6");
+  await picker.selectOption({ label: "box · parts/box.py:9" });
+  await stage.locator(".tcv_button_resize").click(); // fits the sketch again
+  await stage.locator(".tcv_button_front").click(); // looks along it, still in 2D
+  await expect(stage).toHaveAttribute("data-view", "2d");
+  await expect(picker).toHaveValue("");
+  await view3d.click();
+  await expect(stage).toHaveAttribute("data-view", "3d");
+  expect(await canvas!.evaluate((element) => element === document.querySelector(".cad-stage canvas"))).toBe(true);
+
+  await picker.selectOption({ label: "box · parts/box.py:6" }); // a sketch goes straight to 2D
+  await expect(stage).toHaveAttribute("data-view", "2d");
+  await stage.locator(".tcv_button_iso").click(); // iso turns the camera back into 3D
+  await expect(stage).toHaveAttribute("data-view", "3d");
+  await expect(view3d).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the viewer's toolbar: pan with the camera's buttons, sketches after the view directions, inspect with the measure tools, help last", async ({ page }) => {
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  const order = await page.locator(".tcv_cad_toolbar").evaluate((bar) => [...bar.querySelectorAll(
+    ".tcv_button_resize, .pan-button, .tcv_button_iso, .tcv_button_right, .sketch-picker, .tcv_button_distance, .inspect-button, .tcv_button_help",
+  )].map((element) => /tcv_button_\w+|pan-button|sketch-picker|inspect-button/.exec(element.className)![0]));
+  expect(order).toEqual(["tcv_button_resize", "pan-button", "tcv_button_iso", "tcv_button_right", "sketch-picker",
+    "tcv_button_distance", "inspect-button", "tcv_button_help"]);
+});
 
 test("the Design view's tabs each show their panel", async ({ page }) => {
   await openPanel(page, { name: "inspector", id });

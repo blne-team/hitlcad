@@ -86,8 +86,8 @@ RUN uv venv "${VIRTUAL_ENV}"
 ARG RUST_VERSION="stable"
 
 # Separate caches by UID/GID to avoid reusing old root-owned caches.
-RUN --mount=type=cache,id=solidwork-cargo-registry-${USER_UID}-${USER_GID},target=/home/user/.cargo/registry,uid=${USER_UID},gid=${USER_GID} \
-    --mount=type=cache,id=solidwork-cargo-git-${USER_UID}-${USER_GID},target=/home/user/.cargo/git,uid=${USER_UID},gid=${USER_GID} \
+RUN --mount=type=cache,id=htilcad-cargo-registry-${USER_UID}-${USER_GID},target=/home/user/.cargo/registry,uid=${USER_UID},gid=${USER_GID} \
+    --mount=type=cache,id=htilcad-cargo-git-${USER_UID}-${USER_GID},target=/home/user/.cargo/git,uid=${USER_UID},gid=${USER_GID} \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
       --default-toolchain ${RUST_VERSION} \
       --profile default \
@@ -146,5 +146,5 @@ RUN mkdir -p "$HOME/.history" && \
 SHELL ["/bin/bash", "-lc"]
 
 USER root
-RUN mkdir -p /workspaces/solidwork && chown user:user /workspaces/solidwork
+RUN mkdir -p /workspaces/htilcad && chown user:user /workspaces/htilcad
 USER user

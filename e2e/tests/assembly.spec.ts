@@ -8,20 +8,18 @@ test("an assembly shows its instances by name, in the viewer, the report and the
   await expect(page.locator(".tcv_cad_tree")).toContainText("base");
   await expect(page.locator(".tcv_cad_tree")).toContainText("lid");
 
-  await clickModel(page, 0.5, 0.42); // the lid's top face
-  await expect(page.locator(".selection-box li").first()).toContainText(/of (lid|base)\) at/);
-
-  // With the filter on Solid, the same click picks the whole part.
-  await page.keyboard.press("Escape");
-  await page.locator(".tcv_shape_filter").click();
-  await page.locator(".tcv_shape_filter").getByText("Solid", { exact: true }).click();
-  await clickModel(page, 0.5, 0.42);
+  // The part under the cursor is named beside it; a click selects it whole, a click on it again the face there.
+  await clickModel(page, 0.5, 0.42); // the lid's top
+  await expect(page.locator(".cad-hover-name")).toHaveText(/^(lid|base)( · \w+)?$/);
   await expect(page.locator(".selection-box li")).toHaveCount(1);
   await expect(page.locator(".selection-box li").first()).toContainText(/^1Whole part, volume .* \(instance (lid|base)\) at/);
   const { selection } = await api<{ selection: { kind: string; component: { topo: string; index: number } }[] }>("GET", `/api/designs/${assemblyId}`);
   expect(selection.map((s) => [s.kind, s.component.topo, s.component.index])).toEqual([["solid", "solid", 0]]);
+  await clickModel(page, 0.5, 0.42);
+  await expect(page.locator(".selection-box li")).toHaveCount(1);
+  await expect(page.locator(".selection-box li").first()).toContainText(/of (lid|base)\) at/);
 
-  // The filter applies to pins too: a pin placed under Solid is on the whole part.
+  // Pins are placed on parts the same way: a pin on a part not selected whole is on the whole part.
   await page.locator(".pin-toggle").click();
   await clickModel(page, 0.5, 0.42);
   await expect

@@ -72,7 +72,7 @@ export function FileView({ path }: { path: string }) {
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {data !== null && !loadError && !sel.items.length && (
           <SelectHint>
-            {exactShapes(data).size ? "Click a face, edge or vertex to select it." : "Click the model to select a point."} Shift-click adds more. Right-drag to pan; scroll to zoom.
+            {exactShapes(data).size ? "Click a part to select it, and again for the face, edge or vertex under the cursor (Alt-click goes there at once)." : "Click the model to select a point."} Shift-click adds more. Right-drag to pan; scroll to zoom.
           </SelectHint>
         )}
         <div className="side">

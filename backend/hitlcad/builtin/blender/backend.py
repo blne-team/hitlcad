@@ -79,7 +79,8 @@ class BlenderBackend(CADBackend):
     ) -> tuple[str, str]:
         """`model.blend`: the assembly as one Blender scene, from the parts' files, in one of the design's workers."""
         target = out_dir.resolve() / ASSEMBLY_FILE
-        result, _ = await self.job(ticket, design, work, {"mode": "assembly", "tree": tree, "target": str(target)})
+        result, _ = await self.job(ticket, design, work, {"mode": "assembly", "tree": tree, "target": str(target)},
+                                   {})  # fmt: skip
         if not result["ok"]:
             raise HitlcadError(result["error"])
         return ASSEMBLY_FILE, "application/x-blender"

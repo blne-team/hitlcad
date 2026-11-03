@@ -41,6 +41,7 @@ A package may contribute any number of each.
 | `hitlcad_backends` | factories by name, each taking the settings | `build123d`, `blender` |
 | `hitlcad_catalogs` | `CatalogProvider`s | `catalogs`: bd_warehouse, step |
 | `hitlcad_exporters` | `Exporter`s, each an output design.json `outputs` can name (`step`, `stl`, `native` and `preview` are the build's own) | `exports`: bom, 3mf; `robot`: urdf, sdf |
+| `hitlcad_slicers` | `Slicer`s: adapters to slicer programs, which a project's printer names (`core.project`) | `printing`: bambu-studio |
 | `hitlcad_solvers` | `Solver`s by name: where a block of an input's motion settles at each position, which motion checks (`Settings.solver`) | `solvers`: sqp |
 | `hitlcad_analyses` | `Analysis` objects, each at a `stage` | none: hitlcad's analyses are core |
 | `hitlcad_materials` | `materials.json` paths | `materials` |
@@ -89,12 +90,13 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 | `solvers` | sqp: where a block settles, by CasADi's SQP method on the block's compiled graph (`Block.nlp`), with exact derivatives |
 | `materials` | the built-in materials |
 | `pictures` | the silhouette check (a model against a reference picture, cut out with OpenCV), and its skill reference |
+| `printing` | the slicers a printer is sliced in: Bambu Studio |
 
 ### What stays core
 
 - **Kernel** (`kernel/`): the plugin registry, diagnostics and their catalog.
 - **The design's skeleton**: `DesignSpec`, `PartSpec`, components, configurations, parameters,
-  requirements, fastener sets and `plugins`, with slots the installed members fill; the bases members
+  requirements and fastener sets, with slots the installed members fill; the bases members
   derive from (`Connector`, `Mate`, `Relation`, `Check`, `Process`).
 - **Execution**: the model runtime (`p`, `i`, what code read), the executor and the build workers,
   the pipeline, the part and result caches.
@@ -148,30 +150,46 @@ def hitlcad_processes() -> list[type]:
   gathered.
 - **Code in the build process.** A model package names the directory its package is in and the
   backends whose part files may import it. The job hands those directories to the build process,
-  which puts them on `sys.path`. Blender's Python sees nothing else of hitlcad's environment, so a
-  model package for Blender uses the standard library and `bpy` only. A backend's fingerprint
-  includes its model packages' files, so changing one rebuilds the parts.
+  which puts those of hitlcad's own plugins and the project's on `sys.path`. Blender's Python sees
+  nothing else of hitlcad's environment, so a model package for Blender uses the standard library and
+  `bpy` only. A backend's fingerprint includes those model packages' files, so changing one rebuilds
+  the parts of the projects that name its plugin.
 - **Construction contracts.** Prefer keyword-only arguments and explicit dimension relationships.
   Return the backend's normal `(shape, connectors)` value. Reject invalid inputs with the argument or
   section/hole index and a repair direction, before creating geometry. Include a complete recipe with
   requirements and configurations so an agent can change dimensions without inventing topology.
-- **Versions.** Each build records the versions of the installed plugins that are not hitlcad's own
-  (`BuildSpec.plugins`), so a build after an upgrade is a new build, and a cached component's results
-  are kept only for the same plugins and hitlcad code.
+- **Versions.** Each build records the versions of the plugins its project names
+  (`BuildSpec.plugins`; a revision, those of each design folder it read), so a build after one of
+  them is upgraded is a new build, and a cached component's results are kept only for the same
+  plugins and hitlcad code. Installing or upgrading a plugin a project does not name changes nothing
+  of its builds.
 
-### Designs name the plugins they need
+### Projects name the plugins their designs use
 
-```json
-{
-  "hitlcad": 2,
-  "plugins": { "hitlcad-lasercut": ">=0.1" },
-  "manufacturing": { "process": "laser_cut", "thickness_mm": 3 }
-}
+hitlcad runs one server per machine, so each Python process gets one version of each plugin and
+projects can't pin their own. A plugin is installed into hitlcad's environment
+(`uv tool install … --with hitlcad-lasercut`, see [INSTALL.md](../INSTALL.md)), and every installed
+plugin is loaded. A design gets hitlcad's own plugins and those its project names in `hitlcad.toml`,
+the nearest one in its folder or its parents (`hitlcad init` writes it):
+
+```toml
+[plugins]
+hitlcad-lasercut = ">=0.1"
 ```
 
-Distribution names with version specifiers; hitlcad's own are never listed. They are checked before
-the rest of design.json, so where a plugin is missing the design says `plugin.missing` ("design.json
-needs hitlcad-lasercut >=0.1, which is not installed") rather than that `laser_cut` is no process.
+Distribution names with version specifiers; hitlcad's own are never listed. Only those plugins'
+members, backends, exporters, analyses, materials and model packages reach the project's designs; the
+rest are there for the agent to choose from (`list_backends`, the skills). The agent keeps
+`hitlcad.toml`, as it keeps the designs' files: the human installs plugins, and need not know which
+plugin gives what a design uses.
+
+- a design uses an installed plugin its project does not name: `plugin.not_named` ("…/design.json
+  uses plugins its project's hitlcad.toml does not name in [plugins]: manufacturing:
+  hitlcad-lasercut's"), a `design` diagnostic: the build fails with it, and the agent adds the
+  plugin to `hitlcad.toml` or stops using it;
+- the project names a plugin that is not installed, or not at a version it accepts:
+  `plugin.missing` ("…/hitlcad.toml needs hitlcad-lasercut >=0.1, which is not installed"), a
+  `plugin` diagnostic: the panel shows it and the agent tells the human what to install.
 
 ### When a plugin fails
 

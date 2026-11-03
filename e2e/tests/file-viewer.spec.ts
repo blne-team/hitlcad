@@ -4,7 +4,7 @@ import { clickModel, fixtures, openPanel, sentToExtension, viewerReady } from ".
 const view = (page: Page, path: string) => openPanel(page, { name: "file", path });
 const items = (page: Page) => page.locator(".selection-box li");
 
-test("STEP picks name the exact face; shift adds, Esc clears", async ({ page }) => {
+test("STEP picks name the part, then the exact face; shift adds, Esc clears", async ({ page }) => {
   await view(page, fixtures().step);
   await viewerReady(page);
   await expect(page.locator(".model-size")).toHaveText("40.0 × 30.0 × 10.0 mm");
@@ -12,6 +12,8 @@ test("STEP picks name the exact face; shift adds, Esc clears", async ({ page }) 
 
   await clickModel(page, 0.5, 0.42);
   await expect(items(page)).toHaveCount(1);
+  await expect(items(page).first()).toContainText(/^1Whole part/);
+  await clickModel(page, 0.5, 0.42); // again: what is under the cursor on it
   await expect(items(page).first()).toContainText(/\((face|edge|vertex) \d+ of block\)/);
 
   await clickModel(page, 0.42, 0.5, { shift: true });

@@ -20,7 +20,9 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from hitlcad.core.address import InstancePath
+from hitlcad.core.checks import PrintSetting
 from hitlcad.core.design import DesignSpec
+from hitlcad.core.project import ProjectSettings
 from hitlcad.core.structure import Measured, Tolerances
 from hitlcad.core.types import Matrix, Value, utcnow
 from hitlcad.kernel.errors import Location
@@ -226,12 +228,16 @@ class PartResult(Model):
     made: bool
     material: str | None
     process: str | None
+    up: tuple[float, float, float] | None = Field(default=None, description="Which way up a printed part prints "
+                                                  "(`PrintedProcess.up`); none for a part not printed")  # fmt: skip
     catalog: CatalogInfo | None = None
     cached: bool = Field(description="Reused from an earlier build whose inputs it read were the same")
     reads: Reads
     metrics: MeshMetrics
     mass: MassProperties | None = None
     connectors: dict[str, ConnectorInfo] = Field(default_factory=dict)
+    print: list[PrintSetting] = Field(default_factory=list, description="A printed part's settings: the design's, "
+                                      "and the rest recommended (`PrintedProcess.recommend`)")  # fmt: skip
 
 
 class InstanceInfo(Model):
@@ -323,7 +329,7 @@ class Artifact(Model):
     name: str
     path: str
     media_type: str
-    role: str = Field(description="view, part_mesh, part_exchange, objects, log, or the output that wrote it "
+    role: str = Field(description="view, print_view, part_mesh, part_exchange, objects, log, or the output that wrote it "
                       "(design.json `outputs`: step, stl, native, preview, an exporter's name)")  # fmt: skip
     label: str = Field(default="", description="What the file is, for the panel's file list; empty for the files it "
                        "shows its own way (the 3D view, the preview)")  # fmt: skip
@@ -413,7 +419,8 @@ class BuiltFrom(Model):
     files: dict[str, DocumentAt] = Field(description="Each design folder it read, its own and its components': "
                                          "path -> its files")  # fmt: skip
     tolerances: Tolerances = Field(description="hitlcad's default tolerances, which design.json `verification` refines")
-    plugins: dict[str, str] = Field(description="The installed plugins it was built with: distribution -> version")
+    projects: dict[str, ProjectSettings] = Field(description="What each design folder it read got from its "
+                                                 "project (plugins, printer): path -> settings")  # fmt: skip
 
 
 class Revision(Model):
@@ -461,8 +468,8 @@ class BuildSpec(Model):
     overrides: dict[str, Value] = Field(default_factory=dict, description="Parameter values a parent design binds")
     tolerances: Tolerances
     components: dict[str, BuildSpec] = Field(default_factory=dict)
-    plugins: dict[str, str] = Field(default_factory=dict, description="The installed plugins it was built with, but "
-                                    "hitlcad's own: distribution -> version")  # fmt: skip
+    project: ProjectSettings = Field(default_factory=ProjectSettings, description="What it got from its project: "
+                                     "the plugins it names, at their versions, and its printer")  # fmt: skip
 
     def values(self) -> dict[str, Value]:
         values = self.design.values(self.configuration)

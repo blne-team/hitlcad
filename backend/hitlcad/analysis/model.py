@@ -36,7 +36,9 @@ if TYPE_CHECKING:
     import trimesh
 
     from hitlcad.analysis.base import ResultCache
+    from hitlcad.core.checks import Process
     from hitlcad.core.loops import Solver
+    from hitlcad.core.project import Printer
     from hitlcad.geometry.walls import Walls
 
 
@@ -303,13 +305,13 @@ class BuiltDesign:
     folder: Path
     values: dict[str, Value]
     interfaces: dict[str, Any]
-    interface_reads: dict[str, Reads]
     assembly_reads: Reads
     parts: dict[str, PartGeometry]
     placements: dict[str, list[fr.Frame]]
     components: dict[str, BuiltDesign]
     materials: dict[str, Material]
     tolerances: Tolerances
+    printer: Printer | None = None  # the project's, as its human entered it
     measured: dict[tuple[str, str], list[Measured]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ values
@@ -605,8 +607,14 @@ class BuildBodies:
         return self._body("whole", self.built.spec.name, self.built.leaves)
 
     def part(self, name: str) -> Body:
-        """A part on its own, in its own frame (the way it is made)."""
+        """A part on its own, in its own frame."""
         return self._body("part", name, lambda: [Leaf(name, self.built.parts[name], self.built, fr.IDENTITY)])
+
+    def made(self, name: str, process: Process) -> Body:
+        """A part on its own as it lies when its process makes it (`Process.made`)."""
+        frame = process.made()
+        return self._body("made", f"{name} {np.round(frame, 6).tolist()}",
+                          lambda: [Leaf(name, self.built.parts[name], self.built, frame)])  # fmt: skip
 
     def subject(self, target: str | None) -> Body:
         if target is None:

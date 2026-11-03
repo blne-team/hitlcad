@@ -1,6 +1,6 @@
 services:
   dev:
-    image: solidwork-devcontainer
+    image: htilcad-devcontainer
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
@@ -8,13 +8,13 @@ services:
         USER_UID: ${USER_UID}
         USER_GID: ${USER_GID}
 
-    container_name: solidwork
+    container_name: htilcad
     init: true
 
-    working_dir: /workspaces/solidwork
+    working_dir: /workspaces/htilcad
 
     volumes:
-      - ..:/workspaces/solidwork:cached
+      - ..:/workspaces/htilcad:cached
       - dev_history:/home/user/.history
       - ./starship.toml:/home/user/.config/starship.toml:ro
       
@@ -53,6 +53,23 @@ services:
       - type: bind
         source: /mnt/data/devcontainer-state/codex
         target: /home/user/.codex
+        bind:
+          create_host_path: false
+      # hitlcad: the playground's designs and hitlcad's data (database, versions) survive a rebuild
+      - type: bind
+        source: /mnt/data/devcontainer-state/hitlcad-playground
+        target: /home/user/hitlcad-playground
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/data/devcontainer-state/hitlcad
+        target: /home/user/.hitlcad
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: /mnt/data/devcontainer-tmp
+        target: /tmp
         bind:
           create_host_path: false
 

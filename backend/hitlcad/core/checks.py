@@ -2,8 +2,9 @@
 means (docstring, example, the usual fix) and verifies or checks itself on what the build measured. The checks and
 processes themselves are plugins' members; hitlcad's own are in `hitlcad.builtin`.
 
-Checks target an address: a part (measured in its own frame, the way it is made), an instance or
-component path (measured where it is placed), or the whole design when no target is given.
+Checks target an address: a part (measured in its own frame), an instance or component path (measured where it is
+placed), or the whole design when no target is given. A process checks a part as it lies when it is made
+(`Process.made`).
 """
 
 from __future__ import annotations
@@ -11,8 +12,10 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import Field, model_validator
+import numpy as np
+from pydantic import Field, field_validator, model_validator
 
+from hitlcad.core import frames as fr
 from hitlcad.kernel.model import Model
 
 if TYPE_CHECKING:
@@ -109,8 +112,8 @@ class ProcessFinding(Model):
 
 
 class Process(Model):
-    """How a part is made. Every build checks each made part for its process, in the part's own frame
-    (the way it is made)."""
+    """How a part is made. Every build checks each made part for its process, as it lies when it is made
+    (`made`)."""
 
     example: ClassVar[dict[str, Any]]
     #: What its checks find, by their names (`ProcessFinding.name`): a title and the usual fix of each.
@@ -123,12 +126,61 @@ class Process(Model):
         """How much the process makes a round feature's diameter smaller (hole) or larger (shaft) than modelled, mm."""
         return 0.0
 
+    def made(self) -> fr.Frame:
+        """How the part lies as it is made, from its own frame: as it is modelled, +Z up."""
+        return fr.IDENTITY
+
+
+class PrintFacts(Model):
+    """What a build knows of a printed part, for its process to recommend its settings by (`recommend`)."""
+
+    nozzle_mm: float | None = Field(description="The project's printer's; none without one (the process's own)")
+    tightest_fit_mm: float | None = Field(description="The least diametral clearance of its fits (negative: "
+                                          "interference); none without a fit")  # fmt: skip
+    threaded_into: list[str] = Field(description="The fastener sets whose screws thread into it")
+    findings: list[ProcessFinding] = Field(description="Its process checks, lying as it prints")
+
+
+class PrintSetting(Model):
+    """One setting of a printed part, as its print plan gives it."""
+
+    name: str = Field(description="The process's field: 'layer_mm', 'walls', 'infill_percent', 'supports', 'brim'")
+    value: float | bool
+    decided: bool = Field(description="Set in the part's manufacturing (the design's own), else recommended")
+    why: str
+
 
 class PrintedProcess(Process):
-    """A printing process: printed holes come out smaller, and shafts larger, than modelled."""
+    """A printing process: printed holes come out smaller, and shafts larger, than modelled. A part is modelled
+    for its assembly, and prints the way `up` turns it. Its settings left unset are recommended (`recommend`);
+    those set are the design's, with their reason in `why`."""
 
     hole_allowance_mm: float = Field(default=0.0, ge=0)
     shaft_allowance_mm: float = Field(default=0.0, ge=0)
+    up: tuple[float, float, float] = Field(
+        default=(0.0, 0.0, 1.0), description="The direction of the part's own frame that points up as it prints: "
+        "[0, 0, 1] prints it as modelled, [0, -1, 0] stands it on its +Y face",
+    )  # fmt: skip
+
+    why: str = Field(default="", description="Why its settings are what they are, where the design sets them")
+
+    @field_validator("up")
+    @classmethod
+    def _direction(cls, up: tuple[float, float, float]) -> tuple[float, float, float]:
+        if not any(up):
+            raise ValueError("up is a direction, so not [0, 0, 0]")
+        return up
 
     def allowance(self, feature: Literal["hole", "shaft"]) -> float:
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
+
+    def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
+        """The part's settings: those the design sets, the rest recommended from what the build knows of it."""
+        return []
+
+    def made(self) -> fr.Frame:
+        """The least turn that points `up` up: none for a part printed as modelled."""
+        axis = np.cross(self.up, (0.0, 0.0, 1.0))
+        if not axis.any():
+            return fr.IDENTITY if self.up[2] > 0 else fr.rotation_about((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 180.0)
+        return fr.rotation_about((0.0, 0.0, 0.0), axis, fr.angle_deg(self.up, (0.0, 0.0, 1.0)))

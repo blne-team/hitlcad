@@ -4,6 +4,7 @@ import "three-cad-viewer/css";
 import type { Pick, Vec3 } from "../api/types";
 import type { CadMove } from "./motion";
 import type { Inspection } from "./inspection";
+import { sketchLoops, type SketchView } from "./sketch";
 
 /** A numbered marker drawn over the model: an agent pin or a selected item. */
 export interface CadMarker {
@@ -27,6 +28,12 @@ export interface CadBounds {
 /** A mate's motion at one position: what moves, each by its rigid motion from as built (`motion.movesAt`). */
 export type CadMotion = CadMove[];
 
+/** A view direction of the viewer's own (its toolbar's buttons) that 2D looks along: any but iso. */
+export type ViewDirection = Exclude<Parameters<Viewer["presetCamera"]>[0], "iso">;
+
+/** What a 2D view looks straight at: a recorded sketch, or the model along a view direction. */
+export type ViewPlane = { sketch: SketchView } | { direction: ViewDirection };
+
 const TREE_WIDTH = 240;
 const CLICK_SLOP_PX = 4; // a press that moves further is an orbit, not a click
 const EASE = 0.25; // of the way to an explode's new spread, each frame
@@ -36,6 +43,7 @@ const PIN_COLOR = "#F5C400";
 const INK = "#1B2127";
 const SELECT_COLOR = "#2f6df6";
 const GHOST_COLOR = "#4c6ef5";
+const SKETCH_COLOR = "#e8590c";
 
 const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, directIntensity: 1.1, metalness: 0.3, roughness: 0.65, defaultOpacity: 0.5, normalLen: 0 };
 // Keep origin axes in design coordinates. The XY grid is placed at the model base below;
@@ -85,13 +93,15 @@ const flat = (a: ArrayLike<number> | number[][]): ArrayLike<number> => (Array.is
  * hitlcad's own markers and compare ghost drawn into its scene.
  *
  * The one place that reaches past the viewer's documented API: `idPicker` and the shape filter
- * (clicks), `scene` with the three.js the viewer publishes as `window.THREE` (overlays), and
+ * (clicks and hover names; its `setValue`, to start on Solid), `scene` with the three.js the viewer publishes as `window.THREE` (overlays), and
  * `nestedGroup` (parts moved by a motion or an explode).
  * three-cad-viewer is pinned; re-check `pick` and the overlay code when upgrading it.
  */
 export class CadView {
   readonly bounds: CadBounds | null;
-  readonly toolbar: HTMLElement;
+  /** Where hitlcad's controls join the viewer's toolbar: with its camera's, after its view directions, and with
+   * its measure tools (its help stays last). */
+  readonly slots: { camera: HTMLElement; views: HTMLElement; tools: HTMLElement };
   readonly gridMenu: HTMLElement;
   private readonly display: Display;
   private readonly viewer: Viewer;
@@ -100,6 +110,12 @@ export class CadView {
   private readonly canvas: HTMLCanvasElement;
   private readonly markers: Three.Group;
   private readonly highlights: Three.Group;
+  private readonly sketchLines: Three.Group;
+  private sketches: SketchView[] = [];
+  private sketchesShown = false;
+  /** The 2D view's plane, and the 3D view to come back to; null in 3D. */
+  private readonly preset: Viewer["presetCamera"];
+  private plane: { at: ViewPlane; back: { position: Vec3; quaternion: [number, number, number, number]; target: Vec3; zoom: number; transparent: boolean } } | null = null;
   private inspected: string[] = [];
   private inspectionSequence: number | null = null;
   private panning = false;
@@ -125,6 +141,10 @@ export class CadView {
   private tween = 0;
   private press: { x: number; y: number } | null = null;
   private canvasSize: { width: number; height: number };
+  /** The name of what is under the cursor, beside it. */
+  private readonly hoverTag: HTMLElement;
+  private hoverAt: { x: number; y: number } | null = null;
+  private hoverFrame = 0;
 
   constructor(
     private readonly container: HTMLElement,
@@ -133,6 +153,11 @@ export class CadView {
     private readonly onPick: (pick: Pick, additive: boolean) => void,
     private readonly onExplode: (on: boolean) => void,
     private readonly onPan: (on: boolean) => void,
+    /** The viewer's own camera buttons took the view out of 2D. */
+    /** Where the view looks now, whoever turned it: 2D's plane, or null in 3D. */
+    private readonly onLook: (plane: ViewPlane | null) => void,
+    /** What to call a shape under the cursor, by its path under the design ("tilt/planet[2]"). */
+    private readonly nameOf: (path: string) => string,
   ) {
     this.exact = exactShapes(shapes);
     const ids = shapesOf(shapes);
@@ -162,12 +187,20 @@ export class CadView {
     this.display = new Display(container, options);
     this.viewer = new Viewer(this.display, options, null);
     this.viewer.render(shapes, RENDER, VIEW);
-    this.toolbar = container.querySelector<HTMLElement>(".tcv_cad_toolbar")!;
+    this.partsFirst(true);
+    const slot = (after: string) => {
+      const element = document.createElement("span");
+      element.className = "canvas-tools";
+      container.querySelector(`.tcv_button_${after}`)!.closest(".tcv_tooltip")!.after(element);
+      return element;
+    };
+    this.slots = { camera: slot("resize"), views: slot("right"), tools: slot("select") };
     this.gridMenu = container.querySelector<HTMLElement>(".tcv_grid-content")!;
     this.three = window.THREE as typeof Three; // set by the Viewer constructor
     this.markers = new this.three.Group();
     this.highlights = new this.three.Group();
-    this.viewer.scene.add(this.markers, this.highlights);
+    this.sketchLines = new this.three.Group();
+    this.viewer.scene.add(this.markers, this.highlights, this.sketchLines);
     this.viewer.scene.onBeforeRender = (renderer, _scene, camera) => this.sizeMarkers(renderer, camera);
     this.explodeFrom(ids);
     // The toolbar's explode button (and its key, x) calls the viewer's setExplode, which only armed a clip to
@@ -177,6 +210,25 @@ export class CadView {
       this.toward(flag ? this.spreadOut : 0);
       this.onExplode(flag);
     };
+    // The viewer's camera buttons in 2D: a view direction is what it looks along, resize fits it again, and iso
+    // and reset turn the camera back into 3D
+    const { presetCamera, reset, resize } = this.viewer;
+    this.preset = presetCamera;
+    const leave = () => {
+      if (!this.plane) return;
+      this.unlock();
+      this.onLook(null);
+    };
+    this.viewer.presetCamera = (direction, ...rest) => {
+      if (this.plane && direction !== "iso") return this.look({ direction });
+      leave();
+      presetCamera(direction, ...rest);
+    };
+    this.viewer.reset = () => {
+      leave();
+      reset();
+    };
+    this.viewer.resize = () => (this.plane && "sketch" in this.plane.at ? this.look(this.plane.at) : resize());
 
     this.canvas = this.viewer.renderer.domElement;
     // A transformed local bounding box can extend below a rotated curved part. Use the
@@ -189,6 +241,7 @@ export class CadView {
     this.gridBaseZ = placed.isEmpty() ? this.bounds?.min[2] ?? 0 : placed.min.z;
     this.unsubscribeTool = this.viewer.state.subscribe("activeTool", (change) => {
       if (change.new) this.setPan(false);
+      this.partsFirst(!change.new); // a measure tool measures faces, edges and vertices
     });
     // The viewer recreates grid lines and labels when zooming or changing theme. Reapply only
     // the XY plane's height whenever it positions those planes; assembly and origin axes stay as built.
@@ -201,6 +254,12 @@ export class CadView {
     this.setGridAtBase(true);
     this.canvas.addEventListener("pointerdown", this.onDown);
     this.canvas.addEventListener("pointerup", this.onUp);
+    this.canvas.addEventListener("pointermove", this.onMove);
+    this.canvas.addEventListener("pointerleave", this.onLeave);
+    this.hoverTag = document.createElement("div");
+    this.hoverTag.className = "cad-hover-name";
+    this.hoverTag.hidden = true;
+    container.append(this.hoverTag);
     this.observer = new ResizeObserver(() => this.fit());
     this.observer.observe(container);
     this.fit();
@@ -225,7 +284,7 @@ export class CadView {
   /** Move the camera parallel to the screen with the left mouse button. */
   setPan(on: boolean): void {
     if (on) this.stopTool();
-    this.viewer.controls.controls.mouseButtons.LEFT = on ? this.three.MOUSE.PAN : this.three.MOUSE.ROTATE;
+    this.viewer.controls.controls.mouseButtons.LEFT = on || this.plane ? this.three.MOUSE.PAN : this.three.MOUSE.ROTATE;
     if (this.panning === on) return;
     this.panning = on;
     this.onPan(on);
@@ -243,6 +302,102 @@ export class CadView {
     this.marked = markers;
     this.drawMarkers();
     this.redraw();
+  }
+
+  /** The recorded sketches, drawn on every placement of their parts while `shown` (in 2D, the one looked at always). */
+  setSketches(sketches: SketchView[], shown: boolean): void {
+    this.sketches = sketches;
+    this.sketchesShown = shown;
+    this.drawSketches();
+    this.redraw();
+  }
+
+  /**
+   * 2D: look along a view direction (as the viewer's button does), or straight at a recorded sketch, fitted to it and
+   * the model see-through; rotation locked and the left button panning. null: back to the 3D view as it was.
+   */
+  look(plane: ViewPlane | null): void {
+    const T = this.three;
+    const camera = this.viewer.camera.getCamera();
+    if (plane) {
+      const { position, quaternion, target, zoom } = this.viewer.getCameraLocationSettings();
+      const back = this.plane?.back ?? { position: position as Vec3, quaternion: quaternion as [number, number, number, number],
+        target: target as Vec3, zoom, transparent: this.viewer.getTransparent() };
+      this.plane = { at: plane, back };
+      if ("direction" in plane) {
+        camera.up.set(0, 0, 1);
+        this.preset(plane.direction);
+        this.viewer.setTransparent(back.transparent, false);
+      } else {
+        const frame = this.sketchFrames(plane.sketch)[0]!;
+        const points = sketchLoops(plane.sketch).flat().map(([x, y]) => new T.Vector3(x, y, 0).applyMatrix4(frame));
+        const [right, up, toward] = [0, 1, 2].map((n) => new T.Vector3().setFromMatrixColumn(frame, n).normalize()) as [Three.Vector3, Three.Vector3, Three.Vector3];
+        const center = new T.Box3().setFromPoints(points).getCenter(new T.Vector3());
+        const distance = new T.Vector3(...position).distanceTo(new T.Vector3(...target));
+        camera.up.copy(up); // the orbit controls look at the target with it: the sketch's up stays up
+        const facing = new T.Quaternion().setFromRotationMatrix(new T.Matrix4().makeBasis(right, up, toward));
+        this.viewer.setCameraLocationSettings(center.clone().addScaledVector(toward, distance).toArray(), facing.toArray(), center.toArray(), null, false);
+        this.zoomTo(points);
+        this.viewer.setTransparent(true, false);
+      }
+      (this.viewer.controls.controls as { enableRotate: boolean }).enableRotate = false;
+      this.setPan(this.panning);
+      this.drawSketches();
+    } else if (this.plane) {
+      const { position, quaternion, target, zoom } = this.plane.back;
+      this.unlock();
+      this.viewer.setCameraLocationSettings(position, quaternion, target, zoom, false);
+    }
+    this.redraw();
+    this.onLook(this.plane?.at ?? null);
+  }
+
+  /** Out of 2D, the camera where it is: its up, rotation, the left button and the model's transparency as in 3D. */
+  private unlock() {
+    this.viewer.camera.getCamera().up.set(0, 0, 1);
+    this.viewer.setTransparent(this.plane!.back.transparent, false);
+    this.plane = null;
+    (this.viewer.controls.controls as { enableRotate: boolean }).enableRotate = true;
+    this.setPan(this.panning);
+    this.drawSketches();
+  }
+
+  /** Zoom so `points` (model space) fill the view but a margin, about where the camera looks. */
+  private zoomTo(points: Three.Vector3[]) {
+    const camera = this.viewer.camera.getCamera();
+    camera.updateMatrixWorld();
+    const extent = Math.max(...points.map((p) => p.clone().project(camera)).flatMap((p) => [Math.abs(p.x), Math.abs(p.y)]));
+    if (extent > 0) this.viewer.setCameraZoom(this.viewer.getCameraZoom() / (extent * 1.2));
+  }
+
+  /** Each frame a sketch is drawn in, in model space: on each placement of its part, at each of its planes. */
+  private sketchFrames(sketch: SketchView): Three.Matrix4[] {
+    const T = this.three;
+    return sketch.placements.flatMap(({ group, loc: [position, quaternion] }) => {
+      const shape = this.viewer.nestedGroup.groups[group];
+      if (!shape) return [];
+      // The part's frame: the shape's group, less where the shape lies in the part
+      const part = shape.matrixWorld.clone().multiply(new T.Matrix4().compose(new T.Vector3(...position), new T.Quaternion(...quaternion), new T.Vector3(1, 1, 1)).invert());
+      return sketch.planes.map((rows) => part.clone().multiply(new T.Matrix4().set(...(rows.flat() as Parameters<Three.Matrix4["set"]>))));
+    });
+  }
+
+  private drawSketches() {
+    this.clear(this.sketchLines);
+    const T = this.three;
+    const looked = this.plane && "sketch" in this.plane.at ? this.plane.at.sketch : null;
+    const material = new T.LineBasicMaterial({ color: SKETCH_COLOR, depthTest: false, transparent: true });
+    for (const sketch of this.sketchesShown ? this.sketches : looked ? [looked] : []) {
+      const loops = sketchLoops(sketch);
+      for (const frame of this.sketchFrames(sketch)) {
+        for (const loop of loops) {
+          const line = new T.Line(new T.BufferGeometry().setFromPoints(loop.map(([x, y]) => new T.Vector3(x, y, 0))), material);
+          line.applyMatrix4(frame);
+          line.renderOrder = 1001; // after the viewer's faces and edges (999): over a see-through model too
+          this.sketchLines.add(line);
+        }
+      }
+    }
   }
 
   /** Inspect whole instances without changing the design or its geometry selection. */
@@ -278,10 +433,7 @@ export class CadView {
     if (box.isEmpty()) return;
     const center = box.getCenter(new T.Vector3());
     this.viewer.setCameraTarget(center);
-    const camera = this.viewer.camera.getCamera();
-    const projected = corners([box.min.toArray(), box.max.toArray()]).map((p) => new T.Vector3(...p).project(camera));
-    const extent = Math.max(...projected.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)]));
-    if (extent > 0) this.viewer.setCameraZoom(this.viewer.getCameraZoom() / (extent * 1.2));
+    this.zoomTo(corners([box.min.toArray(), box.max.toArray()]).map((p) => new T.Vector3(...p)));
     if (action.startsWith("section")) {
       const axis = { sectionX: 0, sectionY: 1, sectionZ: 2 }[action as "sectionX" | "sectionY" | "sectionZ"];
       const normal: Vec3 = [0, 0, 0];
@@ -398,12 +550,16 @@ export class CadView {
 
   dispose(): void {
     cancelAnimationFrame(this.tween);
+    cancelAnimationFrame(this.hoverFrame);
     this.observer.disconnect();
     this.unsubscribeTool();
     this.canvas.removeEventListener("pointerdown", this.onDown);
     this.canvas.removeEventListener("pointerup", this.onUp);
+    this.canvas.removeEventListener("pointermove", this.onMove);
+    this.canvas.removeEventListener("pointerleave", this.onLeave);
     this.clear(this.markers);
     this.clear(this.highlights);
+    this.clear(this.sketchLines);
     if (this.ghost) this.clear(this.ghost);
     this.viewer.dispose();
     this.display.dispose();
@@ -489,6 +645,7 @@ export class CadView {
     this.viewer.scene.updateMatrixWorld(true);
     this.drawMarkers(); // markers go with their parts
     this.drawHighlights();
+    this.drawSketches();
     this.viewer.idPicker?.setDirty(); // the pick buffer shows the parts where they were drawn last
     this.redraw();
   }
@@ -502,28 +659,80 @@ export class CadView {
     this.press = null;
     if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) return;
     if (this.viewer.state.get("activeTool")) return; // a measure tool's click: not a selection or a pin
-    const pick = this.pick(e.clientX, e.clientY);
+    const pick = this.pick(e.clientX, e.clientY, e.altKey);
     if (pick) this.onPick(pick, e.shiftKey);
   };
+
+  private readonly onMove = (e: PointerEvent) => {
+    this.hoverAt = e.buttons ? null : { x: e.clientX, y: e.clientY }; // an orbit or a pan names nothing
+    if (!this.hoverFrame) this.hoverFrame = requestAnimationFrame(this.nameHovered);
+  };
+
+  private readonly onLeave = () => {
+    this.hoverAt = null;
+    this.hoverTag.hidden = true;
+  };
+
+  /** Name the shape under the cursor beside it, once a frame: the part (its instance), or the shape a mesh is. */
+  private readonly nameHovered = () => {
+    this.hoverFrame = 0;
+    const at = this.hoverAt;
+    const hit = at && !this.panning && !this.viewer.state.get("activeTool") ? this.hit(at.x, at.y, ["solid"]) : null;
+    const shape = hit && (hit.info.solidPath ?? COMPONENT_PATH.exec(hit.info.path)?.[1]);
+    if (!at || !shape) {
+      this.hoverTag.hidden = true;
+      return;
+    }
+    const stage = this.container.getBoundingClientRect();
+    this.hoverTag.textContent = this.nameOf(instanceOf(shape));
+    this.hoverTag.style.left = `${at.x - stage.left + 14}px`;
+    this.hoverTag.style.top = `${at.y - stage.top + 14}px`;
+    this.hoverTag.hidden = false;
+  };
+
+  /** What the viewer's GPU id picker finds at a point of the window, restricted to `topo` (all: none given). */
+  private hit(clientX: number, clientY: number, topo: ("vertex" | "edge" | "face" | "solid")[] = []) {
+    const rect = this.canvas.getBoundingClientRect();
+    return this.viewer.idPicker?.pickAt(clientX - rect.left, clientY - rect.top, topo.length ? { topoFilter: topo } : {}) ?? null;
+  }
 
   /**
    * Resolve a click with the viewer's GPU id picker, honouring its All/Vertex/Edge/Face/Solid filter. On an
    * exact shape the pick names its component; under Solid the picker hits a face and names the part it
    * belongs to (`solidPath`): the pick is that part. On any other shape it is a point.
    */
-  private pick(clientX: number, clientY: number): Pick | null {
-    const rect = this.canvas.getBoundingClientRect();
+  private pick(clientX: number, clientY: number, inside: boolean): Pick | null {
     const filter = this.exact.size ? this.display.shapeFilterDropDownMenu.currentFilter.filter((f) => f !== null) : ["face" as const];
-    const hit = this.viewer.idPicker?.pickAt(clientX - rect.left, clientY - rect.top, filter.length ? { topoFilter: filter } : {});
+    let hit = this.hit(clientX, clientY, filter);
+    let whole = filter.includes("solid");
+    // On a part selected whole, or with Alt: the face, edge or vertex under the cursor on it
+    const solid = whole ? hit?.info.solidPath : null;
+    if (solid && (inside || this.selectedWhole(instanceOf(solid)))) {
+      const on = this.hit(clientX, clientY);
+      if (on?.info.solidPath === solid) [hit, whole] = [on, false];
+    }
     if (!hit?.point) return null;
     const m = COMPONENT_PATH.exec(hit.info.path);
     const shape = hit.info.solidPath ?? m?.[1];
     const moved = shape ? this.displaced(shape.replace(/^\/+/, "")) : null; // a pick is where it is as built
     const point = (moved ? hit.point.clone().applyMatrix4(moved.invert()) : hit.point).toArray();
     if (!shape || !this.exact.has(shape)) return { point, normal: null, component: null };
-    if (filter.includes("solid")) return { point, normal: null, component: { instance: instanceOf(shape), topo: "solid", index: 0 } };
+    if (whole) return { point, normal: null, component: { instance: instanceOf(shape), topo: "solid", index: 0 } };
     if (!m) return null;
     return { point, normal: null, component: { instance: instanceOf(m[1]!), topo: TOPO[m[2] as keyof typeof TOPO], index: Number(m[3]) } };
+  }
+
+  /**
+   * Parts first: hover lights, and a click picks, a whole part (a click on a selected part then goes into it). Off,
+   * every face, edge and vertex is picked, as the viewer's measure tools need.
+   */
+  private partsFirst(on: boolean) {
+    if (this.exact.size) (this.display.shapeFilterDropDownMenu as unknown as { setValue(topo: string): void }).setValue(on ? "Solid" : "All");
+  }
+
+  /** Whether the instance is selected as a whole part. */
+  private selectedWhole(instance: string): boolean {
+    return this.marked.some((m) => m.kind === "selection" && m.box && m.instance === instance);
   }
 
   // ------------------------------------------------------------------ overlays (the viewer's three.js)

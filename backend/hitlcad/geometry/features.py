@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -67,8 +67,6 @@ class InsideCorner:
 class Features(ABC):
     """A part's geometry, in its own frame. `mesh` and `objects` load what it is measured on and what it
     shows, when first asked."""
-
-    representation: ClassVar[str]
 
     def __init__(self, name: str, mesh: Callable[[], trimesh.Trimesh], objects: Callable[[], list[ObjectMesh]]) -> None:
         self.name = name
@@ -196,8 +194,6 @@ def _vec(v: Any) -> list[float]:
 
 
 class BrepFeatures(Features):
-    representation = "B-rep"
-
     def __init__(
         self, name: str, shape: Any, mesh: Callable[[], trimesh.Trimesh], objects: Callable[[], list[ObjectMesh]]
     ) -> None:
@@ -466,8 +462,6 @@ class MeshFeatures(Features):
     on a cylinder, whose diameter and centre that circle gives, and whose uncertainty is the facets' sagitta. A
     feature runs while its stations stay on one cylinder. Faces are trimesh's facets (coplanar neighbouring
     triangles) and the single triangles outside them."""
-
-    representation = "mesh"
 
     def view(self) -> cadview.PartView:
         return cadview.mesh_view(self.pieces)

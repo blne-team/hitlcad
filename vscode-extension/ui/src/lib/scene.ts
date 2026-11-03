@@ -1,5 +1,15 @@
 import { resolveInstances, type Shape, type Shapes } from "three-cad-viewer";
 import { json } from "../api/client";
+import type { Loc, SketchView } from "./sketch";
+
+export type CadScene = Shapes & { sketches: SketchView[] };
+
+interface PartView {
+  shapes: Shape[];
+  /** Where each shape lies in the part. */
+  locs: Loc[];
+  sketches: Omit<SketchView, "id" | "part" | "placements">[];
+}
 
 /**
  * A 3D view as the server writes it (`geometry.cadview.Scene`): three-cad-viewer's instanced format, whose
@@ -8,6 +18,13 @@ import { json } from "../api/client";
 interface SceneFile {
   instances: { path: string; digest: string; shape: number }[];
   shapes: Shapes;
+}
+
+/** A node of the scene's tree as written: a leaf draws `instances[shape.ref]`. */
+interface SceneNode {
+  id: string;
+  parts?: SceneNode[];
+  shape?: { ref: number };
 }
 
 interface ViewArray {
@@ -23,11 +40,13 @@ export const VIEW_CACHE_BYTES = 256 * 1024 * 1024;
  * A part view file (`geometry.cadview.PartView`) as the viewer's shapes, its arrays read where they lie: a
  * little-endian u32, that many bytes of JSON header, then float32 and uint32 arrays at 4-byte offsets from it.
  */
-export function readPartView(buffer: ArrayBuffer): Shape[] {
+export function readPartView(buffer: ArrayBuffer): PartView {
   const size = new DataView(buffer).getUint32(0, true);
-  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, size))) as { arrays: Record<string, ViewArray>[] };
+  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, size))) as {
+    arrays: Record<string, ViewArray>[]; templates: { loc: Loc }[]; sketches?: PartView["sketches"];
+  };
   const start = 4 + size;
-  return header.arrays.map(
+  const shapes = header.arrays.map(
     (arrays) =>
       Object.fromEntries(
         Object.entries(arrays).map(([key, a]) => [
@@ -36,17 +55,18 @@ export function readPartView(buffer: ArrayBuffer): Shape[] {
         ]),
       ) as unknown as Shape,
   );
+  return { shapes, locs: header.templates.map((t) => t.loc), sketches: header.sketches ?? [] }; // none written: none
 }
 
 /** Part views by digest: one fetch for a part whatever the revision or panel that draws it. */
 class PartViews {
-  private readonly views = new Map<string, Promise<Shape[]>>();
+  private readonly views = new Map<string, Promise<PartView>>();
   private readonly sizes = new Map<string, number>();
   private bytes = 0;
 
   constructor(private readonly budget: number) {}
 
-  get(digest: string, url: string): Promise<Shape[]> {
+  get(digest: string, url: string): Promise<PartView> {
     const found = this.views.get(digest);
     if (found) {
       this.views.delete(digest); // to the back: drawn most recently
@@ -83,16 +103,29 @@ class PartViews {
 const partViews = new PartViews(VIEW_CACHE_BYTES);
 
 /** A scene and its part views, as the shapes the viewer draws: each instance's view file resolved from the scene's own URL. */
-export async function loadScene(url: string): Promise<Shapes> {
+export async function loadScene(url: string): Promise<CadScene> {
   const res = await fetch(url, { cache: "no-cache" }); // a revision being built writes it again
   const scene = await json<SceneFile>(res);
   const base = res.url || url; // where a redirect led: the part views lie beside the scene
-  const drawn = await Promise.all(
-    scene.instances.map(async ({ path, digest, shape }) => {
-      const found = (await partViews.get(digest, new URL(path, base).href))[shape];
-      if (!found) throw new Error(`${path} has no shape ${shape}`);
-      return { ...found };
-    }),
-  );
-  return resolveInstances(scene.shapes, drawn);
+  const views = await Promise.all(scene.instances.map(({ path, digest }) => partViews.get(digest, new URL(path, base).href)));
+  const drawn = scene.instances.map(({ path, shape }, n) => {
+    const found = views[n]!.shapes[shape];
+    if (!found) throw new Error(`${path} has no shape ${shape}`);
+    return { ...found };
+  });
+  // Each placement of a part: the leaf that draws its first shape
+  const placements = new Map<string, SketchView["placements"]>();
+  const walk = (node: SceneNode) => {
+    node.parts?.forEach(walk);
+    const ref = node.shape?.ref;
+    if (ref === undefined || scene.instances[ref]!.shape !== 0) return;
+    const { path } = scene.instances[ref]!;
+    placements.set(path, [...placements.get(path) ?? [], { group: node.id, loc: views[ref]!.locs[0]! }]);
+  };
+  walk(scene.shapes as unknown as SceneNode);
+  const sketches = [...new Map(scene.instances.map(({ path }, n) => [path, views[n]!])).entries()].flatMap(([path, view]) => {
+    const part = path.split("/").pop()!.replace(/\.view$/, "");
+    return view.sketches.map((sketch, n) => ({ ...sketch, part, id: `${path}:${n}`, placements: placements.get(path) ?? [] }));
+  });
+  return Object.assign(resolveInstances(scene.shapes, drawn), { sketches });
 }

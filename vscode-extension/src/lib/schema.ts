@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop
+         * @description Stop this server as Ctrl+C does, once it has answered: its process id, which ends when it has stopped.
+         */
+        post: operations["stop_api_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/capabilities": {
         parameters: {
             query?: never;
@@ -138,6 +158,30 @@ export interface paths {
         put?: never;
         /** Edit Outputs */
         post: operations["edit_outputs_api_designs__design_id__outputs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/designs/{design_id}/printer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Printer
+         * @description The design's printer, as its project keeps it, and what the panel offers to set it.
+         */
+        get: operations["get_printer_api_designs__design_id__printer_get"];
+        /**
+         * Set Printer
+         * @description The human entered their printer: kept in the design's project, and every design of it built for it.
+         */
+        put: operations["set_printer_api_designs__design_id__printer_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -852,13 +896,8 @@ export interface components {
             components: {
                 [key: string]: components["schemas"]["BuildSpec"];
             };
-            /**
-             * Plugins
-             * @description The installed plugins it was built with, but hitlcad's own: distribution -> version
-             */
-            plugins: {
-                [key: string]: string;
-            };
+            /** @description What it got from its project: the plugins it names, at their versions, and its printer */
+            project: components["schemas"]["ProjectSettings"];
         };
         /**
          * BuildStatus
@@ -882,11 +921,11 @@ export interface components {
             /** @description hitlcad's default tolerances, which design.json `verification` refines */
             tolerances: components["schemas"]["Tolerances"];
             /**
-             * Plugins
-             * @description The installed plugins it was built with: distribution -> version
+             * Projects
+             * @description What each design folder it read got from its project (plugins, printer): path -> settings
              */
-            plugins: {
-                [key: string]: string;
+            projects: {
+                [key: string]: components["schemas"]["ProjectSettings"];
             };
         };
         /**
@@ -1300,13 +1339,6 @@ export interface components {
             /** Name */
             name: string;
             /**
-             * Plugins
-             * @description The plugins it needs beyond hitlcad's own: distribution -> version specifier, e.g. {'hitlcad-lasercut': '>=0.1'}
-             */
-            plugins: {
-                [key: string]: string;
-            };
-            /**
              * Number
              * @description The user's own part number for the whole design
              * @default
@@ -1707,13 +1739,17 @@ export interface components {
         };
         /**
          * FdmProcess
-         * @description FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-         *     Z): wall thickness, overhangs and bed contact. An overhang prints where it bridges between two supports
-         *     no more than `max_bridge_mm` apart (the top of a horizontal hole is such a bridge) or lies within a
-         *     nozzle's width of what holds it. With `supports`, overhangs print on support and are reported, not
-         *     failed: for shapes that cannot avoid them, like figurines. With `brim`, a tall, narrow part is held down
-         *     by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes come out smaller and shafts
-         *     larger than modelled, for fit checks.
+         * @description FDM (filament) 3D printing, printed the way `up` turns the part, on its lowest point: wall thickness,
+         *     overhangs and bed contact. `up` is the direction of the part's own frame that points up as it prints
+         *     (`[0, -1, 0]` stands it on its +Y face; as modelled by default), so the part stays modelled for its assembly.
+         *     An overhang prints where it bridges between two supports no more than `max_bridge_mm` apart (the top of a
+         *     horizontal hole is such a bridge) or lies within a nozzle's width of what holds it. With `supports`, overhangs
+         *     print on support and are reported, not failed: for shapes that cannot avoid them, like figurines. With `brim`,
+         *     a tall, narrow part is held down by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes
+         *     come out smaller and shafts larger than modelled, for fit checks. Its print settings (`layer_mm`, `walls`,
+         *     `infill_percent`, `supports`, `brim`) left unset are recommended in the print plan from what the build finds
+         *     (a tight fit, screws threading in, overhangs, a tall narrow stance); set one where you judge otherwise, and
+         *     say why in `why`.
          */
         FdmProcess: {
             /**
@@ -1726,6 +1762,26 @@ export interface components {
              * @default 0
              */
             shaft_allowance_mm: number;
+            /**
+             * Up
+             * @description The direction of the part's own frame that points up as it prints: [0, 0, 1] prints it as modelled, [0, -1, 0] stands it on its +Y face
+             * @default [
+             *       0,
+             *       0,
+             *       1
+             *     ]
+             */
+            up: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Why
+             * @description Why its settings are what they are, where the design sets them
+             * @default
+             */
+            why: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -1774,16 +1830,29 @@ export interface components {
             ignored_overhang_mm2: number;
             /**
              * Supports
-             * @description Printed with support under its overhangs
-             * @default false
+             * @description Printed with support under its overhangs; unset: recommended
              */
-            supports: boolean;
+            supports: boolean | null;
             /**
              * Brim
-             * @description Printed with a brim round its base
-             * @default false
+             * @description Printed with a brim round its base; unset: recommended
              */
-            brim: boolean;
+            brim: boolean | null;
+            /**
+             * Layer Mm
+             * @description Layer height; unset: recommended
+             */
+            layer_mm: number | null;
+            /**
+             * Walls
+             * @description Perimeters round each layer; unset: recommended
+             */
+            walls: number | null;
+            /**
+             * Infill Percent
+             * @description Unset: recommended
+             */
+            infill_percent: number | null;
         };
         /**
          * FeedbackDelivered
@@ -1824,6 +1893,38 @@ export interface components {
             pins: {
                 [key: string]: string;
             };
+        };
+        /**
+         * Filament
+         * @description The filament a printer prints one of hitlcad's materials with.
+         */
+        "Filament-Input": {
+            /**
+             * Profile
+             * @description The slicer's filament profile, as the slicer names it: 'Bambu PLA Basic'
+             */
+            profile: string;
+            /**
+             * Slot
+             * @description Its slot in the printer's AMS, if it has one
+             */
+            slot?: number | null;
+        };
+        /**
+         * Filament
+         * @description The filament a printer prints one of hitlcad's materials with.
+         */
+        "Filament-Output": {
+            /**
+             * Profile
+             * @description The slicer's filament profile, as the slicer names it: 'Bambu PLA Basic'
+             */
+            profile: string;
+            /**
+             * Slot
+             * @description Its slot in the printer's AMS, if it has one
+             */
+            slot: number | null;
         };
         /**
          * Finding
@@ -2513,6 +2614,15 @@ export interface components {
             material: string | null;
             /** Process */
             process: string | null;
+            /**
+             * Up
+             * @description Which way up a printed part prints (`PrintedProcess.up`); none for a part not printed
+             */
+            up: [
+                number,
+                number,
+                number
+            ] | null;
             catalog: components["schemas"]["CatalogInfo"] | null;
             /**
              * Cached
@@ -2526,6 +2636,11 @@ export interface components {
             connectors: {
                 [key: string]: components["schemas"]["ConnectorInfo"];
             };
+            /**
+             * Print
+             * @description A printed part's settings: the design's, and the rest recommended (`PrintedProcess.recommend`)
+             */
+            print: components["schemas"]["PrintSetting"][];
         };
         /** PartSpec */
         PartSpec: {
@@ -2742,6 +2857,116 @@ export interface components {
             builtin: boolean;
         };
         /**
+         * PrintSetting
+         * @description One setting of a printed part, as its print plan gives it.
+         */
+        PrintSetting: {
+            /**
+             * Name
+             * @description The process's field: 'layer_mm', 'walls', 'infill_percent', 'supports', 'brim'
+             */
+            name: string;
+            /** Value */
+            value: number | boolean;
+            /**
+             * Decided
+             * @description Set in the part's manufacturing (the design's own), else recommended
+             */
+            decided: boolean;
+            /** Why */
+            why: string;
+        };
+        /**
+         * Printer
+         * @description The human's printer, as they entered it.
+         */
+        "Printer-Input": {
+            /**
+             * Name
+             * @description What the human calls it: 'Bambu Lab P2S'
+             */
+            name: string;
+            /**
+             * Build Volume Mm
+             * @description Its bed (X, Y) and the height it prints to (Z)
+             */
+            build_volume_mm: [
+                number,
+                number,
+                number
+            ];
+            /** Nozzle Mm */
+            nozzle_mm: number;
+            /**
+             * Slicer
+             * @description The slicer it is sliced in: a `Slicer`'s name
+             */
+            slicer: string;
+            /**
+             * Materials
+             * @description hitlcad's material -> its filament
+             */
+            materials?: {
+                [key: string]: components["schemas"]["Filament-Input"];
+            };
+        };
+        /**
+         * Printer
+         * @description The human's printer, as they entered it.
+         */
+        "Printer-Output": {
+            /**
+             * Name
+             * @description What the human calls it: 'Bambu Lab P2S'
+             */
+            name: string;
+            /**
+             * Build Volume Mm
+             * @description Its bed (X, Y) and the height it prints to (Z)
+             */
+            build_volume_mm: [
+                number,
+                number,
+                number
+            ];
+            /** Nozzle Mm */
+            nozzle_mm: number;
+            /**
+             * Slicer
+             * @description The slicer it is sliced in: a `Slicer`'s name
+             */
+            slicer: string;
+            /**
+             * Materials
+             * @description hitlcad's material -> its filament
+             */
+            materials: {
+                [key: string]: components["schemas"]["Filament-Output"];
+            };
+        };
+        /**
+         * PrinterSetup
+         * @description What the panel needs to show or ask for a design's printer.
+         */
+        PrinterSetup: {
+            /**
+             * File
+             * @description The project's hitlcad.toml; none when the design is in no project
+             */
+            file: string | null;
+            printer: components["schemas"]["Printer-Output"] | null;
+            /**
+             * Slicers
+             * @description The slicers the installed plugins adapt
+             */
+            slicers: components["schemas"]["SlicerInfo"][];
+            /**
+             * Materials
+             * @description The materials of the design's printed parts: a filament for each
+             */
+            materials: string[];
+        };
+        /**
          * Problem
          * @description The results that share a cause, and problems alike but for their pattern indices, as one.
          */
@@ -2772,6 +2997,20 @@ export interface components {
              * @description The files written or brought up to date
              */
             created: string[];
+        };
+        /**
+         * ProjectSettings
+         * @description What a design folder gets from its project's `hitlcad.toml`.
+         */
+        ProjectSettings: {
+            /**
+             * Plugins
+             * @description The plugins it names beyond hitlcad's own, at their installed versions: distribution -> version
+             */
+            plugins: {
+                [key: string]: string;
+            };
+            printer: components["schemas"]["Printer-Output"] | null;
         };
         /**
          * RackRelation
@@ -2823,7 +3062,7 @@ export interface components {
          * ResinProcess
          * @description Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and every hollow
          *     inside the part drained through an opening at least `min_drain_mm` across, or it traps uncured resin
-         *     (Formlabs' design specifications ask for 3.5 mm). `hole_allowance_mm` / `shaft_allowance_mm` as for FDM.
+         *     (Formlabs' design specifications ask for 3.5 mm). `up`, `hole_allowance_mm` and `shaft_allowance_mm` as for FDM.
          */
         ResinProcess: {
             /**
@@ -2836,6 +3075,26 @@ export interface components {
              * @default 0
              */
             shaft_allowance_mm: number;
+            /**
+             * Up
+             * @description The direction of the part's own frame that points up as it prints: [0, 0, 1] prints it as modelled, [0, -1, 0] stands it on its +Y face
+             * @default [
+             *       0,
+             *       0,
+             *       1
+             *     ]
+             */
+            up: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Why
+             * @description Why its settings are what they are, where the design sets them
+             * @default
+             */
+            why: string;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -3284,6 +3543,13 @@ export interface components {
              * @enum {string}
              */
             axis: "x" | "y" | "z";
+        };
+        /** SlicerInfo */
+        SlicerInfo: {
+            /** Name */
+            name: string;
+            /** Title */
+            title: string;
         };
         /**
          * SliderMate
@@ -3849,6 +4115,28 @@ export interface operations {
             };
         };
     };
+    stop_api_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
     capabilities_api_capabilities_get: {
         parameters: {
             query?: never;
@@ -4078,6 +4366,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Revision"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_printer_api_designs__design_id__printer_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrinterSetup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_printer_api_designs__design_id__printer_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Printer-Input"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrinterSetup"];
                 };
             };
             /** @description Validation Error */

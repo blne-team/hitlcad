@@ -19,6 +19,7 @@ from hitlcad.services.context import ContextFeed
 from hitlcad.services.designs import DesignService
 from hitlcad.services.explore import ExploreService
 from hitlcad.services.feedback import FeedbackService
+from hitlcad.services.printing import PrintingService
 from hitlcad.services.revisions import RevisionFiles
 from hitlcad.services.sessions import AgentSessions
 from hitlcad.services.watcher import FolderWatcher
@@ -50,6 +51,7 @@ class HitlCad:
     revisions: RevisionFiles
     builds: BuildService
     feedback: FeedbackService
+    printing: PrintingService
     explore: ExploreService
     context: ContextFeed
     sessions: AgentSessions
@@ -80,7 +82,8 @@ class HitlCad:
         builds = BuildService(designs, pipeline, revisions, feedback, settings)
         context = ContextFeed(designs)
         sessions = AgentSessions(designs, builds, context)
-        return cls(settings, pipeline.registry, pipeline, designs, revisions, builds, feedback, ExploreService(designs, settings),
+        return cls(settings, pipeline.registry, pipeline, designs, revisions, builds, feedback,
+                   PrintingService(designs, builds), ExploreService(designs, settings),
                    context, sessions, FolderWatcher(designs, builds, sessions), registry is None)  # fmt: skip
 
     async def start(self) -> None:

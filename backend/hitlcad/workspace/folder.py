@@ -22,18 +22,32 @@ import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel
 
 from hitlcad.core.design import DESIGN_FILE, DesignSpec
+from hitlcad.core.project import ProjectSettings
 from hitlcad.core.report import BuildReport, BuildSpec
 from hitlcad.core.structure import Tolerances
-from hitlcad.kernel.errors import BUILD_COMPONENT, DESIGN_INVALID, DesignInvalid, HitlcadError, Location
+from hitlcad.kernel.errors import (
+    BUILD_COMPONENT,
+    DESIGN_INVALID,
+    PLUGIN_NOT_NAMED,
+    DesignInvalid,
+    HitlcadError,
+    Location,
+)
 from hitlcad.kernel.plugins import registry
+from hitlcad.workspace import projectfile
 from hitlcad.workspace.document import BUILD_DIR, Disk, Snapshot, sha
 
 BUILD_MARKER = "# hitlcad build outputs: regenerated on every build, never committed\n"
 
 #: The files of the design in a folder, by the folder's path; None for a folder that holds no design.
 Files = Callable[[Path], Snapshot | None]
+#: What a design folder gets from its project (its plugins and printer), by the folder's path.
+Projects = Callable[[Path], ProjectSettings]
 
 
 class DesignFolder:
@@ -58,13 +72,18 @@ class DesignFolder:
                                                                    for f in r.check.files()})}  # fmt: skip
 
     def spec(self, files: Files, defaults: Tolerances, configuration: str | None = None, *,
-             plugins: dict[str, str] | None = None, _stack: tuple[Path, ...] = ()) -> BuildSpec:  # fmt: skip
-        """What a build of the design's files depends on, with its components' specs: with the plugins installed
-        for a build now, and with a revision's own (`BuiltFrom.plugins`) to make its spec again."""
-        plugins = registry().versions() if plugins is None else plugins
+             project: Projects | None = None, _stack: tuple[Path, ...] = ()) -> BuildSpec:  # fmt: skip
+        """What a build of the design's files depends on, with its components' specs: with what each folder's project
+        gives it for a build now (`projectfile.settings`), and with a revision's own (`BuiltFrom.projects`) to make
+        its spec again."""
+        project = project or projectfile.settings
         mine = files(self.path)
         design = self.load(mine.design if mine else None)
         assert mine is not None
+        settings = project(self.path)
+        if uses := _not_named(design, settings.plugins):
+            raise PLUGIN_NOT_NAMED(f"{self.design_file} uses plugins its project's {projectfile.PROJECT_FILE} does not "
+                                   f"name in [plugins]: {'; '.join(uses)}")  # fmt: skip
         components = {}
         for name, use in design.components.items():
             child = DesignFolder(self.path / use.design)
@@ -75,13 +94,15 @@ class DesignFolder:
             if files(child.path) is None:
                 raise BUILD_COMPONENT(f"component {name}: no {DESIGN_FILE} in {child.path}", where)
             try:
-                components[name] = child.spec(files, defaults, plugins=plugins, _stack=(*_stack, self.path))
+                components[name] = child.spec(files, defaults, project=project, _stack=(*_stack, self.path))
             except HitlcadError as e:
+                if e.owner != "design":  # a plugin's or the machine's: the human's, as it is
+                    raise
                 raise BUILD_COMPONENT(f"component {name} ({use.design}): {e.diagnostic.message}", where) from None
         return BuildSpec(design=design, sources=mine.sources(), assets=mine.vendor(), checked=self.checked(design, mine),
                          configuration=configuration,
                          tolerances=design.verification.resolve(defaults), components=components,
-                         plugins=plugins)  # fmt: skip
+                         project=settings)  # fmt: skip
 
     def components(self, files: Snapshot) -> list[Path]:
         """The folders of the designs this one uses."""
@@ -124,22 +145,41 @@ class DesignFolder:
         return Disk(texts, {"parts/.gitkeep": sha(b"")}, {sha(b""): b""})
 
 
+def _not_named(design: DesignSpec, plugins: dict[str, str]) -> list[str]:
+    """Where the design uses installed plugins its project does not name (`ProjectSettings.plugins`): members,
+    backends and outputs."""
+    found = registry()
+    used: list[tuple[str, Any]] = [(f"parts.{p}.backend", found.backends.get(design.part_backend(p)))
+                                   for p in design.parts]  # fmt: skip
+    used += [(f"outputs.{n}", found.exporters.get(name)) for n, name in enumerate(design.outputs)]
+
+    def members(value: Any, address: str) -> None:
+        if isinstance(value, BaseModel):
+            used.append((address, value))
+            value = {k: getattr(value, k) for k in type(value).model_fields}
+        if isinstance(value, list):
+            value = dict(enumerate(value))
+        if isinstance(value, dict):
+            for k, v in value.items():
+                members(v, f"{address}.{k}" if address else str(k))
+
+    members(design, "")
+    return [
+        f"{address}: {found.origin(item).distribution}'s"  # type: ignore[union-attr]
+        for address, item in used
+        if item is not None and not found.is_active(item, plugins)
+    ]
+
+
 def load_design(text: str | None, where: str = DESIGN_FILE) -> DesignSpec:
     """The design in design.json's text; `DesignInvalid` names each problem where it is (not pydantic's dump of the
-    input). The plugins it names are checked first: without them its members do not validate, and that is not the
-    file's to fix."""
+    input)."""
     from pydantic import ValidationError
 
     if text is None:
         raise DesignInvalid(
             where, [DESIGN_INVALID.diagnostic(f"there is no {DESIGN_FILE}", Location(file=DESIGN_FILE))]
         )
-    try:
-        required = json.loads(text).get("plugins", {})
-    except (ValueError, AttributeError):  # not JSON, or not an object: what validating it says
-        required = {}
-    if isinstance(required, dict) and (missing := registry().needs({str(k): str(v) for k, v in required.items()})):
-        raise missing
     try:
         return DesignSpec.model_validate_json(text)
     except ValidationError as e:

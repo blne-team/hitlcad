@@ -64,8 +64,6 @@ PARAMETER = "model.unknown_parameter"
 VALUE = "model.interface_value"
 PART_FILE = "build.part_file_missing"
 BUG = "hitlcad.bug"
-CODES = (EXCEPTION, NO_BUILD, RETURN, CONNECTORS, PARTS, FRAME, SHAPE, CYCLE, INTERFACE, PARAMETER, VALUE, PART_FILE,
-         BUG)  # fmt: skip
 
 
 class ModelError(Exception):
@@ -308,12 +306,13 @@ class Adapter(Protocol):
     def placement(self, value: Any) -> list[list[float]]:
         """A placement or connector frame as a 4 × 4 matrix, or a `ModelError` saying what it takes."""
 
-    def begin(self) -> None:
-        """Ready to run a part file (Blender: an empty scene)."""
+    def begin(self, src: Path) -> None:
+        """Ready to run a part file of the design's sources `src` (Blender: an empty scene; build123d: no sketches
+        recorded)."""
 
     def unpack(self, what: str, value: Any) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
-        """A part file's value for one part (`what` names it): its shape, its connectors by name, and its catalog
-        entry (provider, designation, material, metadata) when it is a catalog part; or a `ModelError`."""
+        """A part file's value for one part (`what` names it): its shape (with what else it exports: build123d's
+        sketches), its connectors by name, and its catalog entry (provider, designation, material, metadata) when it is a catalog part; or a `ModelError`."""
 
     def digest(self, shape: Any) -> str | None:
         """The shape's content, everything its exports show: equal digests export alike. None: never reused."""
@@ -423,7 +422,7 @@ def parts(rt: Runtime, job: dict[str, Any], adapter: Adapter, exports: Exports) 
     files = []
     for n, (file, expected) in enumerate(job["files"].items()):
         try:
-            adapter.begin()
+            adapter.begin(rt.src)
             result, reads = rt.call_build(file, f"hitlcad_part_{n}")
             if not isinstance(result, dict):
                 raise ModelError(RETURN, f"{file}: build(p, i) returned {type(result).__name__}; return {{part name: …}}",

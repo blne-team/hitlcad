@@ -13,6 +13,10 @@ export type DesignBrief = Schemas["DesignBrief"];
 export type Revision = Schemas["Revision"];
 export type RevisionInfo = Schemas["RevisionInfo"];
 export type BuildReport = Schemas["BuildReport"];
+/** A part of a build: its file, process, and which way up it prints when it is printed. */
+export type PartResult = Schemas["PartResult"];
+/** One setting of a printed part: the design's own (`decided`), else recommended, with its reason. */
+export type PrintSetting = Schemas["PrintSetting"];
 /** One finding of one analysis, naming the addresses it is about. */
 export type Result = Schemas["Result"];
 /** The results that share a cause, failing or unverified, with copies at other pattern indices folded in. */
@@ -20,6 +24,9 @@ export type Problem = Schemas["Problem"];
 export type Finding = Schemas["Finding"];
 export type Tally = Schemas["Tally"];
 export type Capabilities = Schemas["Capabilities"];
+/** The human's printer, as the project keeps it, and what the panel offers to set it. */
+export type PrinterSetup = Schemas["PrinterSetup"];
+export type Printer = Schemas["Printer-Input"];
 export type AnalysisInfo = Schemas["AnalysisInfo"];
 export type ErrorKind = Schemas["ErrorKind"];
 /** A click in a 3D view: the surface point, and on B-rep builds the instance's face, edge or vertex it hit. */

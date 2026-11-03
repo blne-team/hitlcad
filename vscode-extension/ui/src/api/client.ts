@@ -1,6 +1,6 @@
 import { errorDetail } from "../../../src/lib/errorDetail";
 import { server } from "../lib/host";
-import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, PinMotion, Revision, SelectionItem, Structure } from "./types";
+import type { Capabilities, DesignEvent, DesignState, ParamValue, Pick, Pin, PinMotion, Printer, PrinterSetup, Revision, SelectionItem, Structure } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -46,6 +46,9 @@ export const api = {
     send<Revision>("POST", `/api/designs/${id}/outputs`, { outputs, base }),
   /** Undo or Redo: takes back the latest step of the design's `undo` or `redo`, merged with what changed since. */
   revert: (id: string, version: number) => send<Revision>("POST", `/api/designs/${id}/revert`, { version }),
+  printer: (id: string) => request<PrinterSetup>(`/api/designs/${id}/printer`),
+  /** Kept in the design's project; every design of it builds again for it. */
+  setPrinter: (id: string, printer: Printer) => send<PrinterSetup>("PUT", `/api/designs/${id}/printer`, printer),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),
   structure: (id: string, configuration: string | null) =>
     request<Structure>(`/api/designs/${id}/structure${configuration ? `?configuration=${encodeURIComponent(configuration)}` : ""}`),

@@ -37,9 +37,12 @@ $processes
 {"param": "my_param" or "interfaces.value"}, "flexible": false}}`). A component exposes connectors
 through its own `exports` (`{"output": "carrier.output"}`); mate to those, never inside it.
 
-**Plugins** (`"plugins": {"hitlcad-lasercut": ">=0.1"}`): the installed plugins a design needs beyond
-hitlcad's own, for the kinds, types, checks and processes they add (`list_backends` lists those installed).
-Their reference files:
+**Plugins** are not in design.json: a design gets hitlcad's own and those its project names in
+`hitlcad.toml` (`[plugins]`, `hitlcad-lasercut = ">=0.1"`), for the kinds, types, checks and processes they add
+(`list_backends` lists those installed). You keep `hitlcad.toml`: add a plugin when a design starts using what
+it gives (`plugin.not_named` says which), with a specifier its installed version meets, and remove one no design
+uses any more. A plugin that is not installed (`plugin.missing`) is the human's to install: tell them. Their
+reference files:
 $references
 
 **Configurations** (`"configurations": {"ratio_5": {"sun_teeth": 12}}`), **verification**

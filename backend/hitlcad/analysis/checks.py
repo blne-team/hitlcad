@@ -90,7 +90,7 @@ class Connectors:
 
 
 class Manufacturing:
-    """Each made part, in its own frame, against its process."""
+    """Each made part, as it lies when it is made, against its process."""
 
     name = "manufacturing"
     stage = "process"
@@ -125,7 +125,9 @@ def _findings(ctx: Context, name: str, process: Process) -> list[ProcessFinding]
                         ctx.tol.model_dump(mode="json"), ctx.settings.mesh_tolerance_mm, ctx.settings.wall_samples,
                         ctx.settings.overlap_mm3, f"{kind.__module__}.{kind.__qualname__}", member_code(kind.__module__),
                         process.model_dump(mode="json"))  # fmt: skip
-    found = ctx.cache.get_or(key, lambda: [f.model_dump(mode="json") for f in process.checks(ctx.bodies.part(name))])
+    found = ctx.cache.get_or(
+        key, lambda: [f.model_dump(mode="json") for f in process.checks(ctx.bodies.made(name, process))]
+    )
     return [ProcessFinding.model_validate(f) for f in found]
 
 

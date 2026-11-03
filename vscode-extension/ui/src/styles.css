@@ -940,6 +940,53 @@ details summary {
   align-items: center;
   gap: 2px;
 }
+/* the view's toolbox: its own lane down the right-hand side, the review panel and selection in the next */
+.view-toolbox {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--glass-rule);
+  border-radius: var(--radius-m);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--glass-shadow);
+}
+.viewport:has(.view-toolbox) > .side {
+  right: 60px;
+  width: min(400px, calc(100% - 70px));
+}
+.view-mode {
+  font-family: var(--narrow);
+  font-weight: 700;
+}
+.view-toolbox-rule {
+  width: 20px;
+  margin: 3px 0;
+  border-top: 1px solid var(--glass-rule);
+}
+.view-toolbox .viewer-tool-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* in the viewer's toolbar, after its view directions */
+.sketch-picker {
+  width: auto;
+  max-width: 180px;
+  margin: 0 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+@media (max-width: 720px) {
+  .sketch-picker {
+    max-width: 96px;
+  }
+}
 .cad-stage[data-panning="true"] canvas {
   cursor: grab;
 }
@@ -1067,6 +1114,23 @@ details summary {
 .cad-stage {
   position: absolute;
   inset: 0;
+}
+/* the name of the part under the cursor, beside it */
+.cad-hover-name {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: var(--radius-s);
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
 }
 /* three-cad-viewer in the studio: its toolbar a pill floating along the bottom, its colours ours */
 .cad-stage .tcv_cad_viewer,
@@ -1338,4 +1402,81 @@ details summary {
 }
 .all-checks > summary {
   cursor: pointer;
+}
+
+/* the Print tab: the human's printer, and each printed part against it */
+.printer-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.printer-summary p {
+  margin: 0;
+}
+.print-pass {
+  color: var(--ok);
+}
+.print-fail {
+  color: var(--fail);
+  font-weight: 600;
+}
+.print-unverified {
+  color: var(--warn);
+}
+.printer-form {
+  display: grid;
+  gap: 10px;
+  max-width: 460px;
+}
+.printer-form label {
+  display: grid;
+  gap: 3px;
+}
+.printer-form fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+}
+.printer-form fieldset label {
+  min-width: 70px;
+}
+.printer-form .filament {
+  display: grid;
+  grid-template-columns: minmax(60px, auto) 1fr 70px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.print-settings td {
+  padding-top: 0;
+  border-top: none;
+}
+.print-settings span {
+  display: inline-block;
+  margin: 0 10px 2px 0;
+  font-size: 12px;
+}
+.print-recommended {
+  font-style: italic;
+  color: var(--ink-2);
+  text-decoration: underline dotted;
+}
+.print-plan-box {
+  border-left-color: var(--ok);
+}
+.print-plan-box li {
+  display: block;
+  padding: 4px 0;
+}
+.print-plan-box .plan-settings span {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 12px;
 }

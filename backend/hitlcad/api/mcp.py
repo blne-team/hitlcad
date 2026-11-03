@@ -117,9 +117,9 @@ def build_mcp(core: HitlCad) -> MCPServer:
     @guard
     async def list_backends() -> str:
         """CAD backends with what each is good at, the materials, catalog providers and outputs there are, and the
-        plugins installed (a design names those it needs in design.json `plugins`)."""
+        plugins installed (a project names those its designs use in hitlcad.toml `[plugins]`)."""
         lines = ["Backends:"] + [f"- {b.name}: {b.title} — {b.summary}" for b in registry.available()]
-        lines.append("Materials (add your own in a materials.json): " + materials.names(materials.builtin()))
+        lines.append("Materials (add your own in a materials.json): " + materials.names(materials.builtin({})))
         lines.append("Catalog providers: " + "; ".join(f"{p.name} ({p.usage})" for p in catalogs.providers().values()))
         lines.append(
             "Outputs (each build writes those design.json `outputs` names): "
@@ -131,7 +131,10 @@ def build_mcp(core: HitlCad) -> MCPServer:
         ]
         found = plugins.registry()
         others = [f"{p.distribution} {p.version}" for p in found.plugins.values() if not p.builtin]
-        lines.append("Plugins beyond hitlcad's own: " + (", ".join(others) or "none"))
+        lines.append(
+            "Plugins beyond hitlcad's own, for a project to name in hitlcad.toml [plugins]: "
+            + (", ".join(others) or "none")
+        )
         lines += [f"Plugin problem: {agent_text(d)}" for d in found.failures]
         return "\n".join(lines)
 

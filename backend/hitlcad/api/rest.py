@@ -7,7 +7,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
+import signal
 import sys
 from collections.abc import AsyncIterator
 from importlib.metadata import version
@@ -29,6 +31,7 @@ from hitlcad.app import HitlCad
 from hitlcad.backends.base import BackendInfo
 from hitlcad.config import DEFAULT_BACKEND, MCP_PATH
 from hitlcad.core.events import DesignState, Event, RevisionCreated
+from hitlcad.core.project import Printer
 from hitlcad.core.report import BuildStatus, Origin, Result, Revision
 from hitlcad.core.types import Pick, Pin, PinMotion, SelectionItem
 from hitlcad.geometry import cadview
@@ -48,6 +51,7 @@ from hitlcad.kernel.errors import (
 from hitlcad.kernel.plugins import Plugin, registry
 from hitlcad.review import selection
 from hitlcad.services.bus import DROPPED
+from hitlcad.services.printing import PrinterSetup
 from hitlcad.workspace import agents, project
 
 T = TypeVar("T")
@@ -313,6 +317,12 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/api/stop")
+    async def stop() -> dict[str, int]:
+        """Stop this server as Ctrl+C does, once it has answered: its process id, which ends when it has stopped."""
+        asyncio.get_running_loop().call_soon(signal.raise_signal, signal.SIGINT)
+        return {"pid": os.getpid()}
+
     @app.get("/api/capabilities")
     async def capabilities() -> Capabilities:
         analyses = [AnalysisInfo(name=a.name, title=a.title, summary=a.summary) for a in core.pipeline.analyses]
@@ -402,6 +412,16 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.post("/api/designs/{design_id}/outputs", status_code=201)
     async def edit_outputs(design_id: str, body: EditOutputs) -> Revision:
         return await builds.edit_outputs(design_id, body.outputs, body.base)
+
+    @app.get("/api/designs/{design_id}/printer")
+    async def get_printer(design_id: str) -> PrinterSetup:
+        """The design's printer, as its project keeps it, and what the panel offers to set it."""
+        return core.printing.setup(design_id)
+
+    @app.put("/api/designs/{design_id}/printer")
+    async def set_printer(design_id: str, body: Printer) -> PrinterSetup:
+        """The human entered their printer: kept in the design's project, and every design of it built for it."""
+        return core.printing.set_printer(design_id, body)
 
     @app.post("/api/designs/{design_id}/revert", status_code=201)
     async def revert(design_id: str, body: Revert) -> Revision:

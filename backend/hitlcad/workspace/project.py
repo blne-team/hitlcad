@@ -10,6 +10,7 @@ from hitlcad.agent import skills
 from hitlcad.backends.base import CADBackend
 from hitlcad.config import Settings
 from hitlcad.workspace import agents
+from hitlcad.workspace.projectfile import PROJECT_FILE
 
 AGENT_GUIDE = """\
 # Design project (hitlcad)
@@ -19,6 +20,12 @@ Follow the `hitlcad` MCP instructions. Use the `hitlcad` skill for design work a
 `hitlcad-<backend>` before editing model code; load references and companion skills as needed.
 Skills are installed in `.claude/skills/` and `.agents/skills/` (`hitlcad init .` installs them).
 Build, measure, export and render through hitlcad tools; other CAD skills serve as API reference.
+"""
+
+PROJECT_TEXT = """\
+# The installed plugins this project's designs use beyond hitlcad's own: distribution = version specifier,
+# e.g. hitlcad-lasercut = ">=0.1". The agents add those the designs use.
+[plugins]
 """
 
 IGNORED = ["__pycache__/", agents.CLAUDE_HOOKS]  # the agents' hook names this machine's interpreter
@@ -91,10 +98,10 @@ def init_project(
     if codex and agents.codex_config(settings.mcp_url):
         written.append(shown(agents.codex_config_file()))
 
-    for name in ("CLAUDE.md", "AGENTS.md"):
+    for name, text in (("CLAUDE.md", AGENT_GUIDE), ("AGENTS.md", AGENT_GUIDE), (PROJECT_FILE, PROJECT_TEXT)):
         target = root / name
         if not target.exists():
-            target.write_text(AGENT_GUIDE, encoding="utf-8")
+            target.write_text(text, encoding="utf-8")
             written.append(name)
 
     written += skills.install(root, backends)

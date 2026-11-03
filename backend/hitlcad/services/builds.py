@@ -25,6 +25,7 @@ from hitlcad.build.pipeline import BuildPipeline
 from hitlcad.config import Settings
 from hitlcad.core.design import DESIGN_FILE
 from hitlcad.core.events import BuildProgress, BuildStopped, ErrorRaised, MotionsWatched
+from hitlcad.core.project import ProjectSettings
 from hitlcad.core.report import (
     BuildReport,
     BuildSpec,
@@ -50,6 +51,7 @@ from hitlcad.kernel.errors import (
 from hitlcad.services.designs import DesignService, readable
 from hitlcad.services.feedback import FeedbackService
 from hitlcad.services.revisions import RevisionFiles
+from hitlcad.workspace import projectfile
 from hitlcad.workspace.document import Document, Snapshot, json_set
 from hitlcad.workspace.folder import DesignFolder, load_design
 
@@ -90,8 +92,14 @@ class BuildService:
             read[path] = DocumentAt(design=other, version=found.version)
             return found
 
+        projects: dict[str, ProjectSettings] = {}
+
+        def project(path: Path) -> ProjectSettings:
+            projects[str(path)] = projectfile.settings(path)
+            return projects[str(path)]
+
         try:
-            spec = folder.spec(at, self.settings.tolerances, configuration)
+            spec = folder.spec(at, self.settings.tolerances, configuration, project=project)
         except DesignInvalid as e:
             return files.version, [reported("build", p) for p in e.problems], None
         except (OSError, HitlcadError) as e:  # a component's folder that does not read
@@ -102,11 +110,11 @@ class BuildService:
             )
             if d.owner == "design":  # a component's
                 return files.version, [reported("build", d)], None
-            self.designs.emit(design_id, ErrorRaised(diagnostic=d))  # a plugin missing: the panel says so
+            self.designs.emit(design_id, ErrorRaised(diagnostic=d))  # a plugin's: the panel tells the human
             raise HitlcadError(d) from e
         self.designs.sync(design_id, spec.design)
         built = BuiltFrom(files={str(path): at for path, at in read.items()}, tolerances=self.settings.tolerances,
-                          plugins=spec.plugins)  # fmt: skip
+                          projects=projects)  # fmt: skip
         return files.version, spec, built
 
     async def build(self, design_id: str, summary: str = "", origin: str = "file",

@@ -41,6 +41,8 @@ export class Api {
   }
 
   capabilities = () => this.request<Capabilities>("GET", "/api/capabilities");
+  /** Stops the server, whoever started it: its process id, which ends once it has stopped. */
+  stop = () => this.request<{ pid: number }>("POST", "/api/stop");
   designs = () => this.request<DesignInfo[]>("GET", "/api/designs");
   openDesign = (path: string, create?: { name: string; backend: string }) =>
     this.request<OpenedDesign>("POST", "/api/designs", { path, create: create ?? null });

@@ -86,9 +86,6 @@ class DocumentService:
             held = self._held[design_id] = _Held(doc, version, doc.snapshot(version))
         return held
 
-    def has(self, design_id: str) -> bool:
-        return self._get(design_id) is not None
-
     def current(self, design_id: str) -> Snapshot:
         held = self._get(design_id)
         assert held is not None, f"design {design_id} has no document"  # every design is created with one

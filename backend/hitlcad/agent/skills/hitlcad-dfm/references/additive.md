@@ -1,7 +1,8 @@
 # Additive design decisions
 
 Use for FDM or resin parts. Begin with the intended orientation and what the surfaces and interfaces
-must do. Read process settings from the installed generated guide rather than copying defaults here.
+must do. The orientation is the process's `up` (the direction of the part's own frame that points up as it
+prints), so the part stays modelled for the assembly. Read process settings from the installed generated guide rather than copying defaults here.
 
 ## FDM
 

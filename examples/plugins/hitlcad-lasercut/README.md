@@ -10,11 +10,13 @@ hitlcad, and shows up in design.json's validation, the agents' skills, the panel
   their hole connectors.
 - **A skill reference**, `lasercut.md`, for the agents.
 
-A design that uses it says so, so where it is not installed the design says what to install:
+A project whose designs use it names it in its `hitlcad.toml`, so where it is not installed the panel says
+what to install, and a design of another project that uses it fails to build until its agent adds it:
 
-```json
-{ "plugins": { "hitlcad-lasercut": ">=0.1" }, "manufacturing": { "process": "laser_cut", "thickness_mm": 3 } }
+```toml
+[plugins]
+hitlcad-lasercut = ">=0.1"
 ```
 
-Install it into hitlcad's environment (`uv pip install -e examples/plugins/hitlcad-lasercut`); hitlcad's
-own development environment has it already.
+Install it into hitlcad's environment (`uv tool install … --with hitlcad-lasercut`, see hitlcad's
+INSTALL.md); hitlcad's own development environment has it already.

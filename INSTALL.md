@@ -77,6 +77,7 @@ remote side, next to the tool. The panel reaches the server through VS Code's po
    | `CLAUDE.md`, `AGENTS.md` | point Claude Code and Codex at hitlcad's skills and rules |
    | `.claude/skills/`, `.agents/skills/` | the skills: `hitlcad` (how to work with designs) and `hitlcad-<backend>` (the code contract of each backend) |
    | `.gitignore` | keeps `__pycache__/` and `.claude/settings.local.json` out of the repository |
+   | `hitlcad.toml` | the installed plugins the project's designs use beyond hitlcad's own (below), and your printer once you enter it in the panel's **Print** tab |
 
 2. hitlcad asks whether your agents may see what you select and pin in the panel. Allowing it
    adds a hook that puts your selection and open pins in your next message, and runs around the agent's
@@ -98,6 +99,35 @@ remote side, next to the tool. The panel reaches the server through VS Code's po
 In a project made before, or one that lacks the setup, run **hitlcad: Set Up Claude Code and
 Codex for This Project** (the extension offers it). To connect an agent by hand, `hitlcad connect`
 prints the commands for both.
+
+## Printing
+
+**Print** in a design's tab asks once for your printer (build volume, nozzle, slicer, and the filament
+and AMS slot for each material) and keeps it in the project's `hitlcad.toml`, under `[printer]`; edit it
+there or with **Edit printer**. hitlcad ships no printer profiles: it checks each printed part against
+yours, lying the way it prints, and tells you how to print it; you slice and print in your slicer.
+
+## Plugins
+
+A plugin (a process, a backend, a catalog, an exporter) is a Python package installed into hitlcad's
+environment. hitlcad runs one server per machine, so each Python process gets one version of each
+plugin and projects can't pin their own. In the unpacked release folder, install hitlcad again with
+the plugin beside it:
+
+```bash
+uv tool install --force --constraints constraints.txt hitlcad-<version>-py3-none-any.whl --with hitlcad-lasercut
+```
+
+and name it in each project that uses it, in its `hitlcad.toml`:
+
+```toml
+[plugins]
+hitlcad-lasercut = ">=0.1"
+```
+
+A design gets hitlcad's own plugins and those its project names. Your agent keeps that list: it adds a
+plugin when a design starts using what the plugin gives. When the project names a plugin that is not
+installed, the panel says so and the agent tells you what to install.
 
 ## Configuration
 

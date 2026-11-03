@@ -39,7 +39,14 @@ designs/<name>/
 ```
 
 - **Part**: one rigid body, made (a `material`, a `manufacturing` process) or bought (a `catalog`
-  entry). Its own frame is how it is made: a printed part stands as it prints.
+  entry). Model it in its own frame for the assembly; a printed part's process says which way up it prints
+  (`"up": [0, -1, 0]` stands it on its +Y face), and its process checks run lying that way. Once the human has
+  entered their printer (the project's `[printer]` in `hitlcad.toml`, theirs to set: never write it), each printed
+  part is checked against its bed too (`printing.bed`). Each printed part's report gives its print settings
+  (layer height, walls, infill, supports, brim), recommended from what the build found unless the part's
+  `manufacturing` sets them: you judge them for the human, who should not have to tune a printer, so keep a
+  recommendation that fits the part's job, or set the value with your reason in `why` ("6 walls: it carries the
+  lid's weight").
 - **Instance**: one placement of a part: `lid`, or `planet[2]` when placed several times.
 - **Interface value**: a mating dimension computed once in interfaces.py; parts and assembly.py read
   it as `i.<name>`, so two parts that meet read the same number.

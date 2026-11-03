@@ -1,7 +1,7 @@
 # Laser cutting (hitlcad-lasercut)
 
-A part cut from sheet: `"manufacturing": {"process": "laser_cut", "thickness_mm": 3, "kerf_mm": 0.15}`, and
-the design names the plugin: `"plugins": {"hitlcad-lasercut": ">=0.1"}`.
+A part cut from sheet: `"manufacturing": {"process": "laser_cut", "thickness_mm": 3, "kerf_mm": 0.15}`, in a
+project whose `hitlcad.toml` names the plugin: `hitlcad-lasercut = ">=0.1"` under `[plugins]`.
 
 - Model the part lying flat in its own frame: a profile extruded `thickness_mm` along Z from Z = 0.
 - No hole narrower than the sheet is thick.

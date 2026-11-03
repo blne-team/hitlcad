@@ -5,7 +5,8 @@ fix. Each is defined once, into one catalog (`define`); the skills' playbook is 
 is one occurrence: a kind's code and owner, a message in the design's own terms, and where. `HitlcadError`
 carries one. The owner decides where a diagnostic goes:
 
-    design       the design's files: a failing `Result` of a revision; the agent changes the files
+    design       the design's files, or its project's hitlcad.toml: a failing `Result` of a revision; the agent
+                 changes the files
     request      the call (no such revision, a relative path): a tool error, HTTP 404 or 422
     environment  the machine (Blender missing, a folder that cannot be written): tell the human, HTTP 503
     plugin       an installed plugin, missing or broken: tell the human, HTTP 503
@@ -157,12 +158,17 @@ def http_status(d: Diagnostic) -> int:
 HITLCAD_BUG = define(code="hitlcad.bug", owner="hitlcad", title="A bug in hitlcad")
 
 # The design's files: design.json and the code that builds it. The build process names the `model.*` codes (and
-# `build.part_file_missing`) as strings: `backends.runtime.CODES`.
+# `build.part_file_missing`) as strings (`execution.runtime`).
 
 DESIGN_INVALID = define(
     code="design.invalid", owner="design", title="design.json does not validate",
     hint="Fix each field where the message puts it (the path before the colon is where in design.json).",
     skill="hitlcad: design.json reference",
+)  # fmt: skip
+PROJECT_INVALID = define(
+    code="project.invalid", owner="environment", title="The project's hitlcad.toml does not read",
+    hint="Tell the human what in hitlcad.toml is wrong (the message says where); they fix it, or set the printer "
+    "again from the panel.",
 )  # fmt: skip
 DESIGN_UNREADABLE = define(
     code="design.unreadable", owner="environment", title="The design's files could not be read",
@@ -370,6 +376,11 @@ COVERAGE_FLOATING = define(
     hint="Join it with a mate, relation or fastener set to something connected to ground.",
 )  # fmt: skip
 COVERAGE_GROUNDED = define(code="coverage.grounded", owner="design", title="Every instance connects to ground")
+PRINTING_BED = define(
+    code="printing.bed", owner="design", title="A printed part, lying as it prints, does not fit the printer",
+    hint="Print it another way up (`up`), split it into pieces that fit (joined by a joint, dowels or screws, each "
+    "piece a part), or make it smaller.",
+)  # fmt: skip
 INTERFERENCE_OVERLAP = define(
     code="interference.overlap", owner="design", title="Two instances overlap",
     hint="Move or resize one of them; for parts meant to overlap (an insert set into a hole) declare it on their "
@@ -463,8 +474,13 @@ FILE_UNREADABLE = define(code="file.unreadable", owner="request", title="A model
 # Installed plugins.
 
 PLUGIN_MISSING = define(
-    code="plugin.missing", owner="plugin", title="design.json needs a plugin that is not installed",
+    code="plugin.missing", owner="plugin", title="A project names a plugin that is not installed",
     hint="Tell the human which plugin to install (the message names it and its version).",
+)  # fmt: skip
+PLUGIN_NOT_NAMED = define(
+    code="plugin.not_named", owner="design", title="A design uses a plugin its project does not name",
+    hint="Add the plugin to [plugins] in the project's hitlcad.toml, with a version specifier its installed version "
+    "meets (`list_backends` lists them), or stop using it.",
 )  # fmt: skip
 PLUGIN_LOAD_FAILED = define(
     code="plugin.load_failed", owner="plugin", title="An installed plugin did not load",

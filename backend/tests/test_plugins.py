@@ -1,9 +1,8 @@
-"""Plugins: hitlcad's own and an installed one (examples/plugins/hitlcad-lasercut) load the same way, and a plugin
-that does not load, clashes or fails says so without taking the rest down."""
+"""Plugins: hitlcad's own and an installed one (examples/plugins/hitlcad-lasercut) load the same way, a design gets
+those its project names, and a plugin that does not load, clashes or fails says so without taking the rest down."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -13,11 +12,13 @@ import pytest
 from hitlcad.agent import describe
 from hitlcad.agent.skills import render
 from hitlcad.app import HitlCad
+from hitlcad.config import Settings
 from hitlcad.core.checks import Process, ProcessFinding
 from hitlcad.core.design import DesignSpec
 from hitlcad.kernel import plugins
 from hitlcad.kernel.errors import HitlcadError, catalog
 from hitlcad.kernel.plugins import Registry, hookimpl, registry
+from hitlcad.workspace import projectfile
 from hitlcad.workspace.document import Scanned
 from hitlcad.workspace.folder import DesignFolder
 
@@ -26,7 +27,6 @@ from .conftest import write_design
 PLATE = {
     "design.json": {
         "hitlcad": 2, "name": "plate", "backend": "build123d", "ground": "plate",
-        "plugins": {"hitlcad-lasercut": ">=0.1"},
         "parameters": [{"name": "sheet", "value": 3, "min": 1, "max": 10}],
         "manufacturing": {"process": "laser_cut", "thickness_mm": 3},
         "parts": {"plate": {"role": "a cut plate", "file": "parts/plate.py", "material": "PETG",
@@ -43,9 +43,9 @@ def test_hitlcad_s_own_plugins_and_an_installed_one_load_alike() -> None:
     assert found.failures == []
     own = {p.name for p in found.plugins.values() if p.builtin}
     assert own == {"joints", "gears", "cams", "checks", "processes", "build123d", "blender", "catalogs", "exports", "robot",
-                   "materials", "solvers", "pictures"}  # fmt: skip
+                   "materials", "solvers", "pictures", "printing"}  # fmt: skip
     assert list(found.solvers) == ["sqp"]
-    assert found.versions() == {"hitlcad-lasercut": "0.1.0"}
+    assert list(found.slicers) == ["bambu-studio"]
     assert "LaserCutProcess" in [p.__name__ for p in found.processes]
     # its process validates in design.json, its kinds are in the catalog, the skills and the playbook name them
     spec = DesignSpec.model_validate({"name": "x", "backend": "build123d",
@@ -60,16 +60,21 @@ def test_hitlcad_s_own_plugins_and_an_installed_one_load_alike() -> None:
     assert "[lasercut.md](lasercut.md)" in skill["reference/design-json.md"]  # listed beside it, as design.json's
 
 
-def test_a_design_names_the_plugins_it_needs(tmp_path: Path) -> None:
-    folder = write_design(tmp_path / "plate", PLATE)
-    assert DesignFolder(folder).load((folder / "design.json").read_text()).plugins == {"hitlcad-lasercut": ">=0.1"}
-    for needs, says in (({"hitlcad-lasercut": ">=9"}, "hitlcad-lasercut >=9 is needed, 0.1.0 is installed"),
-                        ({"hitlcad-sls": ">=1"}, "hitlcad-sls >=1 is not installed"),
-                        ({"hitlcad-lasercut": "soon"}, "'soon' is not a version specifier")):  # fmt: skip
-        design = json.loads((folder / "design.json").read_text(encoding="utf-8")) | {"plugins": needs}
-        (folder / "design.json").write_text(json.dumps(design), encoding="utf-8")
+def test_a_design_gets_the_plugins_its_project_names(tmp_path: Path) -> None:
+    folder = write_design(tmp_path / "designs" / "plate", PLATE)
+    with pytest.raises(HitlcadError, match="manufacturing: hitlcad-lasercut's") as unnamed:
+        DesignFolder(folder).spec(Scanned(), Settings().tolerances)
+    assert unnamed.value.code == "plugin.not_named" and unnamed.value.owner == "design"  # the agent's to add
+
+    project = tmp_path / projectfile.PROJECT_FILE
+    project.write_text('[plugins]\nhitlcad-lasercut = ">=0.1"\n', encoding="utf-8")
+    assert DesignFolder(folder).spec(Scanned(), Settings().tolerances).project.plugins == {"hitlcad-lasercut": "0.1.0"}
+    for needs, says in (('hitlcad-lasercut = ">=9"', "hitlcad-lasercut >=9 is needed, 0.1.0 is installed"),
+                        ('hitlcad-sls = ">=1"', "hitlcad-sls >=1 is not installed"),
+                        ('hitlcad-lasercut = "soon"', "'soon' is not a version specifier")):  # fmt: skip
+        project.write_text(f"[plugins]\n{needs}\n", encoding="utf-8")
         with pytest.raises(HitlcadError, match=says) as missing:
-            DesignFolder(folder).load((folder / "design.json").read_text())
+            DesignFolder(folder).spec(Scanned(), Settings().tolerances)
         assert missing.value.code == "plugin.missing" and missing.value.owner == "plugin"
 
 
@@ -111,8 +116,9 @@ async def test_a_plugin_s_process_and_building_block_build_and_its_failures_are_
     from hitlcad_lasercut.process import LaserCutProcess
 
     folder = write_design(tmp_path / "plate", PLATE)
+    (tmp_path / projectfile.PROJECT_FILE).write_text('[plugins]\nhitlcad-lasercut = ">=0.1"\n', encoding="utf-8")
     spec = DesignFolder(folder).spec(Scanned(), core.settings.tolerances)
-    assert spec.plugins == {"hitlcad-lasercut": "0.1.0"}
+    assert spec.project.plugins == {"hitlcad-lasercut": "0.1.0"}
     report = await core.pipeline.run(spec, folder, tmp_path / "out")  # the part file imports the plugin's block
     assert report.status == "succeeded", report.lead()
     laser = {r.code: r for r in report.results if r.analysis == "manufacturing"}

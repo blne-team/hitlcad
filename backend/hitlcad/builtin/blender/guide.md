@@ -17,8 +17,8 @@ verify actual local thickness through requirements and manufacturing results.
 ## Part files
 
 `def build(p, i)` returns `{part name: (object or [objects], connectors)}` for exactly the parts
-design.json assigns to the file, each part in its own frame (the way it is made; its lowest point at
-Z=0). `connectors` maps each declared connector to a 4 × 4 `mathutils.Matrix` (or an empty, whose
+design.json assigns to the file, each part in its own frame, modelled for the assembly (a printed part's
+process says which way up it prints: `up`). `connectors` maps each declared connector to a 4 × 4 `mathutils.Matrix` (or an empty, whose
 world matrix is used), or a list of them for a pattern. A frame's origin sits where the mating
 connector's origin will be, Z out of the part. Connectors are measured on the mesh as on a B-rep: a
 `hole` or `shaft` by rays from its axis, a `face` by its flat facets, each to within the mesh's facets

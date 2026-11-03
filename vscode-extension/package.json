@@ -67,8 +67,8 @@
         "category": "hitlcad"
       },
       {
-        "command": "hitlcad.startServer",
-        "title": "Start Server",
+        "command": "hitlcad.restartServer",
+        "title": "Restart Server",
         "category": "hitlcad"
       },
       {

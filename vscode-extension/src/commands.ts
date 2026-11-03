@@ -267,8 +267,13 @@ export function registerCommands(ctx: vscode.ExtensionContext, deps: Deps): void
 
   // ------------------------------------------------------------------ server
 
-  command("hitlcad.startServer", async () => {
-    vscode.window.setStatusBarMessage(`hitlcad server is running at ${serverUrl()}`, 4000);
-  });
+  command(
+    "hitlcad.restartServer",
+    async () => {
+      await server.restart();
+      vscode.window.setStatusBarMessage(`hitlcad server restarted at ${serverUrl()}`, 4000);
+    },
+    false,
+  );
   command("hitlcad.showLogs", async () => server.output.show(true), false);
 }

@@ -11,11 +11,15 @@ instance, so the extra level changes no pick.
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from hitlcad.analysis.model import BuiltDesign, PartGeometry
 from hitlcad.core import frames as fr
+from hitlcad.core.checks import PrintedProcess
 from hitlcad.geometry import cadview
 from hitlcad.kernel.errors import Unmeasurable
 from hitlcad.review.measure import location
@@ -83,3 +87,36 @@ def write_scene(built: BuiltDesign, out_dir: Path) -> None:
         return cadview.group(path, name, parts)
 
     scene.write(group(built, f"/{root}", root, fr.IDENTITY))
+
+
+#: The gap the print view leaves between two parts on the bed, mm.
+PRINT_GAP_MM = 15.0
+
+
+def printed(built: BuiltDesign, prefix: str = "") -> list[tuple[str, PartGeometry, PrintedProcess]]:
+    """Every printed part of a build, its components' included, each once: by its path ("fan/blade"), with its
+    process."""
+    out = []
+    for name, part in built.parts.items():
+        if isinstance(process := built.spec.process(name), PrintedProcess):
+            out.append((prefix + name, part, process))
+    for name, component in built.components.items():
+        out += printed(component, f"{prefix}{name}/")
+    return out
+
+
+def write_print_scene(built: BuiltDesign, out_dir: Path) -> bool:
+    """The print view of a build in `out_dir`: its printed parts, each once, lying as it prints (`Process.made`),
+    side by side along X on Z = 0. False, and no file, where nothing is printed."""
+    scene, placed, x = cadview.Scene(out_dir), [], 0.0
+    for name, part, process in printed(built):
+        made = process.made()
+        bounds = np.array(cadview.PartView.header(part.view_file.read_bytes())["bounds"])
+        corners = fr.transform_points(np.array(list(itertools.product(*bounds.T))), made)
+        lo, hi = corners.min(axis=0), corners.max(axis=0)
+        at = fr.translation((x - lo[0], -(lo[1] + hi[1]) / 2, -lo[2])) @ made
+        placed.append(scene.part(part.view_file, f"/print/{name}", name, at))
+        x += hi[0] - lo[0] + PRINT_GAP_MM
+    if placed:
+        scene.write(cadview.group("/print", "print", placed), cadview.PRINT_SCENE_FILE)
+    return bool(placed)

@@ -211,7 +211,7 @@ def test_projects_add_and_override_materials(tmp_path: Path) -> None:
     )
     design = tmp_path / "designs" / "a"
     design.mkdir(parents=True)
-    registry = materials.for_design(design)
+    registry = materials.for_design(design, {})
     assert registry["PLA"].density_g_cm3 == 1.3 and "wood" in registry and "steel" in registry
 
 
@@ -328,7 +328,7 @@ def test_a_gear_pattern_whose_nominals_do_not_resolve_fails_every_frame() -> Non
                                 frames={"teeth": [fr.IDENTITY, fr.translation((0, 30, 0))]}, catalog=None,
                                 reads=Reads(), cached=False)
              for name in ("a", "b")}  # fmt: skip
-    built = BuiltDesign(spec=spec, folder=Path(), values={"w": 10}, interfaces={}, interface_reads={},
+    built = BuiltDesign(spec=spec, folder=Path(), values={"w": 10}, interfaces={},
                         assembly_reads=Reads(), parts=parts, placements={"a": [fr.IDENTITY], "b": [fr.IDENTITY]},
                         components={}, materials={}, tolerances=TOL)  # fmt: skip
     built.measure_connectors()

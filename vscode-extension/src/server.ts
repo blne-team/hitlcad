@@ -7,6 +7,7 @@ import type { Api } from "./api";
 import { resolveServerCommand, whichSync, type WorkspaceFolderInfo } from "./lib/serverCommand";
 
 const STARTUP_TIMEOUT_MS = 30_000;
+const STOP_TIMEOUT_MS = 30_000;
 
 /** Starts the hitlcad server on demand and stops it on deactivate if we started it. */
 export class ServerManager implements vscode.Disposable {
@@ -27,6 +28,26 @@ export class ServerManager implements vscode.Disposable {
     if (!config().get<boolean>("autoStart")) {
       throw new Error(`The hitlcad server is not running at ${serverUrl()}. Start it or enable hitlcad.autoStart.`);
     }
+    this.starting ??= this.start().finally(() => (this.starting = null));
+    await this.starting;
+    await this.checkVersion();
+  }
+
+  /**
+   * Stop the server at the URL, this window's or another's, once its process has ended (it holds the data folder
+   * until then), and start one: hitlcad's code as it is now.
+   */
+  async restart(): Promise<void> {
+    if (await this.api.health()) {
+      const { pid } = await this.api.stop();
+      this.output.appendLine(`Stopping the hitlcad server (process ${pid}).`);
+      const deadline = Date.now() + STOP_TIMEOUT_MS;
+      while (running(pid)) {
+        if (Date.now() >= deadline) throw new Error(`The hitlcad server (process ${pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s.`);
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+    this.versionChecked = false;
     this.starting ??= this.start().finally(() => (this.starting = null));
     await this.starting;
     await this.checkVersion();
@@ -140,6 +161,16 @@ function augmentedPath(): string {
   const parts = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
   for (const p of extra) if (!parts.includes(p)) parts.push(p);
   return parts.join(path.delimiter);
+}
+
+/** Whether process `pid` is still there: signal 0 tests it without touching it (EPERM: there, but not ours). */
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 function isExecutable(p: string): boolean {

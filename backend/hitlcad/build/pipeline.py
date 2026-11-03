@@ -31,7 +31,7 @@ from typing import Any, Protocol, TypeVar
 import numpy as np
 
 from hitlcad import materials
-from hitlcad.analysis import motion
+from hitlcad.analysis import motion, printing
 from hitlcad.analysis.base import Analysis, Context, ResultCache, analysis_code, reported, result
 from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry, Shapes
 from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
@@ -41,6 +41,7 @@ from hitlcad.build import assemble
 from hitlcad.build.cache import Inputs, PartCache, link
 from hitlcad.config import Settings
 from hitlcad.core import frames as fr
+from hitlcad.core.checks import PrintedProcess, PrintSetting
 from hitlcad.core.report import (
     Artifact,
     BomLine,
@@ -248,6 +249,7 @@ class BuildPipeline:
             if outputs:
                 with clock.step("scene"):
                     await asyncio.to_thread(assemble.write_scene, built, out_dir)
+                    await asyncio.to_thread(assemble.write_print_scene, built, out_dir)
                 progress.shown(cadview.SCENE_FILE)
             progress.doing("measuring connectors")
             with clock.step("measuring connectors"):
@@ -259,10 +261,10 @@ class BuildPipeline:
                 raise
             return finish(BuildStatus.FAILED, results=[reported("build", e.diagnostic)]), None
         results = self._unregistered(spec, backends=False) + await asyncio.to_thread(
-            self._analyse, built, watched or {}, ticket, progress, clock
+            self._analyse, built, spec.project.plugins, watched or {}, ticket, progress, clock
         )
         with clock.step("report"):
-            report_fields = {**fields, **await asyncio.to_thread(self._describe, built), "results": results}
+            report_fields = {**fields, **await asyncio.to_thread(self._describe, built, results), "results": results}
         if outputs:
             ticket.check()
             progress.doing("writing outputs")
@@ -284,6 +286,7 @@ class BuildPipeline:
             raise FILES_UNMADE(f"its build now fails: {lead.code} {lead.subject}: {lead.detail}") from None
         (out_dir / "build.log").write_text("\n".join(log), encoding="utf-8")
         await asyncio.to_thread(assemble.write_scene, built, out_dir)
+        await asyncio.to_thread(assemble.write_print_scene, built, out_dir)
         await self.export(spec.design.outputs, built, out_dir, dict(report), Ticket())
 
     async def check_structure(
@@ -307,7 +310,9 @@ class BuildPipeline:
             return [*out, reported("structure", plan.error)], plan
         out += _unknown(spec, plan, "structure")
         exports = {n: c.design.exports for n, c in spec.components.items()}
-        out += structure_results(spec.design, plan.placements, exports, materials.for_design(folder))
+        out += structure_results(
+            spec.design, plan.placements, exports, materials.for_design(folder, spec.project.plugins)
+        )
         return out, plan
 
     # ------------------------------------------------------------------ building
@@ -352,9 +357,10 @@ class BuildPipeline:
                     parts[bp.name] = self._geometry(spec, out_dir, outcome, bp)
             built = BuiltDesign(
                 spec=design, folder=folder, values=values, interfaces=interfaces,
-                interface_reads={k: v.reads for k, v in plan.interfaces.items()}, assembly_reads=plan.assembly_reads,
+                assembly_reads=plan.assembly_reads,
                 parts=parts, placements=placements, components={n: c[1] for n, c in components.items()},
-                materials=materials.for_design(folder), tolerances=spec.tolerances,
+                materials=materials.for_design(folder, spec.project.plugins), tolerances=spec.tolerances,
+                printer=spec.project.printer,
             )  # fmt: skip
             fields = {
                 "interfaces": [
@@ -371,7 +377,7 @@ class BuildPipeline:
         self, spec: BuildSpec, folder: Path, src: Path, values: dict[str, Value], work: Path, ticket: Ticket
     ) -> PlanOutcome:
         backend = self._backend(spec.design.backend)
-        return await backend.plan(ticket, folder, src, values, work)
+        return await backend.plan(ticket, folder, src, values, spec.project.plugins, work)
 
     def _backend(self, name: str) -> Any:
         if name not in self.registry.names():
@@ -428,8 +434,8 @@ class BuildPipeline:
         # A cached component is reused while everything its report came from is as it was: its spec, its
         # backends, the materials it sees and the analyses that judged it.
         backends = sorted({child.design.part_backend(p) for p in child.design.parts} | {child.design.backend})
-        registry = {n: m.model_dump() for n, m in materials.for_design(child_folder).items()}
-        key = json.dumps([bound.key, [self._backend(b).fingerprint() for b in backends], registry, analysis_code()],
+        registry = {n: m.model_dump() for n, m in materials.for_design(child_folder, child.project.plugins).items()}
+        key = json.dumps([bound.key, [self._backend(b).fingerprint(child.project.plugins) for b in backends], registry, analysis_code()],
                          sort_keys=True)  # fmt: skip
         target = self.components_dir / hashlib.sha256(key.encode()).hexdigest()
         report_file = target / REPORT_FILE
@@ -460,7 +466,7 @@ class BuildPipeline:
 
         async def one(n: int, file: str) -> tuple[FileOutcome, str]:
             backend = self._backend(design.part_backend(files[file][0]))
-            inputs.setdefault(backend.name, Inputs(fingerprint=backend.fingerprint(), sources=spec.sources,
+            inputs.setdefault(backend.name, Inputs(fingerprint=backend.fingerprint(spec.project.plugins), sources=spec.sources,
                                                    assets=spec.assets, values=values, interfaces=interfaces))  # fmt: skip
             hit = self.parts_cache.lookup(file, declared[file], inputs[backend.name])
             if hit:
@@ -468,7 +474,9 @@ class BuildPipeline:
                 self.parts_cache.restore(key, cached, out_dir)
                 return cached.model_copy(update={"cached": True}), ""
             work = out_dir / "work" / f"part-{n}"
-            outcome, printed = await backend.build_file(ticket, folder, src, values, file, declared[file], work)
+            outcome, printed = await backend.build_file(
+                ticket, folder, src, values, file, declared[file], spec.project.plugins, work
+            )
             if not outcome.error:
                 for part in outcome.parts:
                     for rel in part.files():
@@ -492,23 +500,28 @@ class BuildPipeline:
 
     # ------------------------------------------------------------------ analyses and outputs
 
-    def _analyse(self, built: BuiltDesign, watched: Mapping[str, int], ticket: Ticket,
+    def _analyse(self, built: BuiltDesign, active: Mapping[str, str], watched: Mapping[str, int], ticket: Ticket,
                  progress: Progress, clock: _Clock) -> list[Result]:  # fmt: skip
+        """The analyses of hitlcad and of the design's plugins, in order."""
         ctx = Context(built=built, settings=self.analysis_settings, cache=self.results_cache, watched=watched,
                       bodies=BuildBodies(built, self.analysis_settings, self.results_cache))  # fmt: skip
+        found = plugins.registry()
+        analyses = [a for a in self.analyses if found.is_active(a, active)]
         out: list[Result] = []
-        for n, analysis in enumerate(self.analyses, 1):
+        for n, analysis in enumerate(analyses, 1):
             ticket.check()
-            progress.doing(f"checking {analysis.name} ({n} of {len(self.analyses)})")
+            progress.doing(f"checking {analysis.name} ({n} of {len(analyses)})")
             with clock.step(analysis.name):
                 found = _run(analysis, ctx)
             out += found
             progress.found(found)
         return out
 
-    def _describe(self, built: BuiltDesign) -> dict[str, Any]:
-        """The parts, instances, mass and bill of materials of a built design, for its report."""
-        parts = [_part_result(built, p) for p in built.parts.values()]
+    def _describe(self, built: BuiltDesign, results: list[Result]) -> dict[str, Any]:
+        """The parts (a printed part with its print settings, from what the analyses found), instances, mass and bill
+        of materials of a built design, for its report."""
+        settings = printing.plan(built, results)
+        parts = [_part_result(built, p, settings.get(p.name, [])) for p in built.parts.values()]
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
         whole = BuildBodies(built, self.analysis_settings, self.results_cache).whole()
@@ -577,7 +590,8 @@ class BuildPipeline:
             shutil.rmtree(work, ignore_errors=True)
 
     def _files(self, built: BuiltDesign, out_dir: Path) -> list[Artifact]:
-        """What every build writes, for review: each part's own files and the 3D view."""
+        """What every build writes, for review: each part's own files, the 3D view, and the print view where it prints
+        a part."""
         artifacts = []
         for part in built.parts.values():
             artifacts.append(
@@ -590,6 +604,8 @@ class BuildPipeline:
             artifacts.append(
                 _artifact(out_dir, part.objects_file.relative_to(out_dir).as_posix(), "model/gltf-binary", "objects")
             )
+        if (out_dir / cadview.PRINT_SCENE_FILE).is_file():
+            artifacts.append(_artifact(out_dir, cadview.PRINT_SCENE_FILE, "application/json", "print_view"))
         return [*artifacts, _artifact(out_dir, cadview.SCENE_FILE, "application/json", "view")]
 
 
@@ -631,15 +647,16 @@ def _ref_value(ref: str, values: dict[str, Value], interfaces: dict[str, Any]) -
     return values[ref]
 
 
-def _part_result(built: BuiltDesign, part: PartGeometry) -> PartResult:
+def _part_result(built: BuiltDesign, part: PartGeometry, print_settings: list[PrintSetting]) -> PartResult:
     process = built.spec.process(part.name)
     connectors = {name: ConnectorInfo(kind=spec.kind, frames=[fr.as_matrix(f) for f in part.frames.get(name, [])],
                                       measured=built.measured.get((part.name, name), []))
                   for name, spec in part.spec.connectors.items()}  # fmt: skip
     return PartResult(name=part.name, file=part.file, backend=part.backend, made=part.spec.catalog is None,
-                      material=part.material, process=getattr(process, "process", None), catalog=part.catalog,
+                      material=part.material, process=getattr(process, "process", None),
+                      up=process.up if isinstance(process, PrintedProcess) else None, catalog=part.catalog,
                       cached=part.cached, reads=part.reads, metrics=part.metrics,
-                      mass=built.mass(part), connectors=connectors)  # fmt: skip
+                      mass=built.mass(part), connectors=connectors, print=print_settings)  # fmt: skip
 
 
 def _mass(built: BuiltDesign) -> MassProperties | None:
@@ -708,9 +725,9 @@ def load_built(report: BuildReport, spec: BuildSpec, folder: Path, out_dir: Path
                   for name, child in report.components.items()}  # fmt: skip
     built = BuiltDesign(
         spec=design, folder=folder, values=report.values, interfaces={i.name: i.value for i in report.interfaces},
-        interface_reads={i.name: i.reads for i in report.interfaces}, assembly_reads=report.assembly_reads,
-        parts=parts, placements=placements, components=components, materials=materials.for_design(folder),
-        tolerances=spec.tolerances,
+        assembly_reads=report.assembly_reads,
+        parts=parts, placements=placements, components=components, materials=materials.for_design(folder, spec.project.plugins),
+        tolerances=spec.tolerances, printer=spec.project.printer,
     )  # fmt: skip
     for pr in report.parts:
         for name, info in pr.connectors.items():

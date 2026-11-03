@@ -1,12 +1,14 @@
 """The material registry: density, the processes a material suits, and the minimum thread engagement
 (in nominal diameters) a screw needs in it.
 
-Plugins give materials.json files (hitlcad's own: `hitlcad.builtin.materials`). A project adds or overrides
-materials with its own `materials.json`: the nearest one in a design's folder or its parents.
+Plugins give materials.json files (hitlcad's own: `hitlcad.builtin.materials`); a design sees those of hitlcad's
+own and its project's plugins. A project adds or overrides materials with its own `materials.json`: the nearest one
+in a design's folder or its parents.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic import Field, TypeAdapter
@@ -28,17 +30,20 @@ class Material(Model):
 _ADAPTER: TypeAdapter[dict[str, Material]] = TypeAdapter(dict[str, Material])
 
 
-def builtin() -> dict[str, Material]:
-    """The plugins' materials, a later file's replacing an earlier one's of the same name."""
+def builtin(plugins: Mapping[str, str]) -> dict[str, Material]:
+    """The materials of hitlcad's own plugins and of `plugins`, a later file's replacing an earlier one's of the same
+    name."""
     out: dict[str, Material] = {}
     for path in registry().materials:
-        out |= _ADAPTER.validate_json(path.read_text(encoding="utf-8"))
+        if registry().is_active(path, plugins):
+            out |= _ADAPTER.validate_json(path.read_text(encoding="utf-8"))
     return out
 
 
-def for_design(folder: Path) -> dict[str, Material]:
-    """The registry a design sees: hitlcad's materials, overridden by the nearest project materials.json."""
-    found = builtin()
+def for_design(folder: Path, plugins: Mapping[str, str]) -> dict[str, Material]:
+    """The registry a design with these plugins sees: their materials, overridden by the nearest project
+    materials.json."""
+    found = builtin(plugins)
     for parent in [folder, *folder.parents]:
         if (parent / FILE).is_file():
             found |= _ADAPTER.validate_json((parent / FILE).read_text(encoding="utf-8"))

@@ -1,4 +1,5 @@
-"""3MF for printing: each made part in its own frame (the way it is made), and the placed assembly.
+"""3MF for printing: each made part as it lies when it is made (`Process.made`: a printed part the way `up` turns
+it), and the placed assembly.
 
 A part is an object made of one mesh per colour (its features' `pieces`), each mesh coloured by a base
 material and named by its materials, so a multi-colour slicer gets a part per colour to assign a filament
@@ -25,7 +26,7 @@ MEDIA = "model/3mf"
 class ThreeMfExporter:
     name = "3mf"
     title = "3MF for printing"
-    summary = "parts/<part>.3mf for each made part as it is made, and model.3mf of the assembly, in their colours"
+    summary = "parts/<part>.3mf for each made part as it lies when it is made, and model.3mf of the assembly, in their colours"
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:
         out = []
@@ -33,7 +34,8 @@ class ThreeMfExporter:
             if part.spec.catalog is None:
                 rel = f"parts/{name}.3mf"
                 model = _Model()
-                model.place(part, name, fr.IDENTITY)
+                process = built.spec.process(name)
+                model.place(part, name, process.made() if process else fr.IDENTITY)
                 model.write(out_dir / rel)
                 out.append((rel, MEDIA))
         model = _Model()

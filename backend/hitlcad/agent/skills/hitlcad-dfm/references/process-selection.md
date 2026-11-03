@@ -34,8 +34,8 @@ bend radius, and molding draft/undercuts/wall variation. These are bounded geome
 
 Machine-envelope checks can be expressed as per-part `fits_within` requirements using the actual
 dimensions and orientation. There is no automatic universal printer-volume selection. Multiple CNC
-setups and per-process manufacturing orientations need care: the current part frame is how it is
-made, and the built-in CNC screen assumes access from +Z. Do not claim a multi-setup plan was checked
+setups need care: a printed part prints the way its process's `up` turns it, but a machined part is made
+as it is modelled, and the built-in CNC screen assumes access from +Z. Do not claim a multi-setup plan was checked
 by that single-direction screen.
 
 ## Source

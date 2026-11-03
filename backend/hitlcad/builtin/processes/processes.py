@@ -6,20 +6,24 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from hitlcad.core.checks import PrintedProcess, Process, ProcessFinding
+from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintSetting, Process, ProcessFinding
 
 if TYPE_CHECKING:
     from hitlcad.analysis.model import Body
 
 
 class FdmProcess(PrintedProcess):
-    """FDM (filament) 3D printing, printed the way the part stands in its own frame (+Z up, on its lowest
-    Z): wall thickness, overhangs and bed contact. An overhang prints where it bridges between two supports
-    no more than `max_bridge_mm` apart (the top of a horizontal hole is such a bridge) or lies within a
-    nozzle's width of what holds it. With `supports`, overhangs print on support and are reported, not
-    failed: for shapes that cannot avoid them, like figurines. With `brim`, a tall, narrow part is held down
-    by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes come out smaller and shafts
-    larger than modelled, for fit checks."""
+    """FDM (filament) 3D printing, printed the way `up` turns the part, on its lowest point: wall thickness,
+    overhangs and bed contact. `up` is the direction of the part's own frame that points up as it prints
+    (`[0, -1, 0]` stands it on its +Y face; as modelled by default), so the part stays modelled for its assembly.
+    An overhang prints where it bridges between two supports no more than `max_bridge_mm` apart (the top of a
+    horizontal hole is such a bridge) or lies within a nozzle's width of what holds it. With `supports`, overhangs
+    print on support and are reported, not failed: for shapes that cannot avoid them, like figurines. With `brim`,
+    a tall, narrow part is held down by a brim. `hole_allowance_mm` / `shaft_allowance_mm`: how much printed holes
+    come out smaller and shafts larger than modelled, for fit checks. Its print settings (`layer_mm`, `walls`,
+    `infill_percent`, `supports`, `brim`) left unset are recommended in the print plan from what the build finds
+    (a tight fit, screws threading in, overhangs, a tall narrow stance); set one where you judge otherwise, and
+    say why in `why`."""
 
     process: Literal["fdm"]
     nozzle_mm: float = Field(default=0.4, gt=0)
@@ -37,8 +41,12 @@ class FdmProcess(PrintedProcess):
     ignored_overhang_mm2: float = Field(
         default=1.0, ge=0, description="An overhang that prints on nothing over less than this still prints"
     )
-    supports: bool = Field(default=False, description="Printed with support under its overhangs")
-    brim: bool = Field(default=False, description="Printed with a brim round its base")
+    supports: bool | None = Field(default=None, description="Printed with support under its overhangs; unset: "
+                                  "recommended")  # fmt: skip
+    brim: bool | None = Field(default=None, description="Printed with a brim round its base; unset: recommended")
+    layer_mm: float | None = Field(default=None, gt=0, description="Layer height; unset: recommended")
+    walls: int | None = Field(default=None, ge=1, description="Perimeters round each layer; unset: recommended")
+    infill_percent: float | None = Field(default=None, ge=0, le=100, description="Unset: recommended")
     example = {"process": "fdm", "hole_allowance_mm": 0.15}
     findings = {
         "fdm_wall_thickness": (
@@ -47,11 +55,11 @@ class FdmProcess(PrintedProcess):
         ),
         "fdm_overhangs": (
             "An FDM overhang that needs support",
-            "Keep overhangs within the angle (a chamfer rather than a fillet underneath, teardrop holes), or stand the part another way up in its own frame.",
+            "Keep overhangs within the angle (a chamfer rather than a fillet underneath, teardrop holes), or print it another way up (`up`).",
         ),
         "fdm_bed_contact": (
             "An FDM part without a face to stand on the bed",
-            "Give the part a flat face on Z = 0 of its own frame, large enough to hold it.",
+            "Give the part a flat face to stand on, large enough to hold it, and turn it onto that face (`up`).",
         ),
     }
 
@@ -60,11 +68,16 @@ class FdmProcess(PrintedProcess):
 
         return fdm_checks(body, self)
 
+    def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
+        from hitlcad.builtin.processes.checks import fdm_recommend
+
+        return fdm_recommend(self, facts)
+
 
 class ResinProcess(PrintedProcess):
     """Resin 3D printing (SLA, DLP, MSLA), on support: walls of at least `min_wall_mm`, and every hollow
     inside the part drained through an opening at least `min_drain_mm` across, or it traps uncured resin
-    (Formlabs' design specifications ask for 3.5 mm). `hole_allowance_mm` / `shaft_allowance_mm` as for FDM."""
+    (Formlabs' design specifications ask for 3.5 mm). `up`, `hole_allowance_mm` and `shaft_allowance_mm` as for FDM."""
 
     process: Literal["resin"]
     min_wall_mm: float = Field(default=0.6, gt=0, description="Thinnest wall that prints and survives washing")

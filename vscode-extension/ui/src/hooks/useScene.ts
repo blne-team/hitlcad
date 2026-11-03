@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
-import type { Shapes } from "three-cad-viewer";
-import { loadScene } from "../lib/scene";
+import { loadScene, type CadScene } from "../lib/scene";
 
 /**
  * Load a 3D view's scene and its part views from the server; errors carry the server's reason (e.g. 415/422 detail).
  * A new `version` of the same URL (the files of another build of the revision) loads again, the model on screen
  * staying until it has.
  */
-export function useScene(url: string | null, version?: string): { data: Shapes | null; error: string | null } {
-  const [state, setState] = useState<{ url: string | null; data: Shapes | null; error: string | null }>({ url: null, data: null, error: null });
+export function useScene(url: string | null, version?: string): { data: CadScene | null; error: string | null } {
+  const [state, setState] = useState<{ url: string | null; data: CadScene | null; error: string | null }>({ url: null, data: null, error: null });
 
   useEffect(() => {
     if (!url) return;

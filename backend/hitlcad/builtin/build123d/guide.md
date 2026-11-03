@@ -35,8 +35,8 @@ def bolt_xy(p, i):
 
 `def build(p, i)` returns `{part name: (shape, connectors)}` for exactly the parts design.json
 assigns to the file. The shape is a build123d `Part`/`Solid`/`Compound` (or a `BuildPart`
-context), in the part's own frame: the way it is made (a printed part stands as it prints, its
-lowest point at Z=0). `connectors` maps each declared connector to a `Location`, or a list of
+context), in the part's own frame, modelled for the assembly; a printed part's process says which way up
+it prints (`up`). `connectors` maps each declared connector to a `Location`, or a list of
 Locations for a pattern. A catalog part's value is the `CatalogPart` its provider returns.
 
 Frames: the origin sits where the mating connector's origin will be, Z points out of the part, so
@@ -99,6 +99,13 @@ def build(p, i):
 
 A vendor STEP: `step.part("vendor/nema17.step", sha256="…", designation="…", material="steel",
 connectors={...})` from `hitlcad.catalogs`; its connectors are yours to give.
+
+### Sketches
+
+Every `BuildSketch` a part file runs is recorded as it leaves its `with`, and the panel shows each part
+the sketches that lie on it (a profile that made one of its features does), named by the line of your code
+it ran from. Nothing is returned for it; a sketch drawn only to be looked at is a `BuildSketch` with
+`mode=Mode.PRIVATE`. Sketches made in algebra code, without `BuildSketch`, are not recorded.
 
 ## assembly.py
 

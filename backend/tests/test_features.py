@@ -125,7 +125,7 @@ def test_a_frame_away_from_its_feature_fails_alike_on_b_rep_and_mesh(
 ) -> None:
     for features in placed:
         measured = features.round(frame, TOL, inward=inward)
-        assert measured.status == "fail" and says in measured.detail, (features.representation, measured.detail)
+        assert measured.status == "fail" and says in measured.detail, (type(features).__name__, measured.detail)
 
 
 def test_a_b_rep_round_says_how_far_round_it_goes(placed: tuple[BrepFeatures, MeshFeatures]) -> None:

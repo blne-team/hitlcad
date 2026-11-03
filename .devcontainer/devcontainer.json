@@ -1,10 +1,10 @@
 {
-  "name": "solidwork",
+  "name": "htilcad",
   "dockerComposeFile": "docker-compose.yml",
   "service": "dev",
   "initializeCommand": "sh -c 'printf \"USER_UID=%s\\nUSER_GID=%s\\n\" \"$(id -u)\" \"$(id -g)\" > .devcontainer/.env'",
 
-  "workspaceFolder": "/workspaces/solidwork",
+  "workspaceFolder": "/workspaces/htilcad",
   // "remoteEnv": {
   //   "PATH": "/opt/conda/bin:${containerEnv:PATH}"
   // },

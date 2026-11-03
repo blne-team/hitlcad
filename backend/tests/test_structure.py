@@ -41,7 +41,7 @@ def test_every_reference_must_resolve() -> None:
         relations=[{"type": "gear", "a": "a.top", "b": "b.bottom"}],
         fasteners=[{"fastener": "b.bottom", "through": ["a.top"], "into": "nut.seat"}],
     )
-    out = details(structure_results(bad, ["a", "b", "nut", "sub"], {"sub": {"out": "x.y"}}, materials.builtin()))
+    out = details(structure_results(bad, ["a", "b", "nut", "sub"], {"sub": {"out": "x.y"}}, materials.builtin({})))
     assert any("declares no connector 'side'" in d for d in out)
     assert any("'c' is not a part or component" in d for d in out)
     assert any("exports no connector 'nothing'; exports: out" in d for d in out)
@@ -52,7 +52,7 @@ def test_every_reference_must_resolve() -> None:
 def test_placement_ground_and_materials_are_checked() -> None:
     out = structure_results(spec(parts={"a": {"role": "x", "file": "parts/a.py", "material": "unobtainium"},
                                         "b": {"role": "y", "file": "parts/a.py"}}),
-                            ["b"], {}, materials.builtin())  # fmt: skip
+                            ["b"], {}, materials.builtin({}))  # fmt: skip
     text = details(out)
     assert any("a is declared but assembly.py does not place it" in d for d in text)
     assert any("ground a is not placed" in d for d in text)
@@ -62,7 +62,9 @@ def test_placement_ground_and_materials_are_checked() -> None:
 
 def test_a_sound_structure_has_nothing_to_say() -> None:
     ok = spec(mates=[{"type": "rigid", "a": "a.top", "b": "b.bottom"}, {"type": "rigid", "a": "a.top", "b": "sub.out"}])
-    assert details(structure_results(ok, ["a", "b", "nut", "sub"], {"sub": {"out": "x.y"}}, materials.builtin())) == []
+    assert (
+        details(structure_results(ok, ["a", "b", "nut", "sub"], {"sub": {"out": "x.y"}}, materials.builtin({}))) == []
+    )
 
 
 def test_a_material_must_suit_its_part_s_process() -> None:
@@ -71,6 +73,6 @@ def test_a_material_must_suit_its_part_s_process() -> None:
                          "b": {"role": "y", "file": "parts/a.py", "material": "aluminium_6061"},
                          "c": {"role": "z", "file": "parts/a.py", "material": "PLA",
                                "manufacturing": {"process": "fdm"}}})  # fmt: skip
-    assert details(structure_results(milled, ["a", "b", "c", "sub"], {}, materials.builtin())) == [
+    assert details(structure_results(milled, ["a", "b", "c", "sub"], {}, materials.builtin({}))) == [
         "a: a is PLA, which cnc_milling cannot make (PLA suits fdm): change its material or its process"
     ]

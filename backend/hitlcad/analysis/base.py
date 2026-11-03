@@ -1,9 +1,10 @@
 """The Analysis extension point.
 
 An analysis reads a built design and returns `Result`s, each naming the kind of check it is (its code, from the
-error catalog) and the addresses it is about. The pipeline runs every analysis in `default_analyses` on every
-build. Costly results are cached by the inputs they depend on and the code that computes them (`Context.cache`),
-so a rebuild only recomputes what changed.
+error catalog) and the addresses it is about. The pipeline runs the analyses in `default_analyses` that are
+hitlcad's own or its project's plugins' (`Registry.is_active`) on every build. Costly results are cached by the
+inputs they depend on and the code that computes them (`Context.cache`), so a rebuild only recomputes what
+changed.
 """
 
 from __future__ import annotations
@@ -161,13 +162,14 @@ def default_analyses() -> list[Analysis]:
     from hitlcad.analysis.interference import Interference
     from hitlcad.analysis.mates import Mates
     from hitlcad.analysis.motion import Motion
+    from hitlcad.analysis.printing import Printing
     from hitlcad.analysis.relations import Relations
     from hitlcad.analysis.structure import Structure
     from hitlcad.kernel.errors import PLUGIN_ERROR
     from hitlcad.kernel.plugins import registry
 
     own: list[Analysis] = [Structure(), Parts(), Connectors(), Mates(), Relations(), Fasteners(), Coverage(),
-                           Interference(), Motion(), Manufacturing(), Requirements()]  # fmt: skip
+                           Interference(), Motion(), Manufacturing(), Printing(), Requirements()]  # fmt: skip
     found = registry()
     for a in found.analyses:
         if a.stage not in STAGES:

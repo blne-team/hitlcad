@@ -25,6 +25,7 @@ from hitlcad.api.mcp import build_mcp
 from hitlcad.app import HitlCad
 from hitlcad.backends.workers import Superseded
 from hitlcad.core.events import PinsChanged, SelectionChanged
+from hitlcad.core.project import ProjectSettings
 from hitlcad.core.report import Earlier
 from hitlcad.core.types import ComponentRef, Pick, Pin, SelectionItem
 from hitlcad.kernel.errors import HitlcadError
@@ -32,7 +33,7 @@ from hitlcad.render.base import NullRenderer
 from hitlcad.review.selection import topology
 from hitlcad.services.watcher import _relevant
 from hitlcad.store.sqlite import SqliteStore
-from hitlcad.workspace import agents
+from hitlcad.workspace import agents, projectfile
 from hitlcad.workspace.document import Disk
 from hitlcad.workspace.project import init_project
 
@@ -255,6 +256,7 @@ async def test_build_summaries_count_omitted_problems_and_explore_returns_detail
 def test_projects_get_the_skills_generated_from_the_framework(core: HitlCad, tmp_path: Path) -> None:
     written = init_project(tmp_path / "project", core.settings, "python", core.registry.all(), hooks=False, codex=False)
     assert ".claude/skills/hitlcad/" in written and ".agents/skills/hitlcad-build123d/" in written
+    assert "hitlcad.toml" in written and projectfile.settings(tmp_path / "project" / "designs") == ProjectSettings()
     skill = (tmp_path / "project" / ".claude/skills/hitlcad/SKILL.md").read_text(encoding="utf-8")
     reference = (tmp_path / "project" / ".claude/skills/hitlcad/reference/design-json.md").read_text(encoding="utf-8")
     assert "[reference/design-json.md](reference/design-json.md)" in skill

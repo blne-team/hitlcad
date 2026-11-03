@@ -20,10 +20,12 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("a selection and a pin reach the server with their exact component", async ({ page }) => {
-  await clickModel(page, 0.5, 0.42);
+  await clickModel(page, 0.5, 0.42); // the part
   await expect(page.locator(".selection-box li")).toHaveCount(1);
-  const [item] = (await state()).selection;
-  expect(item?.component).toMatchObject({ instance: "block", topo: expect.stringMatching(/face|edge|vertex/) });
+  expect((await state()).selection[0]?.component).toMatchObject({ instance: "block", topo: "solid" });
+  await clickModel(page, 0.5, 0.42); // again: what is under the cursor on it
+  await expect.poll(async () => (await state()).selection[0]?.component?.topo).toMatch(/face|edge|vertex/);
+  expect((await state()).selection[0]?.component?.instance).toBe("block");
 
   const before = (await state()).pins.length;
   await page.locator(".pin-toggle").click();
@@ -32,7 +34,7 @@ test("a selection and a pin reach the server with their exact component", async 
   await expect.poll(async () => (await state()).pins.length).toBe(before + 1);
   const pin = (await state()).pins.at(-1)!;
   expect(pin.component?.instance).toBe("block");
-  expect(pin.label).toMatch(/of block\) at \(/);
+  expect(pin.label).toMatch(/^Whole part, .* \(instance block\) at \(/); // the part was not selected whole: the pin is on it
 });
 
 test("compare loads the earlier revision as a ghost", async ({ page }) => {

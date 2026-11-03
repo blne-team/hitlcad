@@ -1,4 +1,4 @@
-"""The manufacturing processes' checks, on one made part in its own frame (the way it is made). Each process's
+"""The manufacturing processes' checks, on one made part as it lies when it is made (`Process.made`). Each process's
 thresholds are fields of its model (`processes.py`); nothing here is a tolerance of its own. Findings are
 warnings: a part that is hard to make still builds, and the agent and the human see why, and where.
 """
@@ -20,7 +20,7 @@ from hitlcad.builtin.processes.processes import (
     ResinProcess,
     SheetMetalProcess,
 )
-from hitlcad.core.checks import ProcessFinding
+from hitlcad.core.checks import PrintFacts, PrintSetting, ProcessFinding
 from hitlcad.geometry.features import Features, InsideCorner
 from hitlcad.geometry.mesh import Probe
 from hitlcad.geometry.walls import fmt, listed
@@ -82,6 +82,50 @@ def _on_bed(body: Body, mesh: trimesh.Trimesh) -> np.ndarray:
 def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
     walls = _walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))
     return [walls, _fdm_overhangs(body, rules), _fdm_bed(body, rules)]
+
+
+def fdm_recommend(rules: FdmProcess, facts: PrintFacts) -> list[PrintSetting]:
+    """An FDM part's settings: the design's where it sets them, the rest recommended from what the build found."""
+    nozzle, found = facts.nozzle_mm or rules.nozzle_mm, {f.name: f for f in facts.findings}
+
+    def setting(name: str, decided: float | bool | None, value: float | bool, why: str) -> PrintSetting:
+        if decided is None:
+            return PrintSetting(name=name, value=value, decided=False, why=why)
+        return PrintSetting(name=name, value=decided, decided=True, why=rules.why or "set in the design")
+
+    fit = facts.tightest_fit_mm
+    if fit is not None and fit < 0.3:
+        layer = (round(nozzle * 0.3, 2), f"its tightest fit leaves {fit:.2f} mm: finer layers keep its holes true")
+    else:
+        layer = (round(nozzle / 2, 2), f"half the {nozzle:g} mm nozzle: the usual layer")
+    screws = ", ".join(facts.threaded_into)
+    walls = (
+        (4, f"{screws} thread into it: four walls hold the thread")
+        if screws
+        else (
+            max(2, math.ceil(rules.min_wall_mm / nozzle)),
+            f"enough to print its {rules.min_wall_mm:g} mm walls solid",
+        )
+    )
+    infill = (
+        (25.0, f"{screws} pull on it: denser infill holds them")
+        if screws
+        else (15.0, "it carries no load the design declares")
+    )
+    overhangs, bed = found.get("fdm_overhangs"), found.get("fdm_bed_contact")
+    supports = (
+        (True, f"its overhangs need support ({overhangs.detail.split(';')[0]}), unless it prints another way up")
+        if overhangs and overhangs.passed is False
+        else (False, "nothing it prints over needs support")
+    )
+    brim = (
+        (True, "it stands tall on a narrow base: a brim holds it down")
+        if (bed and bed.passed is False and "brim" in bed.detail)
+        else (False, "its base holds it")
+    )
+    return [setting("layer_mm", rules.layer_mm, *layer), setting("walls", rules.walls, *walls),
+            setting("infill_percent", rules.infill_percent, *infill), setting("supports", rules.supports, *supports),
+            setting("brim", rules.brim, *brim)]  # fmt: skip
 
 
 def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | None = None) -> ProcessFinding:

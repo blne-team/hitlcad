@@ -14,11 +14,15 @@ else a hook returns, it imports inside the hook. A plugin that does not load, a 
 giving one name are diagnostics (`Registry.failures`), and the rest goes on without them. Each requirement check
 and process contributes the kinds of its results to the error catalog: `requirement.<kind>`, with the check's
 docstring and `hint`, and `manufacturing.<finding>` for each of a process's `findings`.
+
+Every installed plugin is loaded; a design gets hitlcad's own and those its project names (`Registry.installed`,
+from the project's file: `workspace.projectfile`). What else a plugin gives is there for the agent to add, not for
+the design to use.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cache, cached_property
 from importlib.metadata import PackageNotFoundError, entry_points, version
@@ -49,6 +53,7 @@ if TYPE_CHECKING:
     from hitlcad.catalogs import CatalogProvider
     from hitlcad.config import Settings
     from hitlcad.core.loops import Solver
+    from hitlcad.core.project import Slicer
     from hitlcad.exporters import Exporter
 
 GROUP = "hitlcad.plugins"
@@ -115,6 +120,10 @@ class Spec:
     @hookspec
     def hitlcad_solvers(self) -> dict[str, Solver]:
         """Block solvers by name: what settles the blocks of a motion for motion analysis (`Settings.solver`)."""
+
+    @hookspec
+    def hitlcad_slicers(self) -> list[Slicer]:
+        """Slicer programs a printer is sliced in, each an adapter (`core.project.Slicer`)."""
 
     @hookspec
     def hitlcad_analyses(self) -> list[Analysis]:
@@ -198,7 +207,7 @@ class Registry:
                     f"{what} {name!r} is given by {' and '.join(p.distribution for p in by)}: neither is used"))  # fmt: skip
         kept = [(plugin, item) for plugin, item in found if len(names[key(item)]) == 1]
         for plugin, item in kept:
-            self._origin[id(item)] = plugin
+            self._origin[id(item[1] if isinstance(item, tuple) else item)] = plugin  # a dict's (name, value): its value
         return kept
 
     def _members(self, hook: str) -> tuple[type, ...]:
@@ -272,7 +281,10 @@ class Registry:
         return dict(item for _, item in named)
 
     def _flat(self, hook: str) -> list[tuple[Plugin, Any]]:
-        return [(plugin, item) for plugin, items in self._gather(hook) for item in items]
+        found = [(plugin, item) for plugin, items in self._gather(hook) for item in items]
+        for plugin, item in found:
+            self._origin[id(item)] = plugin
+        return found
 
     @cached_property
     def catalogs(self) -> dict[str, CatalogProvider]:
@@ -281,6 +293,10 @@ class Registry:
     @cached_property
     def exporters(self) -> dict[str, Exporter]:
         return {e.name: e for _, e in self._named("hitlcad_exporters", lambda e: e.name, "exporter")}
+
+    @cached_property
+    def slicers(self) -> dict[str, Slicer]:
+        return {s.name: s for _, s in self._named("hitlcad_slicers", lambda s: s.name, "slicer")}
 
     @cached_property
     def solvers(self) -> dict[str, Solver]:
@@ -303,12 +319,20 @@ class Registry:
         found = [(name, text) for _, refs in self._gather("hitlcad_skill_references") for name, text in refs.items()]
         return dict(found)
 
-    def versions(self) -> dict[str, str]:
-        """The installed plugins that are not hitlcad's own, by distribution: what a build records it ran with."""
-        return {p.distribution: p.version for p in self.plugins.values() if not p.builtin}
+    def installed(self, named: dict[str, str], where: str) -> dict[str, str]:
+        """The plugins `where` names (distribution -> version specifier) at their installed versions; `plugin.missing`
+        for those not installed, not at a version it accepts, or not loaded."""
+        if missing := self.needs(named, where):
+            raise missing
+        return {dist: version(dist) for dist in named}
 
-    def needs(self, required: dict[str, str]) -> HitlcadError | None:
-        """What of the plugins a design names (distribution -> version specifier) is not installed and loaded."""
+    def is_active(self, contribution: Any, plugins: Mapping[str, str]) -> bool:
+        """Whether a design with these plugins (`installed`) gets a contribution: hitlcad's own, or one of theirs."""
+        plugin = self.origin(contribution)
+        return plugin is None or plugin.builtin or plugin.distribution in plugins
+
+    def needs(self, required: dict[str, str], where: str) -> HitlcadError | None:
+        """What of the plugins `where` names (distribution -> version specifier) is not installed and loaded."""
         problems = []
         loaded = {p.distribution for p in self.plugins.values()}
         for dist, wanted in required.items():
@@ -326,7 +350,7 @@ class Registry:
                 problems.append(f"{dist} {wanted} is needed, {found} is installed")
             elif dist not in loaded:
                 problems.append(f"{dist} {found} is installed but did not load (`hitlcad doctor` says why)")
-        return PLUGIN_MISSING("design.json needs " + "; ".join(problems)) if problems else None
+        return PLUGIN_MISSING(f"{where} needs " + "; ".join(problems)) if problems else None
 
     def load_error_kinds(self) -> None:
         """Enter the plugins' own kinds in the catalog."""

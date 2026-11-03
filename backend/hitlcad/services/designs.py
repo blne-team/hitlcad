@@ -140,7 +140,8 @@ class DesignService:
             at = read.get(path)
             return self.documents.files_at(at.design, at.version) if at else None
 
-        return self.folder(design_id).spec(files, built.tolerances, configuration, plugins=built.plugins)
+        return self.folder(design_id).spec(files, built.tolerances, configuration,
+                                          project=lambda path: built.projects[str(path)])  # fmt: skip
 
     def earlier(self, design_id: str, revision_id: int, configuration: str | None) -> Earlier | None:
         """What the configuration's revision before this one failed."""

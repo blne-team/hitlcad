@@ -20,7 +20,7 @@ import shutil
 import struct
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +44,8 @@ OTHER_SURFACE, OTHER_CURVE = 10, 8  # GeomAbs ordinals the viewer shows as "Othe
 TOPO_LISTS = {"face": "faces", "edge": "edges", "vertex": "vertices"}
 IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 SCENE_FILE = "scene.json"
+#: The print view: a build's printed parts, each once, lying as it prints (`build.assemble.write_print_scene`).
+PRINT_SCENE_FILE = "print.json"
 VIEW_SUFFIX = ".view"
 
 
@@ -206,12 +208,14 @@ class PartView:
     entry template, whose `loc` places the shape in the part, and the box around them all.
 
     On disk (`parts/<part>.view`, beside the part's other files) it is what the panel reads without decoding: a
-    little-endian u32, that many bytes of JSON header (the bounds, the templates and where each array lies), then
-    the arrays, float32 or uint32, at 4-byte offsets from the end of the header."""
+    little-endian u32, that many bytes of JSON header (the bounds, the templates, where each array lies, and the
+    part's sketches when it has any: a header without them is a part without sketches), then the arrays, float32 or
+    uint32, at 4-byte offsets from the end of the header."""
 
     shapes: list[dict[str, np.ndarray]]
     templates: list[dict[str, Any]]
     bounds: np.ndarray
+    sketches: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def of(cls, drawn: list[tuple[dict[str, np.ndarray], dict[str, Any]]]) -> PartView:
@@ -230,8 +234,9 @@ class PartView:
                 body.append(a.tobytes())
                 offset += a.nbytes
             arrays.append(placed)
-        header = json.dumps({"bounds": self.bounds.tolist(), "templates": self.templates, "arrays": arrays},
-                            separators=(",", ":")).encode()  # fmt: skip
+        sketches = {"sketches": self.sketches} if self.sketches else {}
+        header = json.dumps({"bounds": self.bounds.tolist(), "templates": self.templates, "arrays": arrays,
+                             **sketches}, separators=(",", ":")).encode()  # fmt: skip
         header += b" " * (-len(header) % 4)
         target.write_bytes(struct.pack("<I", len(header)) + header + b"".join(body))
 
@@ -249,7 +254,7 @@ class PartView:
         shapes = [{key: np.frombuffer(data, dtype=f"<{'f' if a['dtype'] == 'float32' else 'u'}4", count=a["length"],
                                       offset=start + a["offset"]) for key, a in arrays.items()}
                   for arrays in head["arrays"]]  # fmt: skip
-        return cls(shapes, head["templates"], np.array(head["bounds"]))
+        return cls(shapes, head["templates"], np.array(head["bounds"]), head.get("sketches", []))
 
 
 def brep_view(shape: Shape, name: str, objects: list[ObjectMesh]) -> PartView:

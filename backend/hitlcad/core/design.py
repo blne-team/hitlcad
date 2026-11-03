@@ -2,7 +2,8 @@
 
 Its connector kinds, mate and relation types, requirement checks and processes are the members installed
 plugins give (hitlcad's own among them, `hitlcad.builtin`): the unions here are made of them, when this module
-is imported. A design names the plugins it needs beyond hitlcad's own in `plugins`.
+is imported. Those of plugins its project does not name are refused when its build spec is made
+(`workspace.folder`).
 
 Names are checked here, when the file loads. How the names relate (mates between declared
 connectors, every instance mated to ground, components that exist) is checked by the structure
@@ -95,8 +96,6 @@ class DesignSpec(Model):
         return data
 
     name: str
-    plugins: dict[str, str] = Field(default_factory=dict, description="The plugins it needs beyond hitlcad's own: "
-                                    "distribution -> version specifier, e.g. {'hitlcad-lasercut': '>=0.1'}")  # fmt: skip
     number: str = Field(default="", description="The user's own part number for the whole design")
     backend: str = Field(description="Backend for parts that do not set their own")
     parameters: list[ParamSpec] = Field(default_factory=list)

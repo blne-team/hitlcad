@@ -225,6 +225,14 @@ def test_fdm_bed_contact_is_the_base_under_its_outline_and_its_height(tmp_path: 
     tall = finding(fdm.checks(tower), "fdm_bed_contact")
     assert tall.passed is False and "20.0 × that tall" in tall.detail and "brim" in tall.detail
     assert passed(FdmProcess(process="fdm", brim=True).checks(tower), "fdm_bed_contact") is True
+    # Modelled standing, printed lying on its side: the checks see it as it prints
+    lying = FdmProcess(process="fdm", up=(1, 0, 0))
+    assert np.allclose(fr.transform_points([[1, 0, 0]], lying.made()), [[0, 0, 1]])
+    side = Body(
+        "side", [Leaf("side", part(Box(5, 5, 100, align=ON), tmp_path, "side"), None, lying.made())], FEW_SAMPLES, TOL
+    )  # type: ignore[arg-type]
+    assert passed(lying.checks(side), "fdm_bed_contact") is True
+    assert np.allclose(FdmProcess(process="fdm").made(), fr.IDENTITY)
     ball = fdm.checks(body(Pos(0, 0, 10) * Sphere(10), tmp_path, "ball", FEW_SAMPLES))
     assert passed(ball, "fdm_bed_contact") is False and passed(ball, "fdm_overhangs") is False
 

@@ -121,7 +121,7 @@ class Blender:
     def placement(self, value):
         return matrix(value)
 
-    def begin(self):
+    def begin(self, src):
         _reset_scene()
 
     def unpack(self, what, value):

@@ -693,8 +693,9 @@ caught by the analysis that owns them.
 
 ## Extension points
 
-Every member below is a plugin's contribution (hitlcad's own are in `hitlcad.builtin`); a design
-names the plugins it needs beyond hitlcad's own in `plugins`. How to write one: [plugins.md](plugins.md).
+Every member below is a plugin's contribution (hitlcad's own are in `hitlcad.builtin`); a design gets
+those of hitlcad's own plugins and of the plugins its project names in `hitlcad.toml`. How to write one:
+[plugins.md](plugins.md).
 
 | Extension point | Kind | A member provides |
 | --- | --- | --- |

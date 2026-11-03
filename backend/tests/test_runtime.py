@@ -197,7 +197,10 @@ def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Pat
         return Build123dBackend(Settings())
 
     root = Path(runtime.__file__).parents[1]
-    code = {p.relative_to(root).as_posix() for p in backend().code()}
+    code = {
+        p.relative_to(root).as_posix()
+        for p in [*backend().code(), *(f for m in backend().packages({}) for f in m.files())]
+    }
     assert {
         "builtin/build123d/entry.py",
         "execution/runtime.py",
@@ -208,19 +211,9 @@ def test_cached_parts_depend_on_the_catalogs_and_sdk_they_ran_with(tmp_path: Pat
     catalog = tmp_path / "catalog.py"
     monkeypatch.setattr(Build123dBackend, "code", lambda self: [catalog])
     catalog.write_text("A = 1", encoding="utf-8")
-    before = backend().fingerprint()
+    before = backend().fingerprint({})
     catalog.write_text("A = 2", encoding="utf-8")
-    assert backend().fingerprint() != before
-
-
-def test_every_code_the_build_process_writes_has_a_kind() -> None:
-    """The child process is standard library only, so it names its codes as strings: each one is in the catalog,
-    with the owner it says."""
-    from hitlcad.kernel.errors import catalog
-
-    kinds = catalog()
-    assert set(runtime.CODES) <= set(kinds)
-    assert {kinds[c].owner for c in runtime.CODES} == {"design", "hitlcad"}
+    assert backend().fingerprint({}) != before
 
 
 def test_a_design_s_modules_are_forgotten_after_its_job(src: Path) -> None:

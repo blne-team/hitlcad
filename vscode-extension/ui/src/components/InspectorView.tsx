@@ -12,6 +12,7 @@ import { CrossedEdits } from "./CrossedEdits";
 import { ParametersPanel } from "./ParametersPanel";
 import { deliveryStatus } from "../lib/delivery";
 import { PinsPanel } from "./PinsPanel";
+import { PrintPanel, unfit } from "./PrintPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
 import { inspectionTargets } from "../lib/inspection";
@@ -104,11 +105,17 @@ export const TABS: Tab[] = [
       inspection: { revision: revision!.id, instances, action: "focus", sequence: (ui.inspection?.sequence ?? 0) + 1 },
     })} />,
   },
+  {
+    id: "print",
+    label: "Print",
+    badge: ({ revision }) => (revision ? unfit(revision.report) : 0),
+    render: ({ id, revision }) => <PrintPanel designId={id} revision={revision} />,
+  },
   { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },
   { id: "brief", label: "Brief", render: ({ state }) => <BriefPanel brief={state.brief} /> },
 ];
 
-/** A design's pins, structure, parameters, changes, results, bill of materials and brief: VS Code's "hitlcad: Design"
+/** A design's pins, structure, parameters, changes, results, printing, bill of materials and brief: VS Code's "hitlcad: Design"
  * view, beside the 3D editor. */
 export function InspectorView({ id }: { id: string }) {
   const live = useDesign(id);

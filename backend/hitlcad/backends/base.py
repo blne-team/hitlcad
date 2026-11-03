@@ -29,7 +29,8 @@ import hashlib
 import json
 import signal
 from abc import ABC, abstractmethod
-from functools import cached_property
+from collections.abc import Mapping
+from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -118,31 +119,33 @@ class CADBackend(ABC):
     def command(self) -> list[str]:
         """argv that starts a worker: its entry script, reading its jobs' paths on stdin."""
 
-    def packages(self) -> list[ModelPackage]:
-        """The plugins' model packages its part files may import."""
-        return [p for p in registry().model_packages if self.name in p.backends]
+    def packages(self, plugins: Mapping[str, str]) -> list[ModelPackage]:
+        """The model packages its part files may import: of hitlcad's own plugins and of `plugins`."""
+        found = registry()
+        return [p for p in found.model_packages if self.name in p.backends and found.is_active(p, plugins)]
 
     def code(self) -> list[Path]:
-        """The code its parts are built with besides the design's: its entry script, the model runtime, the SDK and
-        the model packages."""
+        """The code its parts are built with besides the design's and the model packages: its entry script, the
+        model runtime and the SDK."""
         sdk = Path(runtime.__file__).parents[1] / "sdk" / "__init__.py"
-        return [self.entry, Path(runtime.__file__), sdk, *(f for p in self.packages() for f in p.files())]
+        return [self.entry, Path(runtime.__file__), sdk]
 
     def libraries(self) -> dict[str, str | None]:
         """The versions of the libraries its workers build with."""
         return {}
 
-    @cached_property
-    def _fingerprint(self) -> str:
-        data = {"name": self.name, "code": [hashlib.sha256(p.read_bytes()).hexdigest() for p in self.code()],
+    def fingerprint(self, plugins: Mapping[str, str]) -> str:
+        """What cached parts built by this backend for a design with these plugins depend on besides their inputs:
+        its code and model packages, its libraries' versions and the mesh tolerances, read once."""
+        return self._fingerprint(tuple(sorted(plugins.items())))
+
+    @cache  # noqa: B019 - a backend lives as long as the server
+    def _fingerprint(self, plugins: tuple[tuple[str, str], ...]) -> str:
+        code = [*self.code(), *(f for p in self.packages(dict(plugins)) for f in p.files())]
+        data = {"name": self.name, "code": [hashlib.sha256(p.read_bytes()).hexdigest() for p in code],
                 "libraries": self.libraries(),
                 "mesh": [self.settings.mesh_tolerance_mm, self.settings.mesh_angular_tolerance]}  # fmt: skip
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
-
-    def fingerprint(self) -> str:
-        """What cached parts built by this backend depend on besides their inputs: its code, its libraries'
-        versions and the mesh tolerances, read once."""
-        return self._fingerprint
 
     def complete_parts(self, parts: list[dict[str, Any]], work: Path) -> None:
         """Write in `work` what of its built parts (`BuiltPart` fields) its workers cannot, and name it in `parts`:
@@ -174,36 +177,38 @@ class CADBackend(ABC):
         return BackendInfo(name=self.name, title=self.title, summary=self.summary, brep=self.brep, available=ok,
                            detail=detail)  # fmt: skip
 
-    async def plan(self, ticket: Ticket, design: Path, src: Path, values: dict[str, Value], work: Path) -> PlanOutcome:
+    async def plan(self, ticket: Ticket, design: Path, src: Path, values: dict[str, Value], plugins: Mapping[str, str],
+                   work: Path) -> PlanOutcome:  # fmt: skip
         """The interface values and placements of `design` (its folder), from its sources `src`."""
         result, log = await self.job(
-            ticket, design, work, {"mode": "plan", "src": str(src.resolve()), "params": values}
+            ticket, design, work, {"mode": "plan", "src": str(src.resolve()), "params": values}, plugins
         )
         if not result["ok"]:
             return PlanOutcome(error=result["error"], log=log)
         return PlanOutcome.model_validate({**{k: v for k, v in result.items() if k != "ok"}, "log": log})
 
     async def build_file(self, ticket: Ticket, design: Path, src: Path, values: dict[str, Value], file: str,
-                         declared: dict[str, list[str]], work: Path) -> tuple[FileOutcome, str]:  # fmt: skip
+                         declared: dict[str, list[str]], plugins: Mapping[str, str],
+                         work: Path) -> tuple[FileOutcome, str]:  # fmt: skip
         """Build part file `file` of `design` ({part: [declared connectors]}) into `work`, and the worker's log."""
         job = {"mode": "parts", "src": str(src.resolve()), "params": values, "files": {file: declared},
                "mesh_tolerance_mm": self.settings.mesh_tolerance_mm,
                "mesh_angular_tolerance": self.settings.mesh_angular_tolerance}  # fmt: skip
-        result, log = await self.job(ticket, design, work, job, file)
+        result, log = await self.job(ticket, design, work, job, plugins, file)
         if not result["ok"]:
             return FileOutcome(file=file, error=result["error"]), log
         (built,) = result["files"]
         await asyncio.to_thread(self.complete_parts, built.get("parts", []), work.resolve())
         return FileOutcome.model_validate(built), log
 
-    async def job(self, ticket: Ticket, design: Path, work: Path, job: dict[str, Any], file: str | None = None
-                  ) -> tuple[dict[str, Any], str]:  # fmt: skip
-        """Run a job of `design` in `work` in one of its workers (for its part file `file`, if it is one): its
-        result.json, errors as diagnostics, and what it printed."""
+    async def job(self, ticket: Ticket, design: Path, work: Path, job: dict[str, Any], plugins: Mapping[str, str],
+                  file: str | None = None) -> tuple[dict[str, Any], str]:  # fmt: skip
+        """Run a job of `design`, with the model packages of its plugins, in `work` in one of its workers (for its
+        part file `file`, if it is one): its result.json, errors as diagnostics, and what it printed."""
         work = work.resolve()  # the worker works in the job's folder: paths handed to it must not be relative to ours
         work.mkdir(parents=True, exist_ok=True)
         job_file = work / "job.json"
-        paths = sorted({str(p.root) for p in self.packages()})
+        paths = sorted({str(p.root) for p in self.packages(plugins)})
         job_file.write_text(json.dumps(job | {"paths": paths, "cache_mb": self.settings.worker_cache_mb}),
                             encoding="utf-8")  # fmt: skip
         result_file = work / "result.json"
