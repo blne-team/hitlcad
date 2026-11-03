@@ -2,7 +2,10 @@ import { resolveInstances, type Shape, type Shapes } from "three-cad-viewer";
 import { json } from "../api/client";
 import type { Loc, SketchView } from "./sketch";
 
-export type CadScene = Shapes & { sketches: SketchView[] };
+/** A bed of the print view, x0, y0, x1, y1 on Z = 0: the printer's, under one printed part. */
+export type Bed = [number, number, number, number];
+
+export type CadScene = Shapes & { sketches: SketchView[]; beds: Bed[] };
 
 interface PartView {
   shapes: Shape[];
@@ -18,6 +21,8 @@ interface PartView {
 interface SceneFile {
   instances: { path: string; digest: string; shape: number }[];
   shapes: Shapes;
+  /** The print view's beds; none in any other view. */
+  beds?: Bed[];
 }
 
 /** A node of the scene's tree as written: a leaf draws `instances[shape.ref]`. */
@@ -127,5 +132,5 @@ export async function loadScene(url: string): Promise<CadScene> {
     const part = path.split("/").pop()!.replace(/\.view$/, "");
     return view.sketches.map((sketch, n) => ({ ...sketch, part, id: `${path}:${n}`, placements: placements.get(path) ?? [] }));
   });
-  return Object.assign(resolveInstances(scene.shapes, drawn), { sketches });
+  return Object.assign(resolveInstances(scene.shapes, drawn), { sketches, beds: scene.beds ?? [] });
 }

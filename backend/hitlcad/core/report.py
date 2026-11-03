@@ -20,7 +20,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from hitlcad.core.address import InstancePath
-from hitlcad.core.checks import PrintSetting
+from hitlcad.core.checks import PrintOrientation, PrintSetting
 from hitlcad.core.design import DesignSpec
 from hitlcad.core.project import ProjectSettings
 from hitlcad.core.structure import Measured, Tolerances
@@ -30,7 +30,7 @@ from hitlcad.kernel.model import Model
 
 Status = Literal["pass", "fail", "unverified"]
 #: What made a revision: files saved, the panel's parameters, or a review (the human watched a traced motion)
-Origin = Literal["file", "parameter_edit", "outputs_edit", "undo", "redo", "review"]
+Origin = Literal["file", "parameter_edit", "outputs_edit", "orientation_edit", "undo", "redo", "review"]
 Severity = Literal["error", "warning", "info"]
 
 
@@ -228,16 +228,24 @@ class PartResult(Model):
     made: bool
     material: str | None
     process: str | None
-    up: tuple[float, float, float] | None = Field(default=None, description="Which way up a printed part prints "
-                                                  "(`PrintedProcess.up`); none for a part not printed")  # fmt: skip
     catalog: CatalogInfo | None = None
     cached: bool = Field(description="Reused from an earlier build whose inputs it read were the same")
     reads: Reads
     metrics: MeshMetrics
     mass: MassProperties | None = None
     connectors: dict[str, ConnectorInfo] = Field(default_factory=dict)
-    print: list[PrintSetting] = Field(default_factory=list, description="A printed part's settings: the design's, "
-                                      "and the rest recommended (`PrintedProcess.recommend`)")  # fmt: skip
+
+
+class PlannedPart(Model):
+    """A printed part of a design's print plan: how many to print, of what, which way up, with which settings."""
+
+    path: str = Field(description="The part's name, under the components it is in: 'lid', 'fan/blade'")
+    count: int = Field(description="How many of it the whole design places")
+    material: str | None
+    process: str
+    ways: list[PrintOrientation] = Field(description="The ways it can lie on the bed, scored, best first; one is "
+                                         "the way it prints now (`current`)")  # fmt: skip
+    settings: list[PrintSetting] = Field(description="The design's, the rest recommended (`PrintedProcess.recommend`)")
 
 
 class InstanceInfo(Model):
@@ -363,6 +371,8 @@ class BuildReport(Model):
     tally: Tally = Field(default_factory=Tally)
     motions: list[MotionRange] = Field(default_factory=list)
     bom: list[BomLine] = Field(default_factory=list)
+    print_plan: list[PlannedPart] = Field(default_factory=list, description="Its printed parts, its components' "
+                                          "included, and how to print each (`analysis.printing.plan`)")  # fmt: skip
     artifacts: list[Artifact] = Field(default_factory=list)
 
     @model_validator(mode="after")

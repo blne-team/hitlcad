@@ -212,8 +212,9 @@ def build_mcp(core: HitlCad) -> MCPServer:
                              include_images: bool = False) -> list[str | Image]:  # fmt: skip
         """The design graph. Without focus: a compact overview (failures, review, parts, staleness).
         focus = a part, instance (planet[2], tilt/planet[2]), component, connector (lid.screws), mate (a+b),
-        relation (a~b), fastener set, parameter (with what it affects), interfaces.<name>, configuration, 'rev N'
-        or 'review' (all selections and open pins). include_images=True adds views from that revision or the
+        relation (a~b), fastener set, parameter (with what it affects), interfaces.<name>, configuration, 'rev N',
+        'review' (all selections and open pins) or 'print' (the print plan: each printed part, how many, which way
+        up, its settings and why). include_images=True adds views from that revision or the
         latest successful build of the configuration, without rebuilding."""
         state = designs.ensure(path)
         focus = focus.strip() if focus else None

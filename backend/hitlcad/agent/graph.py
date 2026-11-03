@@ -162,6 +162,8 @@ class DesignGraph:
         f = focus.strip()
         if f == "review":
             return feedback_text(self.ctx.state)
+        if f == "print":
+            return self._print()
         d = self.design
         if d is None:
             return self.overview()
@@ -192,6 +194,26 @@ class DesignGraph:
             f"Nothing named {f!r} in {d.name}. Parts and components: {known}. Focus also takes connectors "
             "(lid.screws), mates (a+b), parameters, interfaces.<name>, configurations and 'rev N'."
         )
+
+    def _print(self) -> str:
+        """The print plan of the latest build: what to print, how many, which way up, with which settings and why."""
+        plan = self.report.print_plan if self.report else []
+        if not plan:
+            return "No part of the latest build is printed." if self.report else "Not built yet."
+        pieces = sum(p.count for p in plan)
+        lines = [f"Print plan of rev {self.ctx.revision.id}: {pieces} piece{'s' * (pieces != 1)} of "  # type: ignore[union-attr]
+                 f"{len(plan)} part{'s' * (len(plan) != 1)}"]  # fmt: skip
+        for p in plan:
+            now, best = next(w for w in p.ways if w.current), p.ways[0]
+            fits = "" if now.fits is None else ", fits the bed" if now.fits else ", does not fit the bed"
+            better = "" if best.current else (f"; best {best.label} (`up` {list(best.up)}): {best.overhang_mm2:.0f} mm² "
+                                              f"of support, against {now.overhang_mm2:.0f}")  # fmt: skip
+            lines.append(
+                f"  {p.path} ×{p.count}: {p.material or 'no material'}, {p.process}, {now.label}{fits}{better}"
+            )
+            lines.append("    " + "; ".join(f"{s.text} ({'decided' if s.decided else 'recommended'}: {s.why})"
+                                            for s in p.settings))  # fmt: skip
+        return "\n".join(lines)
 
     def _part(self, name: str) -> str:
         d = self.design

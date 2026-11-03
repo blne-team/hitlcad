@@ -13,10 +13,10 @@ export type DesignBrief = Schemas["DesignBrief"];
 export type Revision = Schemas["Revision"];
 export type RevisionInfo = Schemas["RevisionInfo"];
 export type BuildReport = Schemas["BuildReport"];
-/** A part of a build: its file, process, and which way up it prints when it is printed. */
-export type PartResult = Schemas["PartResult"];
-/** One setting of a printed part: the design's own (`decided`), else recommended, with its reason. */
-export type PrintSetting = Schemas["PrintSetting"];
+/** A printed part of a build's print plan: how many, of what, which way up, with which settings. */
+export type PlannedPart = Schemas["PlannedPart"];
+/** One way a printed part can lie on the bed, scored (`analysis.printing.orientations`). */
+export type PrintOrientation = Schemas["PrintOrientation"];
 /** One finding of one analysis, naming the addresses it is about. */
 export type Result = Schemas["Result"];
 /** The results that share a cause, failing or unverified, with copies at other pattern indices folded in. */

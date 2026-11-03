@@ -11,7 +11,7 @@ const WARNING = "!";
 const order = { fail: 0, unverified: 1, pass: 2 } as const;
 /** What the human did in the panel that made a revision. */
 const ORIGINS: Partial<Record<Revision["origin"], string>> = {
-  parameter_edit: ", from your parameter edit", outputs_edit: ", from your choice of outputs", undo: ", from your undo", redo: ", from your redo",
+  parameter_edit: ", from your parameter edit", outputs_edit: ", from your choice of outputs", orientation_edit: ", from turning a part to print", undo: ", from your undo", redo: ", from your redo",
 };
 
 const rowClass = (r: Pick<Result, "status" | "severity">) =>

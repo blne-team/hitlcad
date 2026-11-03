@@ -41,7 +41,6 @@ from hitlcad.build import assemble
 from hitlcad.build.cache import Inputs, PartCache, link
 from hitlcad.config import Settings
 from hitlcad.core import frames as fr
-from hitlcad.core.checks import PrintedProcess, PrintSetting
 from hitlcad.core.report import (
     Artifact,
     BomLine,
@@ -264,7 +263,8 @@ class BuildPipeline:
             self._analyse, built, spec.project.plugins, watched or {}, ticket, progress, clock
         )
         with clock.step("report"):
-            report_fields = {**fields, **await asyncio.to_thread(self._describe, built, results), "results": results}
+            described = await asyncio.to_thread(self._describe, built, results, fields["components"])
+            report_fields = {**fields, **described, "results": results}
         if outputs:
             ticket.check()
             progress.doing("writing outputs")
@@ -517,17 +517,20 @@ class BuildPipeline:
             progress.found(found)
         return out
 
-    def _describe(self, built: BuiltDesign, results: list[Result]) -> dict[str, Any]:
-        """The parts (a printed part with its print settings, from what the analyses found), instances, mass and bill
-        of materials of a built design, for its report."""
-        settings = printing.plan(built, results)
-        parts = [_part_result(built, p, settings.get(p.name, [])) for p in built.parts.values()]
+    def _describe(
+        self, built: BuiltDesign, results: list[Result], components: dict[str, BuildReport]
+    ) -> dict[str, Any]:
+        """The parts, instances, mass, bill of materials and print plan (from what the analyses found, its components'
+        folded in) of a built design, for its report."""
+        parts = [_part_result(built, p) for p in built.parts.values()]
+        plan = printing.plan(built, results, self.results_cache, {n: c.print_plan for n, c in components.items()})
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
         whole = BuildBodies(built, self.analysis_settings, self.results_cache).whole()
         return {"motions": motion.reported(built, self.analysis_settings, self.results_cache), "parts": parts,
                 "instances": instances,
-                "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built)}  # fmt: skip
+                "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built),
+                "print_plan": plan}  # fmt: skip
 
     async def export(self, names: Sequence[str], built: BuiltDesign, out_dir: Path, report: dict[str, Any],
                      ticket: Ticket) -> tuple[list[Artifact], list[Result]]:  # fmt: skip
@@ -647,16 +650,15 @@ def _ref_value(ref: str, values: dict[str, Value], interfaces: dict[str, Any]) -
     return values[ref]
 
 
-def _part_result(built: BuiltDesign, part: PartGeometry, print_settings: list[PrintSetting]) -> PartResult:
+def _part_result(built: BuiltDesign, part: PartGeometry) -> PartResult:
     process = built.spec.process(part.name)
     connectors = {name: ConnectorInfo(kind=spec.kind, frames=[fr.as_matrix(f) for f in part.frames.get(name, [])],
                                       measured=built.measured.get((part.name, name), []))
                   for name, spec in part.spec.connectors.items()}  # fmt: skip
     return PartResult(name=part.name, file=part.file, backend=part.backend, made=part.spec.catalog is None,
-                      material=part.material, process=getattr(process, "process", None),
-                      up=process.up if isinstance(process, PrintedProcess) else None, catalog=part.catalog,
+                      material=part.material, process=getattr(process, "process", None), catalog=part.catalog,
                       cached=part.cached, reads=part.reads, metrics=part.metrics,
-                      mass=built.mass(part), connectors=connectors, print=print_settings)  # fmt: skip
+                      mass=built.mass(part), connectors=connectors)  # fmt: skip
 
 
 def _mass(built: BuiltDesign) -> MassProperties | None:

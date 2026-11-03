@@ -188,6 +188,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/designs/{design_id}/turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn
+         * @description The human turned a printed part in the print view: its `up` written, then built.
+         */
+        post: operations["turn_api_designs__design_id__turn_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/designs/{design_id}/revert": {
         parameters: {
             query?: never;
@@ -611,7 +631,7 @@ export interface components {
             media_type: string;
             /**
              * Role
-             * @description view, part_mesh, part_exchange, objects, log, or the output that wrote it (design.json `outputs`: step, stl, native, preview, an exporter's name)
+             * @description view, print_view, part_mesh, part_exchange, objects, log, or the output that wrote it (design.json `outputs`: step, stl, native, preview, an exporter's name)
              */
             role: string;
             /**
@@ -843,6 +863,11 @@ export interface components {
             motions: components["schemas"]["MotionRange"][];
             /** Bom */
             bom: components["schemas"]["BomLine"][];
+            /**
+             * Print Plan
+             * @description Its printed parts, its components' included, and how to print each (`analysis.printing.plan`)
+             */
+            print_plan: components["schemas"]["PlannedPart"][];
             /** Artifacts */
             artifacts: components["schemas"]["Artifact"][];
         };
@@ -2614,15 +2639,6 @@ export interface components {
             material: string | null;
             /** Process */
             process: string | null;
-            /**
-             * Up
-             * @description Which way up a printed part prints (`PrintedProcess.up`); none for a part not printed
-             */
-            up: [
-                number,
-                number,
-                number
-            ] | null;
             catalog: components["schemas"]["CatalogInfo"] | null;
             /**
              * Cached
@@ -2636,11 +2652,6 @@ export interface components {
             connectors: {
                 [key: string]: components["schemas"]["ConnectorInfo"];
             };
-            /**
-             * Print
-             * @description A printed part's settings: the design's, and the rest recommended (`PrintedProcess.recommend`)
-             */
-            print: components["schemas"]["PrintSetting"][];
         };
         /** PartSpec */
         PartSpec: {
@@ -2837,6 +2848,36 @@ export interface components {
              */
             offset: number;
         };
+        /**
+         * PlannedPart
+         * @description A printed part of a design's print plan: how many to print, of what, which way up, with which settings.
+         */
+        PlannedPart: {
+            /**
+             * Path
+             * @description The part's name, under the components it is in: 'lid', 'fan/blade'
+             */
+            path: string;
+            /**
+             * Count
+             * @description How many of it the whole design places
+             */
+            count: number;
+            /** Material */
+            material: string | null;
+            /** Process */
+            process: string;
+            /**
+             * Ways
+             * @description The ways it can lie on the bed, scored, best first; one is the way it prints now (`current`)
+             */
+            ways: components["schemas"]["PrintOrientation"][];
+            /**
+             * Settings
+             * @description The design's, the rest recommended (`PrintedProcess.recommend`)
+             */
+            settings: components["schemas"]["PrintSetting"][];
+        };
         /** Plugin */
         Plugin: {
             /**
@@ -2857,6 +2898,48 @@ export interface components {
             builtin: boolean;
         };
         /**
+         * PrintOrientation
+         * @description One way a printed part can lie on the bed: a stable pose of it, scored.
+         */
+        PrintOrientation: {
+            /**
+             * Up
+             * @description The direction of the part's own frame that points up
+             */
+            up: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Label
+             * @description Which way up, as a person reads it: 'as modelled', 'on its +Y face'
+             */
+            label: string;
+            /**
+             * Overhang Mm2
+             * @description What prints over nothing, steeper than the process allows: the support it needs, roughly (bridges are not told apart)
+             */
+            overhang_mm2: number;
+            /**
+             * Bed Mm2
+             * @description What lies on the bed
+             */
+            bed_mm2: number;
+            /** Height Mm */
+            height_mm: number;
+            /**
+             * Fits
+             * @description On the project's printer; none without one
+             */
+            fits: boolean | null;
+            /**
+             * Current
+             * @description The way it prints now (`up`)
+             */
+            current: boolean;
+        };
+        /**
          * PrintSetting
          * @description One setting of a printed part, as its print plan gives it.
          */
@@ -2868,6 +2951,11 @@ export interface components {
             name: string;
             /** Value */
             value: number | boolean;
+            /**
+             * Text
+             * @description As a person reads it, in the process's words: '0.2 mm layers', 'no supports'
+             */
+            text: string;
             /**
              * Decided
              * @description Set in the part's manufacturing (the design's own), else recommended
@@ -3186,7 +3274,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "orientation_edit" | "undo" | "redo" | "review";
             /** Parent */
             parent: number | null;
             /** Configuration */
@@ -3223,7 +3311,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "orientation_edit" | "undo" | "redo" | "review";
             /**
              * Parent
              * @description The configuration's latest successful revision before it
@@ -3703,6 +3791,25 @@ export interface components {
             /** Motion Steps */
             motion_steps: number;
         };
+        /** Turn */
+        Turn: {
+            /** Part */
+            part: string;
+            /**
+             * Up
+             * @description The direction of the part's own frame to point up as it prints
+             */
+            up: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Base
+             * @description The version of the design's files the edit was made on, as for parameters
+             */
+            base: number;
+        };
         /** UpdatePin */
         UpdatePin: {
             /** Note */
@@ -4071,7 +4178,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            origin: "file" | "parameter_edit" | "outputs_edit" | "undo" | "redo" | "review";
+            origin: "file" | "parameter_edit" | "outputs_edit" | "orientation_edit" | "undo" | "redo" | "review";
             /** @description What a failed build failed on: the result that leads its first problem */
             failure: components["schemas"]["Result"] | null;
         };
@@ -4432,6 +4539,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrinterSetup"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    turn_api_designs__design_id__turn_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                design_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Turn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Revision"];
                 };
             };
             /** @description Validation Error */

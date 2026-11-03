@@ -35,7 +35,7 @@ from hitlcad.kernel.errors import STORE_IN_USE, STORE_UNREADABLE
 
 #: The tables' layout and what their rows hold (the events' types): a database of another is set aside. Raise it
 #: with every change to either.
-SCHEMA = 6
+SCHEMA = 7
 DATABASE = "hitlcad.db"
 LOCK = "hitlcad.lock"
 

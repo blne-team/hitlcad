@@ -1404,7 +1404,7 @@ details summary {
   cursor: pointer;
 }
 
-/* the Print tab: the human's printer, and each printed part against it */
+/* printing: the human's printer, and the print plan (the Print tab, and beside the print view) */
 .printer-summary {
   display: flex;
   flex-wrap: wrap;
@@ -1422,9 +1422,6 @@ details summary {
 .print-fail {
   color: var(--fail);
   font-weight: 600;
-}
-.print-unverified {
-  color: var(--warn);
 }
 .printer-form {
   display: grid;
@@ -1454,15 +1451,6 @@ details summary {
   gap: 6px;
   width: 100%;
 }
-.print-settings td {
-  padding-top: 0;
-  border-top: none;
-}
-.print-settings span {
-  display: inline-block;
-  margin: 0 10px 2px 0;
-  font-size: 12px;
-}
 .print-recommended {
   font-style: italic;
   color: var(--ink-2);
@@ -1471,12 +1459,34 @@ details summary {
 .print-plan-box {
   border-left-color: var(--ok);
 }
-.print-plan-box li {
+.print-plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.print-plan > li {
   display: block;
   padding: 4px 0;
 }
-.print-plan-box .plan-settings span {
+.plan-settings span {
   display: inline-block;
   margin-right: 8px;
   font-size: 12px;
+}
+.plan-ways {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.plan-ways ol {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.plan-ways li {
+  padding: 2px 0;
+}
+.plan-ways .button {
+  margin-left: 8px;
+}
+.plan-ways .way-current {
+  color: var(--ink-2);
 }

@@ -146,8 +146,22 @@ class PrintSetting(Model):
 
     name: str = Field(description="The process's field: 'layer_mm', 'walls', 'infill_percent', 'supports', 'brim'")
     value: float | bool
+    text: str = Field(description="As a person reads it, in the process's words: '0.2 mm layers', 'no supports'")
     decided: bool = Field(description="Set in the part's manufacturing (the design's own), else recommended")
     why: str
+
+
+class PrintOrientation(Model):
+    """One way a printed part can lie on the bed: a stable pose of it, scored."""
+
+    up: tuple[float, float, float] = Field(description="The direction of the part's own frame that points up")
+    label: str = Field(description="Which way up, as a person reads it: 'as modelled', 'on its +Y face'")
+    overhang_mm2: float = Field(description="What prints over nothing, steeper than the process allows: the support "
+                                "it needs, roughly (bridges are not told apart)")  # fmt: skip
+    bed_mm2: float = Field(description="What lies on the bed")
+    height_mm: float
+    fits: bool | None = Field(description="On the project's printer; none without one")
+    current: bool = Field(description="The way it prints now (`up`)")
 
 
 class PrintedProcess(Process):
@@ -173,6 +187,10 @@ class PrintedProcess(Process):
 
     def allowance(self, feature: Literal["hole", "shaft"]) -> float:
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
+
+    def overhang_limit_deg(self) -> float:
+        """The steepest overhang, from vertical, that prints without support: what the best orientation weighs."""
+        return 45.0
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         """The part's settings: those the design sets, the rest recommended from what the build knows of it."""

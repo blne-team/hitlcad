@@ -47,6 +47,9 @@ export const api = {
   /** Undo or Redo: takes back the latest step of the design's `undo` or `redo`, merged with what changed since. */
   revert: (id: string, version: number) => send<Revision>("POST", `/api/designs/${id}/revert`, { version }),
   printer: (id: string) => request<PrinterSetup>(`/api/designs/${id}/printer`),
+  /** Turn a printed part to print another way up (its `up`), on the revision on screen (`base`); then built. */
+  turn: (id: string, part: string, up: [number, number, number], base: number) =>
+    send<Revision>("POST", `/api/designs/${id}/turn`, { part, up, base }),
   /** Kept in the design's project; every design of it builds again for it. */
   setPrinter: (id: string, printer: Printer) => send<PrinterSetup>("PUT", `/api/designs/${id}/printer`, printer),
   build: (id: string, configuration: string | null) => send<Revision>("POST", `/api/designs/${id}/build`, { configuration }),

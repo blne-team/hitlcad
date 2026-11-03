@@ -1,29 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { BuildReport, PartResult, Printer, PrinterSetup, PrintSetting, Result, Revision } from "../api/types";
-
-/** A print setting as a person reads it: "0.2 mm layers", "4 walls", "15 % infill", "supports", "no brim". */
-export function settingText({ name, value }: PrintSetting): string {
-  if (name === "layer_mm") return `${value} mm layers`;
-  if (name === "walls") return `${value} walls`;
-  if (name === "infill_percent") return `${value} % infill`;
-  return value ? name : `no ${name}`;
-}
-
-/** Which way up a part prints, as a person reads it: "as modelled", "on its +Y face", or the direction. */
-export function upText(up: [number, number, number]): string {
-  const [x, y, z] = up;
-  if (x === 0 && y === 0 && z > 0) return "as modelled";
-  const axis = [x, y, z].map(Math.abs);
-  const k = axis.indexOf(Math.max(...axis));
-  if (axis.filter((v) => v > 0).length === 1) return `on its ${up[k]! > 0 ? "-" : "+"}${"XYZ"[k]} face`;
-  return `up [${up.map((v) => +v.toFixed(3)).join(", ")}]`;
-}
+import type { BuildReport, PlannedPart, Printer, PrinterSetup, PrintOrientation, Revision } from "../api/types";
 
 /**
  * Preparing the design for printing: the human's printer (asked for once, kept in the project's hitlcad.toml), then
- * each printed part of the revision on screen with which way up it prints, whether it fits the bed, and its process
- * findings.
+ * the print plan of the revision on screen.
  */
 export function PrintPanel({ designId, revision }: { designId: string; revision: Revision | null }) {
   const [setup, setSetup] = useState<PrinterSetup | null>(null);
@@ -56,94 +37,105 @@ export function PrintPanel({ designId, revision }: { designId: string; revision:
         </p>
         <button type="button" className="button small" onClick={() => setEditing(true)}>Edit printer</button>
       </div>
-      <PrintedParts revision={revision} />
+      {revision ? <PlanList designId={designId} revision={revision} /> : <p className="muted pad">The print plan appears after the first build.</p>}
     </div>
   );
 }
 
-/** A printed part of a build, its own or a component's, with how many of it the whole design places. */
-export interface Printed {
-  name: string;
-  part: PartResult;
-  count: number;
-  /** The report it is in: the design's, or its component's, whose results are about it. */
-  report: BuildReport;
+/** The way a planned part prints now. */
+const current = (p: PlannedPart): PrintOrientation => p.ways.find((w) => w.current)!;
+
+/** One way a planned part can lie, as a person weighs it: the support it needs, what lies on the bed, its height. */
+function wayText(w: PrintOrientation): string {
+  const fits = w.fits === null ? "" : w.fits ? " · fits" : " · does not fit";
+  return `${w.label}: ${w.overhang_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}`;
 }
 
-/** Every printed part the design places, through its components, each once with its count. */
-export function printed(report: BuildReport): Printed[] {
-  const found = new Map<string, Printed>();
-  const walk = (r: BuildReport, prefix: string) => {
-    for (const instance of r.instances) {
-      if (instance.component) walk(r.components[instance.component]!, `${prefix}${instance.component}/`);
-      const part = instance.part ? r.parts.find((p) => p.name === instance.part) : undefined;
-      if (!part?.up) continue;
-      const name = prefix + part.name;
-      found.set(name, { name, part, report: r, count: (found.get(name)?.count ?? 0) + 1 });
-    }
-  };
-  walk(report, "");
-  return [...found.values()];
-}
-
-/** The printed parts that do not fit the printer's bed: what the Print tab's badge counts. */
+/** The planned parts that do not fit the printer's bed as they lie: what the Print tab's badge counts. */
 export function unfit(report: BuildReport): number {
-  return printed(report).filter(({ part, report: r }) =>
-    r.results.some((x) => x.analysis === "printing" && x.status === "fail" && x.about.includes(part.name))).length;
+  return report.print_plan.filter((p) => current(p).fits === false).length;
 }
 
-function PrintedParts({ revision }: { revision: Revision | null }) {
-  if (!revision) return <p className="muted pad">The printed parts appear after the first build.</p>;
-  const parts = printed(revision.report);
-  if (!parts.length) return <p className="muted pad">No part of revision {revision.id} is printed.</p>;
-  const of = ({ part, report }: Printed, analysis: string) =>
-    report.results.filter((r) => r.analysis === analysis && r.about.includes(part.name));
-  const mark = (r: Result | undefined) => (r ? <span className={`print-${r.status}`} title={r.detail}>{r.status === "pass" ? "fits" : r.status === "fail" ? "does not fit" : "unchecked"}</span> : <span className="muted">no printer</span>);
-  const pieces = parts.reduce((n, p) => n + p.count, 0);
+/** What the print view's hover names a printed part with: its path, how many, which way up, and its settings. */
+export function printNames(report: BuildReport): (path: string) => string {
+  const by = new Map(report.print_plan.map((p) => [p.path, p]));
+  return (path) => {
+    const p = by.get(path);
+    return p ? `${p.path} ×${p.count} · ${current(p).label} · ${p.settings.map((s) => s.text).join(", ")}` : path;
+  };
+}
+
+/**
+ * A revision's print plan (`BuildReport.print_plan`): each printed part with how many, its material, which way up and
+ * whether it fits the bed, its settings (recommended, or decided by the agent, each with its reason), and the other
+ * ways it could lie, best first, each one click from printing that way: a panel edit of its `up`, no agent turn. A
+ * component's parts are its own design's to turn.
+ */
+function PlanList({ designId, revision }: { designId: string; revision: Revision }) {
+  const [turning, setTurning] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const plan = revision.report.print_plan;
+  if (!plan.length) return <p className="muted pad">No part of revision {revision.id} is printed: give a part an FDM or resin process.</p>;
+  const turn = (part: string, up: PrintOrientation["up"]) => {
+    setTurning(part);
+    setError(null);
+    api.turn(designId, part, up, revision.version).catch((e: Error) => setError(e.message)).finally(() => setTurning(null));
+  };
   return (
     <>
-      <p className="muted">
-        {pieces} printed piece{pieces === 1 ? "" : "s"} of {parts.length} part{parts.length === 1 ? "" : "s"} in revision {revision.id}.
-        Each part's settings are below it: <span className="print-recommended">recommended</span> by hitlcad from what the build
-        found, or decided by your agent in the part's manufacturing; hover one for its reason.
-      </p>
-      <table className="metrics print-parts">
-        <thead>
-          <tr>
-            <th>Part</th>
-            <th>Qty</th>
-            <th>Material</th>
-            <th>Prints</th>
-            <th>Bed</th>
-            <th>Process</th>
-          </tr>
-        </thead>
-        <tbody>
-          {parts.map((p) => {
-            const failing = of(p, "manufacturing").filter((r) => r.status === "fail");
-            return [
-              <tr key={p.name}>
-                <th>{p.name}</th>
-                <td>{p.count}</td>
-                <td>{p.part.material ?? "—"}</td>
-                <td>{upText(p.part.up!)}</td>
-                <td>{mark(of(p, "printing")[0])}</td>
-                <td title={failing.map((r) => r.detail).join("\n")}>{failing.length ? <span className="print-fail">{failing.length} to fix</span> : <span className="print-pass">ok</span>}</td>
-              </tr>,
-              <tr key={`${p.name} settings`} className="print-settings">
-                <td colSpan={6}>
-                  {p.part.print.map((s) => (
-                    <span key={s.name} className={s.decided ? "print-decided" : "print-recommended"} title={`${s.decided ? "Decided" : "Recommended"}: ${s.why}`}>
-                      {settingText(s)}
-                    </span>
-                  ))}
-                </td>
-              </tr>,
-            ];
-          })}
-        </tbody>
-      </table>
+      <ol className="print-plan">
+        {plan.map((p) => {
+          const now = current(p);
+          const best = p.ways[0]!;
+          return (
+            <li key={p.path}>
+              <div className="plan-head">
+                <b>{p.path}</b> ×{p.count} · {p.material ?? "no material"} · {now.label}
+                {now.fits !== null && <span className={now.fits ? "print-pass" : "print-fail"}> · {now.fits ? "fits the bed" : "does not fit the bed"}</span>}
+              </div>
+              <div className="plan-settings">
+                {p.settings.map((s) => (
+                  <span key={s.name} className={s.decided ? "print-decided" : "print-recommended"} title={`${s.decided ? "Decided" : "Recommended"}: ${s.why}`}>
+                    {s.text}
+                  </span>
+                ))}
+              </div>
+              {p.ways.length > 1 && (
+                <details className="plan-ways" open={!best.current}>
+                  <summary>{best.current ? "It prints the best way up" : `Best: ${wayText(best)}`}</summary>
+                  <ol>
+                    {p.ways.map((w, n) => (
+                      <li key={w.up.join()} className={w.current ? "way-current" : ""}>
+                        {n === 0 && <b>best </b>}{wayText(w)}
+                        {w.current ? <span className="muted"> (as it prints now)</span> : !p.path.includes("/") && (
+                          <button type="button" className="button small" disabled={turning !== null} onClick={() => turn(p.path, w.up)}>Print this way</button>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {turning && <p className="muted tiny">Turning {turning} and building…</p>}
+      {error && <p className="notice fail">{error}</p>}
     </>
+  );
+}
+
+/** Beside the print view: the revision's print plan. */
+export function PrintPlanBox({ designId, revision }: { designId: string; revision: Revision }) {
+  const pieces = revision.report.print_plan.reduce((n, p) => n + p.count, 0);
+  return (
+    <section className="selection-box print-plan-box" aria-label="Print plan">
+      <header>
+        <span className="sel-title">Print plan</span>
+        <span className="muted tiny">{pieces} piece{pieces === 1 ? "" : "s"} of {revision.report.print_plan.length} part{revision.report.print_plan.length === 1 ? "" : "s"}</span>
+      </header>
+      <PlanList designId={designId} revision={revision} />
+    </section>
   );
 }
 
@@ -202,48 +194,5 @@ function PrinterForm({ setup, onSave, onCancel }: { setup: PrinterSetup; onSave:
         {onCancel && <button type="button" className="button" onClick={onCancel}>Cancel</button>}
       </div>
     </form>
-  );
-}
-
-/** What the print view's hover names a printed part with: its path, how many, which way up, and its settings. */
-export function printNames(report: BuildReport): (path: string) => string {
-  const by = new Map(printed(report).map((p) => [p.name, p]));
-  return (path) => {
-    const p = by.get(path);
-    return p ? `${p.name} ×${p.count} · ${upText(p.part.up!)} · ${p.part.print.map(settingText).join(", ")}` : path;
-  };
-}
-
-/** Beside the print view: each printed part's plan, its count, which way up, whether it fits the bed, its settings. */
-export function PrintPlanBox({ revision }: { revision: Revision }) {
-  const parts = printed(revision.report);
-  const pieces = parts.reduce((n, p) => n + p.count, 0);
-  return (
-    <section className="selection-box print-plan-box" aria-label="Print plan">
-      <header>
-        <span className="sel-title">Print plan</span>
-        <span className="muted tiny">{pieces} piece{pieces === 1 ? "" : "s"} of {parts.length} part{parts.length === 1 ? "" : "s"}</span>
-      </header>
-      <ol>
-        {parts.map((p) => {
-          const bed = p.report.results.find((r) => r.analysis === "printing" && r.about.includes(p.part.name));
-          return (
-            <li key={p.name}>
-              <div className="plan-head">
-                <b>{p.name}</b> ×{p.count} · {p.part.material ?? "no material"} · {upText(p.part.up!)}
-                {bed && <span className={`print-${bed.status}`} title={bed.detail}> · {bed.status === "pass" ? "fits the bed" : "does not fit the bed"}</span>}
-              </div>
-              <div className="plan-settings">
-                {p.part.print.map((s) => (
-                  <span key={s.name} className={s.decided ? "print-decided" : "print-recommended"} title={`${s.decided ? "Decided" : "Recommended"}: ${s.why}`}>
-                    {settingText(s)}
-                  </span>
-                ))}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
   );
 }

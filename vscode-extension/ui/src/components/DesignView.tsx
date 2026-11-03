@@ -265,7 +265,7 @@ export function DesignView({ id }: { id: string }) {
 
         <div className="side">
           <ReviewPanel ctx={{ id, state, revision, building, base, ui, setUi, refresh: live.refresh }} open={reviewTab} onToggle={setReviewTab} />
-          {printing && <PrintPlanBox revision={revision} />}
+          {printing && <PrintPlanBox designId={id} revision={revision} />}
           {!printing && <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null}>
             {selection.length === 2 && revisionId !== null && !sel.busy && !ui.motion && (
               <MeasurementPanel key={`${revisionId}:${selection.map((i) => i.id).join(",")}`} designId={id} revision={revisionId}

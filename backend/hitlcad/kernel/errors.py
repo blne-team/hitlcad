@@ -381,6 +381,11 @@ PRINTING_BED = define(
     hint="Print it another way up (`up`), split it into pieces that fit (joined by a joint, dowels or screws, each "
     "piece a part), or make it smaller.",
 )  # fmt: skip
+PRINTING_ORIENTATION = define(
+    code="printing.orientation", owner="design", title="A printed part would need less support another way up",
+    hint="Set the part's `up` to the way the result names (in its own `manufacturing`), or keep yours and say why in "
+    "`why`; the human can also turn it in the panel's print view.",
+)  # fmt: skip
 INTERFERENCE_OVERLAP = define(
     code="interference.overlap", owner="design", title="Two instances overlap",
     hint="Move or resize one of them; for parts meant to overlap (an insert set into a hole) declare it on their "

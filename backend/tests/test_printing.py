@@ -49,13 +49,13 @@ async def test_the_human_s_printer_is_kept_in_the_project_and_each_printed_part_
     assert (setup.file, setup.printer, setup.materials) == (str(project / "hitlcad.toml"), None, ["PETG", "PLA"])
     assert [s.name for s in setup.slicers] == ["bambu-studio"]
     revision = await core.builds.build(state.id)
-    assert not [r for r in revision.report.results if r.analysis == "printing"]  # no printer yet: nothing to fit
+    assert not [r for r in revision.report.results if r.code == "printing.bed"]  # no printer yet: no bed to fit
 
     assert core.printing.set_printer(state.id, P2S).printer == P2S
     kept = (project / "hitlcad.toml").read_text(encoding="utf-8")
     assert kept.startswith("# the human's notes\n[plugins]\n") and "[printer.materials.PLA]" in kept
     revision = await core.builds.build(state.id)
-    bed = {r.subject: r for r in revision.report.results if r.analysis == "printing"}
+    bed = {r.subject: r for r in revision.report.results if r.code == "printing.bed"}
     assert bed["plate: bed"].status == "fail" and "fits on the bed at no angle" in bed["plate: bed"].detail
     assert bed["tower: bed"].status == "pass" and "turned" in bed["tower: bed"].detail  # 300 mm long: only across
 
@@ -64,8 +64,16 @@ async def test_the_human_s_printer_is_kept_in_the_project_and_each_printed_part_
     laid = json.loads((core.designs.store.revision_dir(state.id, revision.id) / view.path).read_text(encoding="utf-8"))
     assert [p["id"] for p in laid["shapes"]["parts"]] == ["/print/plate", "/print/tower"]
     assert laid["shapes"]["bb"]["zmax"] < 30  # the 300 mm tower lies down
-    plate = next(p for p in revision.report.parts if p.name == "plate")
-    assert {s.name: (s.value, s.decided) for s in plate.print} == {
+    assert [b[2] - b[0] for b in laid["beds"]] == [256, 256]  # each part on a bed of the printer's
+    plan = {p.path: p for p in revision.report.print_plan}  # each printed part once, how many, which way, settings
+    assert (plan["plate"].count, plan["plate"].material, next(w.label for w in plan["tower"].ways if w.current)) == (
+        1,
+        "PLA",
+        "on its -X face",
+    )
+    assert [s.text for s in plan["plate"].settings] == ["0.2 mm layers", "2 walls", "15 % infill", "no supports",
+                                                        "no brim"]  # fmt: skip
+    assert {s.name: (s.value, s.decided) for s in plan["plate"].settings} == {
         "layer_mm": (0.2, False), "walls": (2, False), "infill_percent": (15, False), "supports": (False, False),
         "brim": (False, False),
     }  # fmt: skip
@@ -93,3 +101,64 @@ def test_the_process_recommends_from_what_the_build_found_and_keeps_what_the_des
     plain = {s.name: s.value for s in FdmProcess(process="fdm").recommend(
         PrintFacts(nozzle_mm=0.6, tightest_fit_mm=None, threaded_into=[], findings=[]))}  # fmt: skip
     assert plain == {"layer_mm": 0.3, "walls": 2, "infill_percent": 15, "supports": False, "brim": False}
+
+
+BRACKET = {
+    "design.json": {
+        "hitlcad": 2, "name": "bracket", "backend": "build123d", "ground": "bracket",
+        "manufacturing": {"process": "fdm"},
+        "parts": {"bracket": {"role": "a post with an arm out at its top", "file": "parts/bracket.py", "material": "PLA"}},
+    },
+    "parts/bracket.py": "from build123d import Align, Box, Pos\n\nON = (Align.CENTER, Align.CENTER, Align.MIN)\n\n\n"
+                        "def build(p, i):\n    return {'bracket': (Pos(-18, 0, 0) * Box(4, 20, 40, align=ON) "
+                        "+ Pos(0, 0, 36) * Box(40, 20, 4, align=ON), {})}\n",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'bracket': [Pos()]}\n",
+}  # fmt: skip
+
+
+async def test_the_build_names_the_best_way_up_and_turning_a_part_there_writes_it(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    state, _ = core.designs.open(write_design(tmp_path / "bracket", BRACKET))
+    revision = await core.builds.build(state.id)
+    way = next(r for r in revision.report.results if r.code == "printing.orientation")
+    assert way.status == "fail" and way.severity == "warning" and "of support" in way.detail
+    assert way.values["best_support_mm2"] < 10 < way.values["support_mm2"]  # its arm overhangs as modelled
+    (bracket,) = revision.report.print_plan
+    ways = bracket.ways
+    now = next(w for w in ways if w.current)
+    assert ways[0].overhang_mm2 < 10 and now.up == (0, 0, 1) and now.label == "as modelled"
+
+    told = core.explore.graph(state.id, None).explore("print")  # what the agent reads to judge it
+    assert (
+        told.startswith("Print plan of rev 1: 1 piece of 1 part")
+        and "bracket ×1: PLA, fdm, as modelled; best on" in told
+    )
+    assert "0.2 mm layers (recommended: half the 0.4 mm nozzle" in told
+    turned = await core.builds.turn(state.id, "bracket", ways[0].up, revision.version)
+    written = json.loads((tmp_path / "bracket" / "design.json").read_text(encoding="utf-8"))
+    assert written["parts"]["bracket"]["manufacturing"] == {"process": "fdm", "up": list(ways[0].up)}
+    assert turned.origin == "orientation_edit"
+    assert next(r for r in turned.report.results if r.code == "printing.orientation").status == "pass"
+
+
+async def test_a_component_s_printed_parts_join_the_plan_times_its_placements(core: HitlCad, tmp_path: Path) -> None:
+    write_design(tmp_path / "leg", {
+        "design.json": {"hitlcad": 2, "name": "leg", "backend": "build123d", "ground": "foot",
+                        "manufacturing": {"process": "fdm"},
+                        "parts": {"foot": {"role": "a foot", "file": "parts/foot.py", "material": "PETG"}}},
+        "parts/foot.py": "from build123d import Box\n\n\ndef build(p, i):\n    return {'foot': (Box(20, 20, 5), {})}\n",
+        "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'foot': [Pos()]}\n",
+    })  # fmt: skip
+    folder = write_design(tmp_path / "stool", {
+        "design.json": {"hitlcad": 2, "name": "stool", "backend": "build123d", "ground": "seat",
+                        "manufacturing": {"process": "fdm"}, "components": {"leg": {"design": "../leg"}},
+                        "parts": {"seat": {"role": "a seat", "file": "parts/seat.py", "material": "PLA"}}},
+        "parts/seat.py": "from build123d import Box\n\n\ndef build(p, i):\n    return {'seat': (Box(80, 80, 5), {})}\n",
+        "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n"
+                       "    return {'seat': [Pos(0, 0, 40)], 'leg': [Pos(-30, 0, 0), Pos(30, 0, 0)]}\n",
+    })  # fmt: skip
+    state, _ = core.designs.open(folder)
+    revision = await core.builds.build(state.id)
+    plan = {p.path: (p.count, p.material) for p in revision.report.print_plan}
+    assert plan == {"seat": (1, "PLA"), "leg/foot": (2, "PETG")}

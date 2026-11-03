@@ -68,6 +68,9 @@ class FdmProcess(PrintedProcess):
 
         return fdm_checks(body, self)
 
+    def overhang_limit_deg(self) -> float:
+        return self.max_overhang_deg
+
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         from hitlcad.builtin.processes.checks import fdm_recommend
 

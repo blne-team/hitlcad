@@ -23,6 +23,7 @@ from hitlcad.backends.base import PlanOutcome
 from hitlcad.backends.workers import Superseded, Ticket
 from hitlcad.build.pipeline import BuildPipeline
 from hitlcad.config import Settings
+from hitlcad.core.checks import PrintedProcess
 from hitlcad.core.design import DESIGN_FILE
 from hitlcad.core.events import BuildProgress, BuildStopped, ErrorRaised, MotionsWatched
 from hitlcad.core.project import ProjectSettings
@@ -332,6 +333,27 @@ class BuildService:
         summary = "Outputs: " + (", ".join(outputs) or "none")
         await self.designs.change(design_id, base, "panel", edit, summary)
         return await self.build(design_id, summary, "outputs_edit")
+
+    async def turn(self, design_id: str, part: str, up: tuple[float, float, float], base: int) -> Revision:
+        """The human turned a printed part in the print view, on the revision it showed (`base`): its `up` written into
+        design.json (in its own `manufacturing`, a copy of the design's process where it has none), merged with what
+        changed since, then built."""
+
+        def edit(doc: Document) -> None:
+            text = doc.text(DESIGN_FILE) or ""
+            design = load_design(text)
+            process = design.process(part) if part in design.parts else None
+            if not isinstance(process, PrintedProcess):
+                raise REQUEST_INVALID(f"no printed part {part!r}")
+            if design.parts[part].manufacturing is not None:
+                doc.write_text(DESIGN_FILE, json_set(text, ["parts", part, "manufacturing", "up"], list(up)))
+            else:
+                own = process.model_dump(mode="json", exclude_defaults=True) | {"up": list(up)}
+                doc.write_text(DESIGN_FILE, json_set(text, ["parts", part, "manufacturing"], own))
+
+        summary = f"Turned {part} to print up {list(up)}"
+        await self.designs.change(design_id, base, "panel", edit, summary)
+        return await self.build(design_id, summary, "orientation_edit")
 
     async def revert(self, design_id: str, version: int) -> Revision:
         """The human's Undo or Redo in the panel: the panel edit at `version`, the latest the design's state lists in

@@ -88,10 +88,14 @@ def fdm_recommend(rules: FdmProcess, facts: PrintFacts) -> list[PrintSetting]:
     """An FDM part's settings: the design's where it sets them, the rest recommended from what the build found."""
     nozzle, found = facts.nozzle_mm or rules.nozzle_mm, {f.name: f for f in facts.findings}
 
+    words = {"layer_mm": lambda v: f"{v:g} mm layers", "walls": lambda v: f"{v:g} walls",
+             "infill_percent": lambda v: f"{v:g} % infill", "supports": lambda v: "supports" if v else "no supports",
+             "brim": lambda v: "brim" if v else "no brim"}  # fmt: skip
+
     def setting(name: str, decided: float | bool | None, value: float | bool, why: str) -> PrintSetting:
-        if decided is None:
-            return PrintSetting(name=name, value=value, decided=False, why=why)
-        return PrintSetting(name=name, value=decided, decided=True, why=rules.why or "set in the design")
+        if decided is not None:
+            value, why = decided, rules.why or "set in the design"
+        return PrintSetting(name=name, value=value, text=words[name](value), decided=decided is not None, why=why)
 
     fit = facts.tightest_fit_mm
     if fit is not None and fit < 0.3:

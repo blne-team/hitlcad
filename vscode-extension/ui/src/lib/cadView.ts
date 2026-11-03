@@ -4,6 +4,7 @@ import "three-cad-viewer/css";
 import type { Pick, Vec3 } from "../api/types";
 import type { CadMove } from "./motion";
 import type { Inspection } from "./inspection";
+import type { Bed, CadScene } from "./scene";
 import { sketchLoops, type SketchView } from "./sketch";
 
 /** A numbered marker drawn over the model: an agent pin or a selected item. */
@@ -44,6 +45,7 @@ const INK = "#1B2127";
 const SELECT_COLOR = "#2f6df6";
 const GHOST_COLOR = "#4c6ef5";
 const SKETCH_COLOR = "#e8590c";
+const BED_COLOR = "#2b7a4b";
 
 const RENDER: RenderOptions = { edgeColor: 0x707070, ambientIntensity: 1, directIntensity: 1.1, metalness: 0.3, roughness: 0.65, defaultOpacity: 0.5, normalLen: 0 };
 // Keep origin axes in design coordinates. The XY grid is placed at the model base below;
@@ -111,6 +113,7 @@ export class CadView {
   private readonly markers: Three.Group;
   private readonly highlights: Three.Group;
   private readonly sketchLines: Three.Group;
+  private readonly bedPlates: Three.Group;
   private sketches: SketchView[] = [];
   private sketchesShown = false;
   /** The 2D view's plane, and the 3D view to come back to; null in 3D. */
@@ -148,7 +151,7 @@ export class CadView {
 
   constructor(
     private readonly container: HTMLElement,
-    shapes: Shapes,
+    shapes: CadScene,
     dark: boolean,
     private readonly onPick: (pick: Pick, additive: boolean) => void,
     private readonly onExplode: (on: boolean) => void,
@@ -200,7 +203,8 @@ export class CadView {
     this.markers = new this.three.Group();
     this.highlights = new this.three.Group();
     this.sketchLines = new this.three.Group();
-    this.viewer.scene.add(this.markers, this.highlights, this.sketchLines);
+    this.bedPlates = this.beds(shapes.beds);
+    this.viewer.scene.add(this.markers, this.highlights, this.sketchLines, this.bedPlates);
     this.viewer.scene.onBeforeRender = (renderer, _scene, camera) => this.sizeMarkers(renderer, camera);
     this.explodeFrom(ids);
     // The toolbar's explode button (and its key, x) calls the viewer's setExplode, which only armed a clip to
@@ -560,6 +564,7 @@ export class CadView {
     this.clear(this.markers);
     this.clear(this.highlights);
     this.clear(this.sketchLines);
+    this.clear(this.bedPlates);
     if (this.ghost) this.clear(this.ghost);
     this.viewer.dispose();
     this.display.dispose();
@@ -728,6 +733,21 @@ export class CadView {
    */
   private partsFirst(on: boolean) {
     if (this.exact.size) (this.display.shapeFilterDropDownMenu as unknown as { setValue(topo: string): void }).setValue(on ? "Solid" : "All");
+  }
+
+  /** The print view's beds, each a plate under its part on Z = 0: a faint fill and its edge. */
+  private beds(beds: Bed[]): Three.Group {
+    const T = this.three;
+    const group = new T.Group();
+    for (const [x0, y0, x1, y1] of beds) {
+      const plate = new T.Mesh(new T.PlaneGeometry(x1 - x0, y1 - y0),
+        new T.MeshBasicMaterial({ color: BED_COLOR, transparent: true, opacity: 0.18, depthWrite: false, side: T.DoubleSide }));
+      plate.position.set((x0 + x1) / 2, (y0 + y1) / 2, -0.05);
+      const edge = new T.LineLoop(new T.BufferGeometry().setFromPoints([[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([x, y]) => new T.Vector3(x, y, 0))),
+        new T.LineBasicMaterial({ color: BED_COLOR }));
+      group.add(plate, edge);
+    }
+    return group;
   }
 
   /** Whether the instance is selected as a whole part. */

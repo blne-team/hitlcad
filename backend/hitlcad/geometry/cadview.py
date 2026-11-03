@@ -423,7 +423,8 @@ class Scene:
         return {**template, "id": view_id, "name": name, "shape": {"ref": ref},
                 "loc": _loc(transform @ _frame(template["loc"]))}  # fmt: skip
 
-    def write(self, tree: dict[str, Any], name: str = SCENE_FILE) -> None:
+    def write(self, tree: dict[str, Any], name: str = SCENE_FILE, **extra: Any) -> None:
+        """The scene as `name` in its root, with what else the view draws (`extra`: the print view's beds)."""
         corners = np.vstack(self._corners) if self._corners else np.zeros((1, 3))  # nothing placed: an empty scene
         lo, hi = corners.min(axis=0), corners.max(axis=0)
         tree["bb"] = {
@@ -431,7 +432,7 @@ class Scene:
         }
         target = self.root / name
         tmp = target.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"instances": self.instances, "shapes": tree}, separators=(",", ":")),
+        tmp.write_text(json.dumps({"instances": self.instances, "shapes": tree, **extra}, separators=(",", ":")),
                        encoding="utf-8")  # fmt: skip
         tmp.replace(target)
 

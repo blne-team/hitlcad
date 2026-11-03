@@ -174,6 +174,12 @@ class EditOutputs(BaseModel):
     base: int = Field(description="The version of the design's files the edit was made on, as for parameters")
 
 
+class Turn(BaseModel):
+    part: str
+    up: tuple[float, float, float] = Field(description="The direction of the part's own frame to point up as it prints")
+    base: int = Field(description="The version of the design's files the edit was made on, as for parameters")
+
+
 class BuildRequest(BaseModel):
     configuration: str | None = Field(
         default=None, description="A named configuration; default: the parameters as written"
@@ -422,6 +428,11 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     async def set_printer(design_id: str, body: Printer) -> PrinterSetup:
         """The human entered their printer: kept in the design's project, and every design of it built for it."""
         return core.printing.set_printer(design_id, body)
+
+    @app.post("/api/designs/{design_id}/turn")
+    async def turn(design_id: str, body: Turn) -> Revision:
+        """The human turned a printed part in the print view: its `up` written, then built."""
+        return await builds.turn(design_id, body.part, body.up, body.base)
 
     @app.post("/api/designs/{design_id}/revert", status_code=201)
     async def revert(design_id: str, body: Revert) -> Revision:

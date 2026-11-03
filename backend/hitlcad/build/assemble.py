@@ -106,17 +106,26 @@ def printed(built: BuiltDesign, prefix: str = "") -> list[tuple[str, PartGeometr
 
 
 def write_print_scene(built: BuiltDesign, out_dir: Path) -> bool:
-    """The print view of a build in `out_dir`: its printed parts, each once, lying as it prints (`Process.made`),
-    side by side along X on Z = 0. False, and no file, where nothing is printed."""
-    scene, placed, x = cadview.Scene(out_dir), [], 0.0
+    """The print view of a build in `out_dir`: its printed parts, each once, lying as it prints (`Process.made`), side by
+    side along X on Z = 0; with the project's printer, each in the middle of a bed of its own, the beds (x0, y0, x1, y1)
+    written beside them for the view to draw. False, and no file, where nothing is printed."""
+    printer = built.printer
+    scene, placed, beds, x = cadview.Scene(out_dir), [], [], 0.0
     for name, part, process in printed(built):
         made = process.made()
         bounds = np.array(cadview.PartView.header(part.view_file.read_bytes())["bounds"])
         corners = fr.transform_points(np.array(list(itertools.product(*bounds.T))), made)
         lo, hi = corners.min(axis=0), corners.max(axis=0)
-        at = fr.translation((x - lo[0], -(lo[1] + hi[1]) / 2, -lo[2])) @ made
+        width = hi[0] - lo[0]
+        if printer:  # its bed, and the part in its middle
+            bed_x, bed_y = printer.build_volume_mm[:2]
+            beds.append([x, -bed_y / 2, x + bed_x, bed_y / 2])
+            middle, width = x + bed_x / 2, max(width, bed_x)
+        else:
+            middle = x + width / 2
+        at = fr.translation((middle - (lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, -lo[2])) @ made
         placed.append(scene.part(part.view_file, f"/print/{name}", name, at))
-        x += hi[0] - lo[0] + PRINT_GAP_MM
+        x += width + PRINT_GAP_MM
     if placed:
-        scene.write(cadview.group("/print", "print", placed), cadview.PRINT_SCENE_FILE)
+        scene.write(cadview.group("/print", "print", placed), cadview.PRINT_SCENE_FILE, beds=beds)
     return bool(placed)

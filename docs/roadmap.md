@@ -46,22 +46,22 @@ the slicer begins: hitlcad says how to print each part, and the human slices and
   (with "How to print it", below); PrusaSlicer, OrcaSlicer or Cura are another adapter each.
 - **Print orientation.** A printed part's process says which way up it prints (`"up": [0, -1, 0]`), so parts
   are modelled for the assembly; its process checks, its 3MF and its fit on the printer's bed (`printing.bed`,
-  turned about Z as a slicer would) are of it lying that way; **Print** turns the panel's main view into the print
-  view, each printed part once, lying as it prints, with its plan beside it. Left: the printer's bed drawn under
-  them, their overhangs and bed contact shaded, and turning a part there (writing `up`, a value edit with no agent
-  turn).
-- **The best orientation.** Each part's candidates are the stable poses of its hull (trimesh's
-  `compute_stable_poses`), each scored by the support it needs, its contact with the bed, its height, and, where
-  the design says how a part is loaded, whether that load runs across its layers. The build names the best
-  with its numbers ("on +Y: no support, from 340 mm²"); the agent or the human applies it.
+  turned about Z as a slicer would) are of it lying that way. **Print** turns the panel's main view into the print
+  view: each printed part once, lying as it prints, on a bed of the printer's size, with its plan beside it. Each
+  part's candidates are the stable poses of its hull, scored by the support they need, what lies on the bed, the
+  height and the fit; the build names the best when it beats the part's own (`printing.orientation`), and **Print
+  this way** in the plan writes the part's `up` (a panel edit, no agent turn). Left: shading a part's overhangs
+  and bed contact in the print view, and weighing a load across the layers, where the design says how a part is
+  loaded.
 - **Design for printing.** Findings with their usual fix, which the agent acts on as on any other: a part
   larger than the bed (split it, with a joint or dowels), a horizontal hole (a teardrop), a bottom edge the first
   layer squashes (a chamfer), a load across the layers, small parts that could be one.
-- **How to print it: a print plan.** Each printed part's report gives its settings (layer height, walls, infill,
+- **How to print it: a print plan.** A build's report has its print plan (`print_plan`): each printed part, its
+  components' included, with how many, which way up, and its settings (layer height, walls, infill,
   supports, brim), each with its reason: its process recommends them from what the build found (finer layers for
   a tight fit, more walls and infill where screws thread in, supports where its overhangs need them, a brim for a
   tall narrow part), and the agent judges, keeping or setting each in the part's `manufacturing` with its reason;
-  the Print tab shows them under each part, with how many to print. Left: a part's material follows its needs,
+  the Print tab and the print view show the plan. Left: a part's material follows its needs,
   which the agent declares from the brief (`{"kind": "service", "target": "clip", "max_temperature_c": 70,
   "flexes": true}`): hitlcad recommends the materials that meet them and checks the one chosen. And the parts are
   grouped onto plates by filament and bed, and written (when `outputs` names `print`) as `print-plan.md` and a
