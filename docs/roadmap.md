@@ -38,8 +38,8 @@ hitlcad designs, assembles and checks parts, but stops short of the printer: a p
 nothing knows the printer's bed (the NAS case's 249 × 251 mm front shell is on no bed's measure); and nothing
 tells the human how to print what was designed. v0.2 makes the design aware of its printing, and ends where
 the slicer begins: hitlcad says how to print each part so it works as designed (strong where it is loaded, true
-where it fits, clean where it shows), and the human slices and prints it. How long a print takes is the slicer's
-to say: hitlcad neither slices nor drives the printer.
+where it fits, clean where it shows), and the human slices and prints it. How long a print takes, the filament
+it uses and what it costs are the slicer's to say: hitlcad neither slices nor drives the printer.
 
 - **Your printer, and slicers as adapters.** hitlcad defines no printer: the panel's **Print** asks for the human's
   once (build volume, nozzle, slicer, the filament and AMS slot of each material) and the project keeps it in its
@@ -76,23 +76,19 @@ Left, in this order:
    clip, a snap, declared with its material's needs, below) bends along its layers, not across them; a face the
    design shows prints on top or on the bed, not over support. Loads in general, declared by the design, stay
    under "Speeds and loads" (Later).
-2. **Plates and the slicer's file.** The parts are grouped onto plates by filament and bed, and written (when
-   `outputs` names `print`) as `print-plan.md` and a 3MF per plate in which the slicer adapter places each part
-   lying as it prints and sets its settings as its own (Bambu Studio's per-object settings), so the human opens it
-   in the slicer and prints with nothing to turn or adjust. These replace the `3mf` output's file per part. The
-   check is the human's: the file opened in Bambu Studio, each part as the plan says.
+2. **The slicer's file.** One `print.3mf` of every printed part, as many of each as the design has, each lying as
+   it prints, with its settings as its own (Bambu Studio's per-object settings, written by the slicer adapter), so
+   the human opens it, arranges it and slices with nothing to turn or set. Plates are the slicer's: its Arrange knows
+   the plate, groups by filament and turns parts only about Z, which keeps the way each prints. It replaces the `3mf`
+   output's file per part. The check is the human's: the file opened in Bambu Studio, each part as the plan says.
 3. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
    "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
-   meet them and checks the one chosen. A material says its service temperature, whether it takes flexing, and its
-   price per kilogram.
-4. **The whole product.** The totals across a design (parts, plates, filament by material, its cost) in its
-   report, filament estimated from volumes, walls and infill and labelled as an estimate, and requirements on them
-   (`filament`, `cost`, `plates`), so they become checks the agent designs towards.
+   meet them and checks the one chosen. A material says its service temperature and whether it takes flexing.
 
 Done when, for a printer the human enters (a Bambu Lab P2S with a 0.4 mm nozzle, in Bambu Studio), every printed
 part of the NAS case lies the way its best orientation says, needing no support it could avoid, with each way's
 cost to its strength or fit named in the plan; the front shell's size is a finding whose fix (a split) the agent
-makes; and the human prints the case from its plates in Bambu Studio without turning a part or guessing a setting.
+makes; and the human prints the case from its `print.3mf` in Bambu Studio without turning a part or guessing a setting.
 
 ## Not yet ordered
 
