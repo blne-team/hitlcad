@@ -21,7 +21,7 @@ from hitlcad.builtin.processes.processes import (
     ResinProcess,
     SheetMetalProcess,
 )
-from hitlcad.core.checks import PrintFacts, PrintSetting, PrintWay, ProcessFinding
+from hitlcad.core.checks import PrintFacts, PrintSetting, PrintWay, ProcessFinding, RoundInterface
 from hitlcad.geometry.features import Features, InsideCorner
 from hitlcad.geometry.mesh import Probe
 from hitlcad.geometry.walls import fmt, listed
@@ -84,12 +84,64 @@ def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
     return [_walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))]
 
 
-def fdm_way(body: Body, rules: FdmProcess) -> PrintWay:
+def fdm_way(body: Body, rules: FdmProcess, interfaces: list[RoundInterface]) -> PrintWay:
     """An FDM part lying one way: what of it needs support (a round hole on its side by its own finding, the rest
-    by the overhangs'), and whether its base holds it on the bed."""
+    by the overhangs'), whether its base holds it on the bed, and whether what fits on it or threads into it comes
+    out round."""
     teardrops, tops = _fdm_teardrops(body, rules)
     bed = _fdm_bed(body, rules)
-    return PrintWay(findings=[teardrops, _fdm_overhangs(body, rules, tops), bed], stands=bed.passed is True)
+    rounds, harmed = _fdm_round(body, rules, interfaces)
+    return PrintWay(findings=[teardrops, _fdm_overhangs(body, rules, tops), bed, *rounds], stands=bed.passed is True,
+                    harmed=harmed)  # fmt: skip
+
+
+def _fdm_round(
+    body: Body, rules: FdmProcess, interfaces: list[RoundInterface]
+) -> tuple[list[ProcessFinding], list[str]]:
+    """Each round feature with a fit prints as a stack of its sections, one layer (t) each: their steps are no error
+    upright, and tilted θ from upright reach t·sin θ out from its surface each side, so 2t·sin θ across, out of round
+    past its fit's band. Upright, where its wall meets the bed at its own size, the first layer spreads
+    `first_layer_squash_mm` past it each side, into a hole or out round a shaft: past the fit's least clearance, a
+    chamfer there takes it up. None for a part without one. Also: the features that come out out of round."""
+    if not interfaces:
+        return [], []
+    mesh = body.mesh
+    near = body.settings.mesh_tolerance_mm + body.tolerances.position_mm
+    layer = rules.layer_mm or rules.nozzle_mm / 2  # as it prints, else the usual layer
+    spread = 2 * rules.first_layer_squash_mm
+    stepped, squashed, harmed = [], [], []
+    for it in interfaces:
+        axis = np.asarray(it.axis) / np.linalg.norm(it.axis)
+        tilt = math.degrees(math.acos(min(1.0, abs(float(axis[2])))))
+        steps = 2 * layer * math.sin(math.radians(tilt))
+        least, greatest = it.clearance_mm
+        what = f"{it.name} (Ø{it.diameter:.1f} mm {it.round})"
+        if steps > greatest - least:
+            stepped.append(f"{what} {tilt:.0f}° from upright: its {layer:g} mm layers step it {steps:.2f} mm out of round, "
+                           f"its fit lets {greatest - least:.2f}")  # fmt: skip
+            harmed.append(it.name)
+            continue
+        offset = mesh.triangles_center - np.asarray(it.origin)
+        radial = offset - np.outer(offset @ axis, axis)
+        # its wall where it touches the bed, at its own size: no chamfer there takes up the squash
+        foot = (mesh.triangles[:, :, 2].min(axis=1) <= mesh.bounds[0][2] + near) & (
+            np.abs(np.linalg.norm(radial, axis=1) - it.diameter / 2) <= near) & (np.abs(mesh.face_normals[:, 2]) < 0.5)  # fmt: skip
+        if foot.any() and spread > least:
+            squashed.append(f"{what} at {fmt(np.asarray(it.origin))}, whose fit leaves {least:.2f} mm")
+    rounds = ProcessFinding(
+        name="fdm_round", passed=not stepped,
+        detail=f"{listed(stepped, 'round feature')}: turn the part so each stands upright as it prints" if stepped
+        else f"{len(interfaces)} round feature{'s' * (len(interfaces) != 1)} with a fit, round within it as it prints",
+    )  # fmt: skip
+    first = ProcessFinding(
+        name="fdm_first_layer", passed=not squashed,
+        detail=f"{listed(squashed, 'round feature')} {'meets' if len(squashed) == 1 else 'meet'} the bed at its own "
+               f"size: the first layer spreads {rules.first_layer_squash_mm:g} mm into a hole and out round a shaft "
+               f"each side, {spread:g} mm across; chamfer {'its' if len(squashed) == 1 else 'each'} edge there at least "
+               f"{rules.first_layer_squash_mm:g} mm × 45°" if squashed
+        else "no round feature with a fit meets the bed where the first layer would squash it past its fit",
+    )  # fmt: skip
+    return [rounds, first], harmed
 
 
 def _fdm_teardrops(body: Body, rules: FdmProcess) -> tuple[ProcessFinding, np.ndarray]:

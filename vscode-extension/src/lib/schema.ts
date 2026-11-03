@@ -1854,6 +1854,12 @@ export interface components {
              */
             teardrop_from_mm: number;
             /**
+             * First Layer Squash Mm
+             * @description How far the first layer, pressed onto the bed, spreads past its outline each side
+             * @default 0.2
+             */
+            first_layer_squash_mm: number;
+            /**
              * Ignored Overhang Mm2
              * @description An overhang that prints on nothing over less than this still prints
              * @default 1
@@ -2932,6 +2938,11 @@ export interface components {
              * @description It stays put on the bed as it prints (`PrintWay.stands`)
              */
             stands: boolean;
+            /**
+             * Harmed
+             * @description Its round features with a fit that would not come out round within it (`PrintWay.harmed`)
+             */
+            harmed: string[];
             /**
              * Support Mm2
              * @description What prints on nothing but support, as its process's checks find it (bridged and held edges excluded)

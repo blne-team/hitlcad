@@ -6,7 +6,7 @@ import math
 
 from build123d import Align, BuildPart, BuildSketch, Cone, Cylinder, Location, Locations, Mode, Plane, Polygon, Pos, add, extrude
 
-from lib.printing import TEARDROP_DEG, insert_hole, teardrop
+from lib.printing import TEARDROP_DEG, chamfer_on_bed, insert_hole, teardrop
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 
@@ -46,6 +46,7 @@ def build(p, i):
             add(hole, mode=Mode.SUBTRACT)
             inserts.append(frame)
         add(teardrop(pad, p["wire_hole_d"], i.pad_depth), mode=Mode.SUBTRACT)
+        chamfer_on_bed(duct, i.rim_od / 2)  # the rim slides into the guard: its foot keeps its size
 
     return {
         "duct": (

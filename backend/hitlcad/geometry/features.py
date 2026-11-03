@@ -283,14 +283,18 @@ class BrepFeatures(Features):
 
     def round(self, frame: fr.Frame, tol: Tolerances, *, inward: bool) -> Measured:
         o, z = fr.origin(frame), fr.z_axis(frame)
-        reach = []  # extents along the axis of the coaxial faces of revolution: what leads from the origin to a feature
+        lead_faces = []  # the coaxial faces of revolution, by their vertices (along the axis, from it): what may lead to one
         for face in self.shape.faces():
             if face.geom_type.name not in REVOLVED:
                 continue
             offset, tilt = _off_axis(face.axis_of_rotation, o, z)
-            ts = [fr.along(_vec(v.center()), o, z) for v in face.vertices()]
-            if ts and offset <= tol.position_mm and tilt <= tol.angle_deg:
-                reach.append((min(ts), max(ts), 0.0))
+            points = [
+                (fr.along(at, o, z), fr.distance_to_line(at, o, z))
+                for v in face.vertices()
+                if (at := _vec(v.center())) is not None
+            ]
+            if points and offset <= tol.position_mm and tilt <= tol.angle_deg:
+                lead_faces.append(points)
         found = []
         for wall in self._walls:
             if wall.inward != inward:
@@ -301,11 +305,20 @@ class BrepFeatures(Features):
             found += [_Found(2 * wall.radius, hi - lo, -hi if inward else lo, offset, tilt,
                              area / (2 * math.pi * wall.radius * (hi - lo)))
                       for lo, hi, area in _touching(extents, tol.position_mm) if hi > lo]  # fmt: skip
-        merged = _touching(reach, tol.position_mm)
 
-        def leads(gap: float) -> bool:
-            lo, hi = (-gap, 0.0) if inward else (0.0, gap)
-            return any(a <= lo + tol.position_mm and b >= hi - tol.position_mm for a, b, _ in merged)
+        def leads(gap: float, diameter: float | None) -> bool:
+            """Coaxial faces of revolution all the way from the origin to a feature starting `gap` past it; given its
+            `diameter`, none farther from its edge than 45° (a chamfer, a countersink; not a counterbore, whose wall
+            meets it square)."""
+            reach = []
+            for points in lead_faces:
+                depth = [(-t if inward else t, r) for t, r in points]
+                if diameter is None or all(-tol.position_mm <= d <= gap + tol.position_mm
+                                           and abs(r - diameter / 2) <= gap - d + tol.position_mm for d, r in depth):  # fmt: skip
+                    reach.append((min(d for d, _ in depth), max(d for d, _ in depth), 0.0))
+            return any(
+                a <= tol.position_mm and b >= gap - tol.position_mm for a, b, _ in _touching(reach, tol.position_mm)
+            )
 
         return _pick(found, leads, inward, tol)
 
@@ -514,13 +527,17 @@ class MeshFeatures(Features):
         lowest, highest = heights[mesh.faces].min(axis=1), heights[mesh.faces].max(axis=1)
         reach = float(highest.max() if not inward else -lowest.min())
 
+        def section(t: float) -> tuple[np.ndarray, np.ndarray]:
+            """The section across the axis `t` along it: its segments, and the faces they cut."""
+            h = -t if inward else t
+            near = np.flatnonzero((lowest <= h) & (highest >= h))
+            return trimesh.intersections.mesh_plane(mesh, z, o + z * h, return_faces=True, local_faces=near,
+                                                    cached_dots=heights - h)  # fmt: skip
+
         def station(t: float) -> _Station | None:
             """The round surface the rays from the axis (a hole's) or from outside (a shaft's) land on at `t` along
             it, in the section across the axis there, or None where they do not land at one distance from it."""
-            h = -t if inward else t
-            near = np.flatnonzero((lowest <= h) & (highest >= h))
-            lines, faces = trimesh.intersections.mesh_plane(mesh, z, o + z * h, return_faces=True, local_faces=near,
-                                                            cached_dots=heights - h)  # fmt: skip
+            lines, faces = section(t)
             if not len(lines):
                 return None
             # where each ray meets each segment of the section: r·u = p + w·(q − p), in the plane
@@ -594,9 +611,21 @@ class MeshFeatures(Features):
         found = _Found(2 * first.radius, t1 - t0, t0, float(np.linalg.norm(first.centre)),
                        math.degrees(math.atan2(drift, end - start)), first.share, 2 * first.sagitta)  # fmt: skip
 
-        def leads(gap: float) -> bool:
-            """Round surfaces about the axis all the way from the origin to the feature: a countersink, a chamfer."""
-            return all(station(t) is not None for t in np.linspace(0, gap, math.ceil(gap / step) + 2)[1:-1])
+        def leads(gap: float, diameter: float | None) -> bool:
+            """Round surfaces about the axis all the way from the origin to the feature; given its `diameter`, none
+            farther from its edge than 45° (a countersink, a chamfer), measured on each section where the surface the
+            feature's side meets first (nearest the axis for a hole, farthest for a shaft) lies, within the facets'
+            sagitta."""
+            for t in np.linspace(0, gap, math.ceil(gap / step) + 2)[1:-1]:
+                if station(t) is None:
+                    return False
+                if diameter is None:
+                    continue
+                lines, _ = section(t)
+                r = np.linalg.norm((lines.reshape(-1, 3) - o) @ across, axis=1)
+                if abs(float(r.min() if inward else r.max()) - diameter / 2) > gap - t + close + found.uncertainty:
+                    return False
+            return True
 
         return _pick([found], leads, inward, tol)
 
@@ -667,18 +696,20 @@ class _Found:
     uncertainty: float = 0.0
 
 
-def _pick(found: list[_Found], leads: Callable[[float], bool], inward: bool, tol: Tolerances) -> Measured:
+def _pick(found: list[_Found], leads: Callable[[float, float | None], bool], inward: bool, tol: Tolerances) -> Measured:
     """The frame's feature among those found: coaxial, round, the one that starts closest past the origin (of those
-    starting equally close, the innermost hole or the outermost shaft). It starts at the origin, or farther only
-    where coaxial surfaces of revolution lead to it from the origin (`leads`: a countersink, a chamfer). With none,
-    the result names the nearest feature found and what keeps it from being the frame's."""
+    starting equally close, the innermost hole or the outermost shaft), one a chamfer or a countersink leads to from
+    the origin (`leads` with its diameter) starting there too. It starts at the origin, or farther where coaxial
+    surfaces of revolution lead to it from the origin (`leads`: a screw head's recess the part's edge cuts short).
+    With none, the result names the nearest feature found and what keeps it from being the frame's."""
     fits = [f for f in found if f.offset <= tol.position_mm and f.tilt <= tol.angle_deg and f.share >= ON_CIRCLE
             and f.gap >= -tol.position_mm]  # fmt: skip
     if fits:
-        closest = min(f.gap for f in fits)
-        tied = [f for f in fits if f.gap <= closest + tol.position_mm]
+        start = [0.0 if f.gap <= tol.position_mm or leads(f.gap, f.diameter) else f.gap for f in fits]
+        closest = min(start)
+        tied = [f for f, at in zip(fits, start, strict=True) if at <= closest + tol.position_mm]
         hit = (min if inward else max)(tied, key=lambda f: f.diameter)
-        if hit.gap <= tol.position_mm or leads(hit.gap):
+        if closest <= tol.position_mm or leads(hit.gap, None):
             return _round(inward, hit, tol)
         return _no_round(inward, hit, tol)
     return _no_round(inward, min(found, key=lambda f: f.offset + abs(f.gap), default=None), tol)

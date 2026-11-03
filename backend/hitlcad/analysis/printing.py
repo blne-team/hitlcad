@@ -11,8 +11,8 @@ import trimesh
 from scipy.spatial import ConvexHull
 
 from hitlcad.analysis.base import Context, result
-from hitlcad.analysis.checks import print_way, process_findings, process_key
-from hitlcad.analysis.coverage import Link, links
+from hitlcad.analysis.checks import print_way, print_way_key, process_findings
+from hitlcad.analysis.coverage import Link
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintOrientation, PrintWay
 from hitlcad.core.report import PlannedPart, Result
@@ -82,6 +82,7 @@ class Printing:
             return result(self.name, PRINTING_ORIENTATION, f"{name}: orientation", True, detail, [name])
         worse = ("it does not fit the printer" if now.fits is False and best.fits is not False
                  else f"it does not stay put on the bed ({'; '.join(now.problems)})" if best.stands and not now.stands
+                 else f"{', '.join(now.harmed)} would not come out round" if len(now.harmed) > len(best.harmed)
                  else f"it needs {now.support_mm2:.0f} mm² of support")  # fmt: skip
         detail = f"printed {face(best.up)} (`up` {list(best.up)}), {best.described()}; {face(now.up)}, as it prints now, {worse}"
         return result(self.name, PRINTING_ORIENTATION, f"{name}: orientation", False, detail, [name],
@@ -119,7 +120,7 @@ def orientations(ctx: Context, name: str, process: PrintedProcess) -> list[Print
     ]
     turned = [process if n == 0 else process.model_copy(update={"up": up}) for n, up in enumerate(ups)]
     bed = printer.build_volume_mm if printer else None
-    key = ctx.cache.key("print orientations", [process_key(ctx, "print way", name, t) for t in turned], bed)
+    key = ctx.cache.key("print orientations", [print_way_key(ctx, name, t) for t in turned], bed)
 
     def judged() -> list[dict[str, Any]]:
         out = []
@@ -129,7 +130,7 @@ def orientations(ctx: Context, name: str, process: PrintedProcess) -> list[Print
             height = float(np.ptp(mesh.bounds[:, 2]))
             turn, length, width = on_bed(mesh.vertices, bed[:2] if bed else (np.inf, np.inf))
             fits = None if bed is None else height <= bed[2] and turn is not None
-            out.append(PrintOrientation(up=way_up.up, label=face(way_up.up), fits=fits, stands=way.stands,
+            out.append(PrintOrientation(up=way_up.up, label=face(way_up.up), fits=fits, stands=way.stands, harmed=way.harmed,
                                         height_mm=height, footprint_mm=(length, width), turn_deg=turn if bed else None,
                                         support_mm2=_area(mesh, way, "support"), bed_mm2=_area(mesh, way, "bed"),
                                         problems=[f.detail for f in way.findings if f.passed is False], current=n == 0))  # fmt: skip
@@ -152,7 +153,7 @@ def plan(ctx: Context, components: dict[str, list[PlannedPart]]) -> list[Planned
     the component's."""
     built = ctx.built
     placed = Counter(name for _, name, _ in built.instances())
-    found, _ = links(built)
+    found = ctx.links
     out = []
     for name, part in built.parts.items():
         process = built.spec.process(name)

@@ -6,7 +6,7 @@ import math
 
 from build123d import Align, Box, BuildPart, Cylinder, Location, Locations, Mode, Pos, Rot, add
 
-from lib.printing import teardrop
+from lib.printing import chamfer_on_bed, teardrop
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
 FOOT = 1.0  # height of the vertical foot and cap at each end of a blade
@@ -45,5 +45,6 @@ def build(p, i):
         Cylinder(i.impeller_bore / 2, H, align=ON, mode=Mode.SUBTRACT)
         # radial hole for an M3 set screw: drill 2.5 mm, tap M3
         add(teardrop(Location((p["boss_d"] / 2, 0, fh + bh / 2), (0, 90, 0)), 2.5, p["boss_d"] / 2), mode=Mode.SUBTRACT)
+        chamfer_on_bed(impeller, i.impeller_bore / 2)  # pressed onto the shaft from here: its mouth keeps its size
 
     return {"impeller": (impeller.part, {"bore": Location((0, 0, H))})}

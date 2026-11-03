@@ -152,7 +152,7 @@ class Coverage:
         if not instances or built.spec.ground is None:
             return out  # the structure analysis says what is missing
         try:
-            reached = hops(built, links(built)[0])
+            reached = hops(built, ctx.links)
         except StructureError:
             return out
         floating = [a for a in instances if a not in reached]

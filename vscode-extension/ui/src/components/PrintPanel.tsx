@@ -109,11 +109,12 @@ export function plannedAt(report: BuildReport, path: string): PlannedPart | null
 }
 
 /** One way a planned part can lie, as its process judges it: whether it fits and stays put, the support it needs, what
- * lies on the bed, its height. */
+ * lies on the bed, its height, and its fitted round features it would leave out of round. */
 function wayText(w: PrintOrientation): string {
   const fits = w.fits === null ? "" : w.fits ? " · fits" : " · does not fit";
   const stands = w.stands ? "" : " · does not stay put";
-  return `${w.label}: ${w.support_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}${stands}`;
+  const round = w.harmed.length ? ` · ${w.harmed.join(", ")} not round` : "";
+  return `${w.label}: ${w.support_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}${stands}${round}`;
 }
 
 /** The planned parts that do not fit the printer's bed as they lie: what the Print tab's badge counts. */

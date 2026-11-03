@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from hitlcad.analysis.base import Context, result
-from hitlcad.analysis.coverage import Link, links, misplaced, top
+from hitlcad.analysis.coverage import Link, misplaced, top
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Cause, Result
@@ -144,7 +144,7 @@ class Interference:
 
     def run(self, ctx: Context) -> list[Result]:
         leaves = ctx.built.leaves()
-        found, _ = links(ctx.built)
+        found = ctx.links
         ok_pairs = allowed(found)
         astray = misplaced(ctx.built, found)
         out: list[Result] = []

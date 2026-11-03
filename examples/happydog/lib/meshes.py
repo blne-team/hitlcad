@@ -77,12 +77,17 @@ def half_ellipsoid(name, center, radii, rot=None, color="mouth"):
     return mesh_object(name, bm, color)
 
 
-def cylinder(name, matrix, radius, length, color, segments=48):
-    """A round rod along the frame's Z, from Z=0 to Z=length."""
+def cone(name, matrix, r0, r1, length, color, segments=48):
+    """A round solid along the frame's Z, from Z=0 (radius r0) to Z=length (radius r1)."""
     bm = bmesh.new()
-    bmesh.ops.create_cone(bm, cap_ends=True, segments=segments, radius1=radius, radius2=radius, depth=length)
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=segments, radius1=r0, radius2=r1, depth=length)
     bmesh.ops.transform(bm, matrix=matrix @ Matrix.Translation((0, 0, length / 2)), verts=bm.verts)
     return mesh_object(name, bm, color)
+
+
+def cylinder(name, matrix, radius, length, color, segments=48):
+    """A round rod along the frame's Z, from Z=0 to Z=length."""
+    return cone(name, matrix, radius, radius, length, color, segments)
 
 
 def disc(name, center, radius, thick, axis, color):

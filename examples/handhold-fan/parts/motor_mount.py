@@ -4,6 +4,8 @@ face, under the screw heads, on the bed): every wall rises straight from it. Rep
 
 from build123d import Align, Box, BuildPart, Cylinder, Location, Locations, Mode, Pos, Rot
 
+from lib.printing import chamfer_on_bed
+
 from hitlcad.builtin.catalogs.bd_warehouse import ClearanceHole, frames, screw
 
 ON = (Align.CENTER, Align.CENTER, Align.MIN)
@@ -27,6 +29,7 @@ def build(p, i):
                 Box(r1 - r0, p["vane_t"], h, align=ON)
         with Locations(*[Location((x, y, 0), (180, 0, 0)) for x, y in i.motor_bolt_xy]):
             ClearanceHole(motor_screw, fit="Normal", counter_sunk=False)
+        chamfer_on_bed(mount, i.mount_od / 2)  # the ring slides into the duct: its foot keeps its size
 
     return {
         "motor_mount": (

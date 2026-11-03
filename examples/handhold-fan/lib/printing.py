@@ -2,9 +2,10 @@
 
 import math
 
-from build123d import BuildPart, BuildSketch, Circle, Location, Mode, Plane, Polygon, Vector, extrude
+from build123d import BuildPart, BuildSketch, Circle, GeomType, Location, Mode, Plane, Polygon, Vector, chamfer, extrude
 
 TEARDROP_DEG = 40  # the roof's slope from vertical: under the 45° overhang limit
+FIRST_LAYER = 0.3  # mm: a chamfer past the first layer's squash, where a fit meets the bed
 
 
 def teardrop(at, d, depth):
@@ -29,3 +30,13 @@ def insert_hole(at, insert_len, depth, d=4.09, d_tip=3.4):
     frame where the insert's placement goes (as bd_warehouse's InsertHole records it)."""
     hole = teardrop(at, d, insert_len) + teardrop(at * Location((0, 0, -insert_len)), d_tip, depth - insert_len)
     return hole, at * Location((0, 0, -insert_len))
+
+
+def chamfer_on_bed(part, radius, size=FIRST_LAYER):
+    """Chamfer the round edge of `radius` where the part being built (`part`, a BuildPart) stands on the bed (Z = 0):
+    the first layer, pressed onto the bed, spreads past its outline, and a fit there keeps its size past it."""
+    edges = [e for e in part.edges().filter_by(GeomType.CIRCLE)
+             if abs(e.position_at(0).Z) < 1e-6 and abs(e.radius - radius) < 1e-6]  # fmt: skip
+    if not edges:
+        raise ValueError(f"no round edge of radius {radius:g} on the bed")
+    chamfer(edges, length=size)

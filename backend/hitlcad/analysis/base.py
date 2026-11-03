@@ -14,9 +14,9 @@ import importlib.util
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, cached_property
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
@@ -25,6 +25,9 @@ from hitlcad.core import frames as fr
 from hitlcad.core.report import Result, Severity, Status
 from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import Diagnostic, ErrorKind, StructureError
+
+if TYPE_CHECKING:
+    from hitlcad.analysis.coverage import Link
 
 
 @cache
@@ -59,6 +62,14 @@ class Context:
     @property
     def tol(self) -> Any:
         return self.built.tolerances
+
+    @cached_property
+    def links(self) -> list[Link]:
+        """Its mates', relations' and fastener sets' links (`coverage.links`), once for the analyses that read them;
+        the structure analysis reports what does not resolve."""
+        from hitlcad.analysis.coverage import links
+
+        return links(self.built)[0]
 
 
 #: When an analysis runs: cause before effect. Where results share a cause (`Result.cause`), the earliest

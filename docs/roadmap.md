@@ -62,17 +62,20 @@ to say: hitlcad neither slices nor drives the printer.
   spans more than a bridge), its top the teardrop's finding, not the overhangs'; a part larger than the bed
   (`printing.bed`: a split, with a joint, dowels or screws). Supports are recommended where any finding shades
   what prints on nothing.
+- **Printed to work.** A part's ways weigh what fits on it: each round feature with a mate's fit prints as a stack
+  of its sections, whose layers step it out of round tilted from upright (2t·sin θ across), past its fit's band
+  (`manufacturing.fdm_round`: turn it upright, or split the part so it can); upright, where its wall meets the bed
+  at its own size, the first layer spreads into it past the fit's least clearance (`manufacturing.fdm_first_layer`:
+  a chamfer there). A way's merit is then: it fits the printer, it stays put, it keeps its fits round, the support
+  it needs; a way that costs a fit says so in the plan. A chamfer or countersink at a connector's feature leads to
+  it from the frame's origin, so the fix the finding asks for keeps its connector.
 
 Left, in this order:
 
-1. **Printed to work.** A part's ways and settings weigh what it does, from what the build already knows of it,
-   each with its reason: a screw threading into it pulls along its axis, which should not pull its layers apart
-   (and wants more walls round the hole); a hole or shaft with a fit comes out round only with its axis upright,
-   and where it opens on the bed the first layer squashes into it (a chamfer at its bottom edge); a part that
-   flexes (a clip, a snap) bends along its layers, not across them; a face the design shows prints on top or on
-   the bed, not over support. Each is a criterion of a way's merit, judged for every way as the process's are, and
-   a way that costs one says so in the plan, so the human weighs it against the support it saves. Loads in
-   general, declared by the design, stay under "Speeds and loads" (Later).
+1. **Printed for what it does.** What the design declares a part does weighs its ways too: a part that flexes (a
+   clip, a snap, declared with its material's needs, below) bends along its layers, not across them; a face the
+   design shows prints on top or on the bed, not over support. Loads in general, declared by the design, stay
+   under "Speeds and loads" (Later).
 2. **Plates and the slicer's file.** The parts are grouped onto plates by filament and bed, and written (when
    `outputs` names `print`) as `print-plan.md` and a 3MF per plate in which the slicer adapter places each part
    lying as it prints and sets its settings as its own (Bambu Studio's per-object settings), so the human opens it

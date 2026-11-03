@@ -21,6 +21,7 @@ from lib.meshes import (
     Z,
     bake,
     band,
+    cone,
     copy,
     cut,
     cylinder,
@@ -40,6 +41,7 @@ from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
 
 DEEP = 2.8  # how far the band round the neck reaches into it, dog units
+FIRST_LAYER = 0.3  # mm: a chamfer past the first layer's squash, where a fit meets the bed
 PATCH = 0.45  # how far the coloured patches (eye patch, spots, blush) stand off the surface, dog units
 
 
@@ -343,8 +345,12 @@ def build(p, i):
     below = union(below, [peg], "body")
     socket = cylinder("socket_cut", joint @ Matrix.Translation((0, 0, -1)), i.socket_d / 2, i.socket_depth + 1,
                       "fur", 96)  # fmt: skip
-    above = cut(above, socket)
+    # its mouth chamfered 45° past the first layer's squash: the head prints on it, and the peg goes in there
+    mouth = cone("socket_mouth", joint @ Matrix.Translation((0, 0, i.glue_gap / 2 - 1)), i.socket_d / 2 + FIRST_LAYER + 1,
+                 i.socket_d / 2, FIRST_LAYER + 1, "fur", 96)  # fmt: skip
+    above = cut(cut(above, socket), mouth)
     remove(socket)
+    remove(mouth)
     for o, name in ((below, "body"), (above, "head"), (tail, "tail")):
         o.name = o.data.name = name
 

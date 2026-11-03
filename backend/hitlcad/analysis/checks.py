@@ -7,8 +7,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from hitlcad.analysis.base import Context, member_code, member_failed, result, structural
-from hitlcad.core.checks import PrintedProcess, PrintWay, Process, ProcessFinding
+from hitlcad.core import frames as fr
+from hitlcad.core.checks import PrintedProcess, PrintWay, Process, ProcessFinding, RoundInterface
 from hitlcad.core.report import Result
 from hitlcad.kernel.errors import (
     CONNECTOR_COUNT,
@@ -133,29 +136,78 @@ def process_findings(ctx: Context, name: str, process: Process) -> list[ProcessF
 
 
 def print_way(ctx: Context, name: str, process: PrintedProcess) -> PrintWay:
-    """What a printed part's process finds of it lying the way `process.up` says: the way it prints, or any other
-    the best orientation weighs (`analysis.printing.orientations`), judged alike."""
+    """What a printed part's process finds of it lying the way `process.up` says, its round interfaces lying so too:
+    the way it prints, or any other the best orientation weighs (`analysis.printing.orientations`), judged alike."""
+    interfaces = _lying(ctx, name, process)
     return PrintWay.model_validate(
-        _kept(ctx, "print way", name, process, lambda body: process.way(body).model_dump(mode="json"))
+        _kept(
+            ctx,
+            "print way",
+            name,
+            process,
+            lambda body: process.way(body, interfaces).model_dump(mode="json"),
+            [it.model_dump(mode="json") for it in interfaces],
+        )
     )
 
 
-def process_key(ctx: Context, what: str, name: str, process: Process) -> str:
+def print_way_key(ctx: Context, name: str, process: PrintedProcess) -> str:
+    """The key `print_way` keeps a way by."""
+    return process_key(
+        ctx, "print way", name, process, [it.model_dump(mode="json") for it in _lying(ctx, name, process)]
+    )
+
+
+def _lying(ctx: Context, name: str, process: PrintedProcess) -> list[RoundInterface]:
+    """A part's round interfaces where it lies as `process` makes it."""
+    made = process.made()
+    return [it.model_copy(update={"origin": tuple(float(v) for v in fr.transform_points(np.array([it.origin]), made)[0]),
+                                  "axis": tuple(float(v) for v in made[:3, :3] @ np.asarray(it.axis))})
+            for it in round_interfaces(ctx, name)]  # fmt: skip
+
+
+def round_interfaces(ctx: Context, name: str) -> list[RoundInterface]:
+    """A part's round features that another part fits on or in (a mate's fit), in its own frame, each once, with its
+    fit's clearance."""
+    found: dict[str, RoundInterface] = {}
+    for link in ctx.links:
+        fit = getattr(link.source, "fit", None)
+        if fit is None:
+            continue
+        for end in (link.a, link.b):
+            diameter = end.measured.values.get("diameter")
+            if end.owner is not ctx.built or end.part.name != name or end.spec.round is None or not diameter:
+                continue
+            try:
+                clearance = fit.limits(diameter)
+            except ValueError:  # ISO 286 has no such fit at this size: the mate's fit check says so
+                continue
+            frame = end.part.frames[end.connector][end.index]
+            key = f"{end.connector}[{end.index}]"
+            found[key] = RoundInterface(name=key, round=end.spec.round, diameter=diameter, clearance_mm=clearance,
+                                        origin=tuple(float(v) for v in fr.origin(frame)),
+                                        axis=tuple(float(v) for v in fr.z_axis(frame)))  # fmt: skip
+    return [found[k] for k in sorted(found)]
+
+
+def process_key(ctx: Context, what: str, name: str, process: Process, *more: Any) -> str:
     """The key of what a process finds of a part as it is made: all it reads of the part on its own (its mesh, its
-    material, the tolerances and sampling) and the process with its code."""
+    material, the tolerances and sampling), the process with its code, and what else it is given (`more`)."""
     part = ctx.built.parts[name]
     material = ctx.built.materials.get(part.material or "")
     kind = type(process)
     return ctx.cache.key(what, part.digest, material.model_dump(mode="json") if material else part.material,
                          ctx.tol.model_dump(mode="json"), ctx.settings.mesh_tolerance_mm, ctx.settings.wall_samples,
                          ctx.settings.overlap_mm3, f"{kind.__module__}.{kind.__qualname__}", member_code(kind.__module__),
-                         process.model_dump(mode="json"))  # fmt: skip
+                         process.model_dump(mode="json"), *more)  # fmt: skip
 
 
-def _kept(ctx: Context, what: str, name: str, process: Process, compute: Callable[[Body], Any]) -> Any:
+def _kept(ctx: Context, what: str, name: str, process: Process, compute: Callable[[Body], Any], *more: Any) -> Any:
     """What a process finds of a part as it is made, kept (`process_key`): a part no edit touched is not checked
     again."""
-    return ctx.cache.get_or(process_key(ctx, what, name, process), lambda: compute(ctx.bodies.made(name, process)))
+    return ctx.cache.get_or(
+        process_key(ctx, what, name, process, *more), lambda: compute(ctx.bodies.made(name, process))
+    )
 
 
 class Requirements:

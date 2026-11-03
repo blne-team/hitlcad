@@ -14,7 +14,7 @@ from hitlcad.core.checks import PrintFacts, PrintOrientation, ProcessFinding
 from hitlcad.core.project import Filament, Printer
 from hitlcad.kernel.errors import HitlcadError
 
-from .conftest import write_design
+from .conftest import copy_design, edit_json, write_design
 
 pytestmark = pytest.mark.geometry
 
@@ -197,11 +197,39 @@ async def test_a_component_s_printed_parts_join_the_plan_times_its_placements(co
 def test_a_way_up_is_better_by_fitting_then_standing_then_support_never_by_height_alone() -> None:
     def way(**kw: object) -> PrintOrientation:
         fields = {"up": (0, 0, 1), "label": "x", "fits": True, "stands": True, "support_mm2": 0.0, "bed_mm2": 100.0,
-                  "height_mm": 10.0, "footprint_mm": (20.0, 10.0), "turn_deg": 0.0, "problems": [], "current": False} | kw  # fmt: skip
+                  "harmed": [], "height_mm": 10.0, "footprint_mm": (20.0, 10.0), "turn_deg": 0.0, "problems": [],
+                  "current": False} | kw  # fmt: skip
         return PrintOrientation.model_validate(fields)
 
     tilted = way(stands=False, support_mm2=4039, label="tilted")  # the dog's body: less support, on a 7 mm² base
     upright = way(support_mm2=4648, label="upright")
     assert upright.merit < tilted.merit
     assert way(fits=False).merit > way(support_mm2=9000).merit  # off the bed is worse than any support
+    assert way(harmed=["bore[0]"]).merit > way(support_mm2=9000).merit  # an oval fit is worse than any support
+    assert way(harmed=["bore[0]"]).merit < way(stands=False).merit  # but a part that tips over prints nothing
     assert way(support_mm2=12, height_mm=50).merit == way(support_mm2=8, height_mm=5).merit  # within a facet's noise
+
+
+async def test_a_fitted_hole_printed_on_its_side_comes_out_of_round_which_the_ways_weigh_after_standing(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    folder = copy_design("hinge", tmp_path / "hinge")
+    edit_json(folder / "design.json", lambda d: d["mates"][0].update(fit={"clearance": [0.1, 0.3]}))  # 0.2 mm of band
+    state, _ = core.designs.open(folder)
+    revision = await core.builds.build(state.id)
+    base = next(p for p in revision.report.print_plan if p.path == "base")
+    now = next(w for w in base.ways if w.current)
+    # Its knuckle's hole runs along X as modelled: on its side its 0.2 mm layers step it 0.4 mm out of round
+    assert now.harmed == ["hinge[0]"] and "hinge[0] not round" in now.described()
+    stepped = next(r for r in revision.report.results if r.code == "manufacturing.fdm_round" and "base" in r.about)
+    assert (
+        stepped.status == "fail"
+        and "its 0.2 mm layers step it 0.40 mm out of round, its fit lets 0.20" in stepped.detail
+    )
+    # The ways that stand its hole upright tip over: a part that does not stay put prints nothing, so they come after
+    # it, and no way is better; splitting it, or a looser fit, is the design's to do
+    upright = [w for w in base.ways if not w.harmed]
+    assert (
+        upright and all(not w.stands for w in upright) and base.ways[0].current and not any(w.better for w in base.ways)
+    )
+    assert base.ways.index(upright[0]) > base.ways.index(now)

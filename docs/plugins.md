@@ -23,7 +23,7 @@ exactly one of, and whatever makes the results of different plugins comparable.
 | `Check.files()`: design files it reads | a requirement check (silhouette: its picture) | the build spec, which checksums them, so a changed one builds again |
 | `Check.figure(build)`: a PNG of what it measured | a requirement check (silhouette: both outlines on a grid) | `build_design`, which shows it to the agent with a failing result |
 | `Process.allowance("hole" or "shaft")` | a process | fits, fastener clearance |
-| `PrintedProcess.way(body)`: what it finds of the part lying one way (its findings that depend on how it lies, with the faces each shades, `support` or `bed`), and whether it stays put on the bed | a printed process (FDM, resin) | its checks of the way it prints, the ways it could lie weighed alike (`PrintOrientation.merit`), the print view's shading |
+| `PrintedProcess.way(body, interfaces)`: what it finds of the part lying one way, its round features with a mate's fit (`RoundInterface`) lying so too (its findings that depend on how it lies, with the faces each shades, `support` or `bed`), and whether it stays put on the bed | a printed process (FDM, resin) | its checks of the way it prints, the ways it could lie weighed alike (`PrintOrientation.merit`), the print view's shading |
 | `Mate.holds`: what of b's frame stays as assembled in a's | a mate type | the block solver and the check of its every position |
 | `Relation.coordinates(fa0, fb0, fa, fb)`: how far each end moved, against what holds the coupling, written with `frames.heading`, `coordinate` and `wrapped` so a solver compiles it; `Relation.law(ends)`: b's coordinate as a function of a's | a relation type | motion: what a part a relation drives does, and each position of a block |
 

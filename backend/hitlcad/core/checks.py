@@ -162,6 +162,18 @@ class PrintSetting(Model):
 SUPPORT_RESOLUTION_MM2 = 10.0
 
 
+class RoundInterface(Model):
+    """A round feature of a printed part that another part fits on or in (a mate's fit): what must come out round as
+    it prints, within its fit."""
+
+    name: str = Field(description="Its connector and frame: 'bore[0]'")
+    round: Literal["hole", "shaft"]
+    diameter: float
+    origin: tuple[float, float, float] = Field(description="Its frame's origin, where the part lies")
+    axis: tuple[float, float, float] = Field(description="Its frame's Z, where the part lies")
+    clearance_mm: tuple[float, float] = Field(description="Its fit's least and greatest diametral clearance")
+
+
 class PrintWay(Model):
     """What a printed part's process finds of it lying one way up (`PrintedProcess.way`)."""
 
@@ -169,6 +181,8 @@ class PrintWay(Model):
                                            "it shades: 'support' (what prints on nothing but support), 'bed'")  # fmt: skip
     stands: bool = Field(description="It stays put on the bed as it prints, with the brim it is given: a way it does "
                          "not is a way to print it only where no other stands")  # fmt: skip
+    harmed: list[str] = Field(default_factory=list, description="Its round features with a fit that would not come out round within it "
+                              "lying this way")  # fmt: skip
 
 
 class PrintOrientation(Model):
@@ -178,6 +192,9 @@ class PrintOrientation(Model):
     label: str = Field(description="Which way up, as a person reads it: 'as modelled', 'on its +Y face'")
     fits: bool | None = Field(description="On the project's printer; none without one")
     stands: bool = Field(description="It stays put on the bed as it prints (`PrintWay.stands`)")
+    harmed: list[str] = Field(
+        description="Its round features with a fit that would not come out round within it (`PrintWay.harmed`)"
+    )
     support_mm2: float = Field(description="What prints on nothing but support, as its process's checks find it "
                                "(bridged and held edges excluded)")  # fmt: skip
     bed_mm2: float = Field(description="What lies on the bed")
@@ -191,17 +208,19 @@ class PrintOrientation(Model):
     better: bool = Field(default=False, description="Better than the way it prints now (`merit`)")
 
     @property
-    def merit(self) -> tuple[bool, bool, int]:
+    def merit(self) -> tuple[bool, bool, int, int]:
         """What makes one way up better than another, the first that differs deciding: it fits the printer, it stays
-        put on the bed, it needs less support (to `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is
-        listed first, but height alone makes no way better."""
-        return self.fits is False, not self.stands, round(self.support_mm2 / SUPPORT_RESOLUTION_MM2)
+        put on the bed, it keeps more of its fitted round features round, it needs less support (to
+        `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is listed first, but height alone makes no way
+        better."""
+        return self.fits is False, not self.stands, len(self.harmed), round(self.support_mm2 / SUPPORT_RESOLUTION_MM2)
 
     def described(self) -> str:
         """As its plan weighs it."""
         stands = "it stands on the bed" if self.stands else "it does not stay put on the bed"
+        oval = f", {', '.join(self.harmed)} not round" if self.harmed else ""
         return (
-            f"{stands}, {self.support_mm2:.0f} mm² on support, {self.bed_mm2:.0f} mm² on the bed, "
+            f"{stands}{oval}, {self.support_mm2:.0f} mm² on support, {self.bed_mm2:.0f} mm² on the bed, "
             f"{self.height_mm:.1f} mm tall"
         )
 
@@ -231,9 +250,10 @@ class PrintedProcess(Process):
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
 
     @abstractmethod
-    def way(self, body: Body) -> PrintWay:
-        """What it finds of the part lying as `body` does that depends on how it lies: the same judgment for the way
-        it prints and for any other it could, so the ways it could lie are weighed as it is checked."""
+    def way(self, body: Body, interfaces: list[RoundInterface]) -> PrintWay:
+        """What it finds of the part lying as `body` does that depends on how it lies, its round `interfaces` placed
+        so too: the same judgment for the way it prints and for any other it could, so the ways it could lie are
+        weighed as it is checked."""
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         """The part's settings: those the design sets, the rest recommended from what the build knows of it."""

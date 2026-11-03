@@ -44,6 +44,7 @@ from hitlcad.builtin.processes.processes import (
     SheetMetalProcess,
 )
 from hitlcad.core import frames as fr
+from hitlcad.core.checks import RoundInterface
 from hitlcad.core.design import PartSpec
 from hitlcad.core.report import Reads
 from hitlcad.core.structure import Tolerances
@@ -80,9 +81,9 @@ def passed(findings, name: str) -> bool | None:
     return finding(findings, name).passed
 
 
-def way(process, body: Body):
+def way(process, body: Body, interfaces: list[RoundInterface] | None = None):
     """What a printed process finds of a part lying as `body` does (`PrintedProcess.way`)."""
-    return process.way(body).findings
+    return process.way(body, interfaces or []).findings
 
 
 def pocket(radius: float) -> object:
@@ -319,3 +320,32 @@ def test_a_round_hole_on_its_side_is_a_teardrop_finding_not_an_overhang(tmp_path
     turned = Body("turned", [Leaf("turned", part(block - Pos(0, 0, 15) * Cylinder(6, 30), tmp_path, "turned"), None,
                                   side.made())], SETTINGS, TOL)  # type: ignore[arg-type]  # fmt: skip
     assert finding(way(side, turned), "fdm_teardrops").passed is False
+
+
+def test_what_fits_on_a_printed_part_comes_out_round_upright_and_its_edge_on_the_bed_wants_a_chamfer(
+    tmp_path: Path,
+) -> None:
+    fdm = FdmProcess(process="fdm")
+    plate = body(Box(30, 30, 6, align=ON) - Cylinder(4, 20), tmp_path, "plate")  # a Ø8 bore through, upright
+    bore = RoundInterface(name="bore[0]", round="hole", diameter=8.0, origin=(0, 0, 6), axis=(0, 0, 1),
+                          clearance_mm=(0.005, 0.034))  # a close fit: 0.029 mm of band  # fmt: skip
+    upright = fdm.way(plate, [bore])
+    assert not upright.harmed and passed(upright.findings, "fdm_round") is True
+    squashed = finding(upright.findings, "fdm_first_layer")  # its wall meets the bed at its own size
+    assert (
+        squashed.passed is False
+        and "bore[0] (Ø8.0 mm hole) at (0.0, 0.0, 6.0), whose fit leaves 0.01" in squashed.detail
+    )
+    chamfered = body(Box(30, 30, 6, align=ON) - Cylinder(4, 20) - Cone(4.4, 4, 0.4, align=ON), tmp_path, "chamfered")
+    assert passed(way(fdm, chamfered, [bore]), "fdm_first_layer") is True
+    loose = bore.model_copy(update={"clearance_mm": (0.5, 0.9)})  # more room than the first layer spreads into
+    assert passed(way(fdm, plate, [loose]), "fdm_first_layer") is True
+    # On its side its 0.2 mm layers step it 2 × 0.2 = 0.4 mm out of round, past its fit's band
+    side = fdm.way(plate, [bore.model_copy(update={"axis": (0, 1, 0)})])
+    assert side.harmed == ["bore[0]"] and "90° from upright: its 0.2 mm layers step it 0.40 mm" in finding(
+        side.findings, "fdm_round").detail  # fmt: skip
+    # Tilted 5°: 0.4 × sin 5° = 0.035 mm, just past the close fit's band, well within the loose one's
+    tilt = (0, math.sin(math.radians(5)), math.cos(math.radians(5)))
+    assert fdm.way(plate, [bore.model_copy(update={"axis": tilt})]).harmed == ["bore[0]"]
+    assert not fdm.way(plate, [loose.model_copy(update={"axis": tilt})]).harmed
+    assert [f.name for f in fdm.way(plate, []).findings] == ["fdm_teardrops", "fdm_overhangs", "fdm_bed_contact"]
