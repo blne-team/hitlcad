@@ -3899,7 +3899,7 @@ export interface components {
             angle_deg: number | null;
             /**
              * Motion Steps
-             * @description Most positions motion analysis checks per mate before it gives up
+             * @description Most positions motion analysis checks a pair of parts at, each way, before it gives up
              */
             motion_steps: number | null;
         };

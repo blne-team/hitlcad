@@ -46,7 +46,9 @@ class Verification(Model):
     position_mm: float | None = Field(default=None, gt=0, description="Positions agree within this distance")
     angle_deg: float | None = Field(default=None, gt=0, description="Directions agree within this angle")
     motion_steps: int | None = Field(
-        default=None, ge=10, description="Most positions motion analysis checks per mate before it gives up"
+        default=None,
+        ge=10,
+        description="Most positions motion analysis checks a pair of parts at, each way, before it gives up",
     )
 
     def resolve(self, defaults: Tolerances) -> Tolerances:

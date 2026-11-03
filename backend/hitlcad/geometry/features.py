@@ -695,6 +695,11 @@ class _Found:
     share: float
     uncertainty: float = 0.0
 
+    def tilt_allowed(self, tol: Tolerances) -> float:
+        """The tilt its axis may have and still be the frame's: the angle tolerance, or as much as keeps it within the
+        position tolerance of the frame's axis all along its length (a short feature's axis is known no better)."""
+        return max(tol.angle_deg, math.degrees(math.atan2(tol.position_mm, self.length)))
+
 
 def _pick(found: list[_Found], leads: Callable[[float, float | None], bool], inward: bool, tol: Tolerances) -> Measured:
     """The frame's feature among those found: coaxial, round, the one that starts closest past the origin (of those
@@ -702,7 +707,7 @@ def _pick(found: list[_Found], leads: Callable[[float, float | None], bool], inw
     the origin (`leads` with its diameter) starting there too. It starts at the origin, or farther where coaxial
     surfaces of revolution lead to it from the origin (`leads`: a screw head's recess the part's edge cuts short).
     With none, the result names the nearest feature found and what keeps it from being the frame's."""
-    fits = [f for f in found if f.offset <= tol.position_mm and f.tilt <= tol.angle_deg and f.share >= ON_CIRCLE
+    fits = [f for f in found if f.offset <= tol.position_mm and f.tilt <= f.tilt_allowed(tol) and f.share >= ON_CIRCLE
             and f.gap >= -tol.position_mm]  # fmt: skip
     if fits:
         start = [0.0 if f.gap <= tol.position_mm or leads(f.gap, f.diameter) else f.gap for f in fits]
@@ -732,7 +737,7 @@ def _no_round(inward: bool, nearest: _Found | None, tol: Tolerances) -> Measured
     if nearest is not None:
         f, limit = nearest, tol.position_mm
         notes = [f"axis {f.offset:.3f} mm off" + (f" (allowed {limit:g})" if f.offset > limit else ""),
-                 f"{f.tilt:.2f}° tilt" + (f" (allowed {tol.angle_deg:g})" if f.tilt > tol.angle_deg else "")]  # fmt: skip
+                 f"{f.tilt:.2f}° tilt" + (f" (allowed {f.tilt_allowed(tol):.2f})" if f.tilt > f.tilt_allowed(tol) else "")]  # fmt: skip
         if f.share < ON_CIRCLE:
             notes.append(f"its wall goes {360 * f.share:.0f}° round, not a full circle")
         if f.gap > limit:

@@ -443,10 +443,12 @@ contact is placed. Two shortcuts keep it fast without losing that certainty:
   once: what it passes through in a full turn is the solid of revolution of its profile.
 
 A pair that already overlaps where it sits, beyond what a mate allows (a clearance fit modelled at
-its basic size touches, to its facets), is interference's to report: motion leaves it out and says so (`unverified`), as it does for a pair it cannot measure (an open mesh), and for a mate it
+its basic size touches, to its facets), is interference's to report: motion leaves it out and says so (`unverified`), as it does for a pair it cannot measure (an open mesh), and for a pair it
 cannot sweep to the ends in `verification.motion_steps` positions (parts that stay within the
-position tolerance of each other all the way). Each sweep is cached by the meshes, placements and
-motions it depends on. A `clearance` requirement on a pair that moves takes the least gap over the
+position tolerance of each other all the way). Each pair is swept, and cached, on its own: by its
+two meshes and placements and the motions of the two clusters they move with, so an edit leaves
+every pair it does not touch as it was; a mate's sweep is its pairs' together, each way up to the
+first thing any of them finds. A `clearance` requirement on a pair that moves takes the least gap over the
 sweep, and says where.
 
 Rigid mates, fastener sets and rigid components join instances into rigid clusters; the other

@@ -156,7 +156,7 @@ hitlcad keeps everything machine-local in `<data_dir>`:
   the pipeline's: `parts` (each part file's files and outcome, by the inputs it read; `part reads` the read-sets
   each file has had), `components` (each component's build, by its bound spec), `results` (costly analysis
   results: overlaps by the two parts and where one sits from the other, so a subassembly moved whole is not
-  measured again, motion traces and sweeps, each part's process findings and each way it could print, also
+  measured again, motion traces, each pair's sweep by its two parts and their two clusters' motions, each part's process findings and each way it could print, also
   kept decoded in memory up to `cache_memory_mb`), and `scenes` (model files opened in the file viewer). In
   memory, every cache of live objects is a `MemoryLru` (`execution.runtime`, as build workers run it in any
   Python): each part's loaded geometry (`analysis.model.Shapes`: its mesh, solid, B-rep features, metrics and
