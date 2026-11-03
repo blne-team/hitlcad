@@ -38,6 +38,12 @@ class FdmProcess(PrintedProcess):
     max_height_to_base: float = Field(
         default=4.0, gt=0, description="Tallest a part stands, × its base's narrowest width, without a brim"
     )
+    teardrop_from_mm: float = Field(
+        default=8.0,
+        gt=0,
+        description="Round holes lying on their side from this diameter: their tops print as bridged "
+        "arcs that sag into them; a teardrop's 45° point prints without",
+    )
     ignored_overhang_mm2: float = Field(
         default=1.0, ge=0, description="An overhang that prints on nothing over less than this still prints"
     )
@@ -56,6 +62,11 @@ class FdmProcess(PrintedProcess):
         "fdm_overhangs": (
             "An FDM overhang that needs support",
             "Keep overhangs within the angle (a chamfer rather than a fillet underneath, teardrop holes), or print it another way up (`up`).",
+        ),
+        "fdm_teardrops": (
+            "A round hole lying on its side whose top sags as it prints",
+            "Make the hole a teardrop, its top drawn up to a 45° point (the circle with a square turned 45° on its top "
+            "quarter), or turn the part so it prints upright (`up`).",
         ),
         "fdm_bed_contact": (
             "An FDM part without a face to stand on the bed",

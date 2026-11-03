@@ -220,7 +220,7 @@ async def test_the_mcp_tools(core: HitlCad, tmp_path: Path) -> None:
         structure = await call("build_design", path=path, scope="structure")
         assert "every reference resolves" in structure and "placed: base, lid, insert ×4, screw ×4" in structure
         built = await call("build_design", path=path)
-        assert "SUCCEEDED" in built and "no problems; 36 checks pass" in built and "build/" in built
+        assert "SUCCEEDED" in built and "no problems; 38 checks pass" in built and "build/" in built
         scoped = await call("build_design", path=path, scope="lid")
         assert "Scoped to lid:" in scoped
         catalog = await call("search_catalog", query="608 bearing")

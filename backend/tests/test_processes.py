@@ -293,3 +293,29 @@ def test_a_design_s_own_tolerances_reach_its_process_checks(tmp_path: Path) -> N
         built = SimpleNamespace(parts={"leaning": leaning}, tolerances=TOL.model_copy(update={"angle_deg": angle}))
         corners = finding(rules.checks(BuildBodies(built, SETTINGS, None).part("leaning")), "cnc_inside_corners")  # type: ignore[arg-type]
         assert corners.passed is not vertical, (angle, corners.detail)
+
+
+def test_a_round_hole_on_its_side_is_a_teardrop_finding_not_an_overhang(tmp_path: Path) -> None:
+    fdm = FdmProcess(process="fdm")
+    block = Box(30, 20, 30, align=ON)
+    wide = body(block - Pos(0, 0, 15) * Rotation(90, 0, 0) * Cylinder(6, 20), tmp_path, "wide")  # Ø12 along Y
+    found = way(fdm, wide)
+    tear = finding(found, "fdm_teardrops")
+    assert tear.passed is False and "Ø12.0 mm at (0.0, 0.0, 15.0)" in tear.detail and "teardrop" in tear.detail
+    # its top faces down too steeply over 12 × cos 45° = 8.5 mm: it bridges, and sags, needing no support
+    assert not tear.faces and "on support" not in tear.detail
+    assert passed(found, "fdm_overhangs") is True  # its top is the teardrop's, not an overhang
+    widest = body(block - Pos(0, 0, 15) * Rotation(90, 0, 0) * Cylinder(10, 20), tmp_path, "widest")  # Ø20: 14.1 mm
+    tear = finding(way(fdm, widest), "fdm_teardrops")
+    assert "its top spans 14.1 mm, past a 10 mm bridge: on support" in tear.detail
+    # what is shaded as on support: the quarter of its wall that faces down within 45° of straight down
+    assert widest.mesh.area_faces[tear.faces["support"]].sum() == pytest.approx(math.pi * 20 * 20 / 4, rel=0.02)
+    narrow = body(block - Pos(0, 0, 15) * Rotation(90, 0, 0) * Cylinder(2, 20), tmp_path, "narrow")  # Ø4: it bridges
+    assert passed(way(fdm, narrow), "fdm_teardrops") is True and passed(way(fdm, narrow), "fdm_overhangs") is True
+    upright = body(block - Pos(0, 0, 15) * Cylinder(6, 30), tmp_path, "upright")  # Ø12 standing: round as it prints
+    assert passed(way(fdm, upright), "fdm_teardrops") is True
+    # The same part printed on its side: its hole lies on its side as it prints, where the check sees it
+    side = FdmProcess(process="fdm", up=(0, -1, 0))
+    turned = Body("turned", [Leaf("turned", part(block - Pos(0, 0, 15) * Cylinder(6, 30), tmp_path, "turned"), None,
+                                  side.made())], SETTINGS, TOL)  # type: ignore[arg-type]  # fmt: skip
+    assert finding(way(side, turned), "fdm_teardrops").passed is False

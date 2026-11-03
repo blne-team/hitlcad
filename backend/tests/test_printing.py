@@ -104,7 +104,8 @@ async def test_the_human_s_printer_is_kept_in_the_project_and_each_printed_part_
 
 def test_the_process_recommends_from_what_the_build_found_and_keeps_what_the_design_decided() -> None:
     found = PrintFacts(nozzle_mm=None, tightest_fit_mm=0.1, threaded_into=["lid_screws"], findings=[
-        ProcessFinding(name="fdm_overhangs", passed=False, detail="2 overhangs need support; the largest 40 mm²"),
+        ProcessFinding(name="fdm_overhangs", passed=False, detail="2 overhangs need support; the largest 40 mm²",
+                       faces={"support": [3, 4]}),  # what prints on nothing: support holds it
         ProcessFinding(name="fdm_bed_contact", passed=False, detail="20.0 × that tall: stand it on a wider face, or add a brim"),
     ])  # fmt: skip
     got = {s.name: s for s in FdmProcess(process="fdm").recommend(found)}

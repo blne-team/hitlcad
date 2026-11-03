@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -524,7 +524,16 @@ class Body:
         return measure_union(self.bounds, [leaf.part.metrics for leaf in self.leaves])
 
     def holes(self) -> list[Hole]:
-        return [hole for leaf in self.leaves for hole in leaf.part.features.holes()]
+        """Its parts' round holes where its leaves place them."""
+        out = []
+        for leaf in self.leaves:
+            for hole in leaf.part.features.holes():
+                center = fr.transform_points(np.array([hole.center]), leaf.transform)[0]
+                direction = leaf.transform[:3, :3] @ np.asarray(hole.direction)
+                out.append(
+                    replace(hole, center=tuple(float(v) for v in center), direction=tuple(float(v) for v in direction))
+                )
+        return out
 
     @cached_property
     def walls(self) -> Walls:

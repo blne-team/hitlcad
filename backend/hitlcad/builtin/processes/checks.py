@@ -85,9 +85,62 @@ def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
 
 
 def fdm_way(body: Body, rules: FdmProcess) -> PrintWay:
-    """An FDM part lying one way: what of it needs support, and whether its base holds it on the bed."""
+    """An FDM part lying one way: what of it needs support (a round hole on its side by its own finding, the rest
+    by the overhangs'), and whether its base holds it on the bed."""
+    teardrops, tops = _fdm_teardrops(body, rules)
     bed = _fdm_bed(body, rules)
-    return PrintWay(findings=[_fdm_overhangs(body, rules), bed], stands=bed.passed is True)
+    return PrintWay(findings=[teardrops, _fdm_overhangs(body, rules, tops), bed], stands=bed.passed is True)
+
+
+def _fdm_teardrops(body: Body, rules: FdmProcess) -> tuple[ProcessFinding, np.ndarray]:
+    """Round holes lying on their side, from `teardrop_from_mm` across: the top of each prints as an arc bridged
+    over nothing, which sags into the hole. A hole is on its side while its top faces down more steeply than the
+    steepest overhang, so while its axis lies within 90° less that of level. Its top's faces are this finding's,
+    not the overhangs': one cause, one finding. Also: the faces of those tops."""
+    mesh = body.mesh
+    try:
+        holes = body.holes()
+    except Unmeasurable as e:
+        return ProcessFinding(name="fdm_teardrops", passed=None, detail=str(e)), np.empty(0, dtype=int)
+    limit = math.sin(math.radians(rules.max_overhang_deg))
+    lying = [h for h in holes if abs(h.direction[2]) / np.linalg.norm(h.direction) < math.cos(math.radians(
+        rules.max_overhang_deg)) and h.diameter >= rules.teardrop_from_mm]  # fmt: skip
+    if not lying:
+        return ProcessFinding(name="fdm_teardrops", passed=True,
+                              detail=f"no round hole {rules.teardrop_from_mm:g} mm across or more lies on its side"), \
+            np.empty(0, dtype=int)  # fmt: skip
+    centers, normals = mesh.triangles_center, mesh.face_normals
+    tops, unbridged, places = [], [], []
+    for hole in lying:
+        axis = np.asarray(hole.direction) / np.linalg.norm(hole.direction)
+        offset = centers - np.asarray(hole.center)
+        along = offset @ axis
+        radial = offset - np.outer(along, axis)
+        distance = np.linalg.norm(radial, axis=1)
+        # its wall: a facet lies within the mesh's chordal deviation of the surface, the surface within the design's
+        # position tolerance of the B-rep's
+        near = body.settings.mesh_tolerance_mm + body.tolerances.position_mm
+        wall = (np.abs(distance - hole.diameter / 2) <= near) & (np.abs(along) <= hole.depth / 2 + near)
+        facing = np.einsum("ij,ij->i", normals, -radial) > 0  # toward the axis: the hole's own wall
+        top = np.flatnonzero(wall & facing & (normals[:, 2] < -limit))
+        tops.append(top)
+        span = hole.diameter * math.cos(math.radians(rules.max_overhang_deg))  # what of its top faces down too steeply
+        place = f"Ø{hole.diameter:.1f} mm at {fmt(np.asarray(hole.center))}"
+        if span > rules.max_bridge_mm:
+            unbridged.append(top)
+            place += f" (its top spans {span:.1f} mm, past a {rules.max_bridge_mm:g} mm bridge: on support)"
+        places.append(place)
+    faces = np.unique(np.concatenate(tops))
+    support = np.unique(np.concatenate(unbridged)) if unbridged else np.empty(0, dtype=int)
+    return ProcessFinding(name="fdm_teardrops", passed=False,
+                          detail=f"{listed(places, 'round hole')} "
+                                 + ("lies on its side: its top prints as an arc bridged over nothing and sags into it; "
+                                    "make it a teardrop (its top a 45° point), or turn the part so it prints upright"
+                                    if len(places) == 1 else
+                                    "lie on their side: each top prints as an arc bridged over nothing and sags into its "
+                                    "hole; make each a teardrop (its top a 45° point), or turn the part so they print "
+                                    "upright"),
+                          faces={"support": support.tolist()} if len(support) else {}), faces  # fmt: skip
 
 
 def fdm_recommend(rules: FdmProcess, facts: PrintFacts) -> list[PrintSetting]:
@@ -122,12 +175,13 @@ def fdm_recommend(rules: FdmProcess, facts: PrintFacts) -> list[PrintSetting]:
         if screws
         else (15.0, "it carries no load the design declares")
     )
-    overhangs, bed = found.get("fdm_overhangs"), found.get("fdm_bed_contact")
+    held = [f for f in facts.findings if f.passed is False and f.faces.get("support")]  # what prints on nothing
     supports = (
-        (True, f"its overhangs need support ({overhangs.detail.split(';')[0]}), unless it prints another way up")
-        if overhangs and overhangs.passed is False
+        (True, f"{held[0].detail.split(';')[0]}: support holds it, unless it prints another way up")
+        if held
         else (False, "nothing it prints over needs support")
     )
+    bed = found.get("fdm_bed_contact")
     brim = (
         (True, "it stands tall on a narrow base: a brim holds it down")
         if (bed and bed.passed is False and "brim" in bed.detail)
@@ -158,13 +212,14 @@ def _walls(body: Body, name: str, minimum: float, cannot: tuple[float, str] | No
                                  f"({f'{share:.0%}' if share >= 0.01 else 'under 1%'} of the surface)")  # fmt: skip
 
 
-def _fdm_overhangs(body: Body, rules: FdmProcess) -> ProcessFinding:
+def _fdm_overhangs(body: Body, rules: FdmProcess, tops: np.ndarray) -> ProcessFinding:
     """Faces turned down more steeply than the steepest overhang print only on what holds them: a bridge between
-    two supports up to `max_bridge_mm` long (the top of a horizontal hole is one), an edge within a nozzle's
-    width of what is under it, or else support."""
+    two supports up to `max_bridge_mm` long (the top of a narrow hole is one), an edge within a nozzle's width of
+    what is under it, or else support. The tops of round holes on their side (`tops`) are the teardrops'."""
     mesh = body.mesh
     on_bed = _on_bed(body, mesh)
     steep = (mesh.face_normals[:, 2] < -math.sin(math.radians(rules.max_overhang_deg))) & ~on_bed
+    steep[tops] = False
     angle = f"more than {rules.max_overhang_deg:g}° from vertical"
     regions = _regions(mesh, steep)
     if rules.supports:

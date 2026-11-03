@@ -11,11 +11,10 @@ import trimesh
 from scipy.spatial import ConvexHull
 
 from hitlcad.analysis.base import Context, result
-from hitlcad.analysis.checks import print_way, process_key
+from hitlcad.analysis.checks import print_way, process_findings, process_key
 from hitlcad.analysis.coverage import Link, links
-from hitlcad.analysis.model import BuiltDesign
 from hitlcad.core import frames as fr
-from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintOrientation, PrintWay, ProcessFinding
+from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintOrientation, PrintWay
 from hitlcad.core.report import PlannedPart, Result
 from hitlcad.kernel.errors import PRINTING_BED, PRINTING_ORIENTATION
 
@@ -146,7 +145,7 @@ def _area(mesh: trimesh.Trimesh, way: PrintWay, shade: str) -> float:
     return float(mesh.area_faces[sorted({f for x in way.findings for f in x.faces.get(shade, [])})].sum())
 
 
-def plan(ctx: Context, results: list[Result], components: dict[str, list[PlannedPart]]) -> list[PlannedPart]:
+def plan(ctx: Context, components: dict[str, list[PlannedPart]]) -> list[PlannedPart]:
     """A design's print plan: each printed part of its own, with how many the design places, the ways it can lie,
     and its settings as its process gives them (`PrintedProcess.recommend`) from what this build found of it (its
     fits, the screws threading into it, its process findings); then each component's own plan, its counts times
@@ -161,15 +160,16 @@ def plan(ctx: Context, results: list[Result], components: dict[str, list[Planned
             continue
         out.append(PlannedPart(path=name, count=placed[name], material=part.material, process=process.process,
                                ways=orientations(ctx, name, process),
-                               settings=process.recommend(_facts(built, name, found, results))))  # fmt: skip
+                               settings=process.recommend(_facts(ctx, name, process, found))))  # fmt: skip
     for name, parts in components.items():
         out += [p.model_copy(update={"path": f"{name}/{p.path}", "count": p.count * placed[name]}) for p in parts
                 if placed[name]]  # fmt: skip
     return out
 
 
-def _facts(built: BuiltDesign, name: str, found: list[Link], results: list[Result]) -> PrintFacts:
+def _facts(ctx: Context, name: str, process: PrintedProcess, found: list[Link]) -> PrintFacts:
     """What this build knows of a printed part, for its process to recommend its settings by."""
+    built = ctx.built
     fits = []
     for link in found:
         fit = getattr(link.source, "fit", None)
@@ -184,7 +184,5 @@ def _facts(built: BuiltDesign, name: str, found: list[Link], results: list[Resul
         tightest_fit_mm=min(fits) if fits else None,
         threaded_into=sorted({link.source.address for link in found
                               if link.kind == "fastener" and link.role == "into" and link.b.part.name == name}),
-        findings=[ProcessFinding(name=r.code.removeprefix("manufacturing."), detail=r.detail,
-                                 passed=None if r.status == "unverified" else r.status == "pass")
-                  for r in results if r.analysis == "manufacturing" and name in r.about],
+        findings=process_findings(ctx, name, process),
     )  # fmt: skip

@@ -1848,6 +1848,12 @@ export interface components {
              */
             max_height_to_base: number;
             /**
+             * Teardrop From Mm
+             * @description Round holes lying on their side from this diameter: their tops print as bridged arcs that sag into them; a teardrop's 45° point prints without
+             * @default 8
+             */
+            teardrop_from_mm: number;
+            /**
              * Ignored Overhang Mm2
              * @description An overhang that prints on nothing over less than this still prints
              * @default 1

@@ -28,7 +28,7 @@ test("results: problems by cause, pattern copies folded, counted as the agent re
   await expect(problems.nth(0).locator(".problem-checks li")).toHaveCount(8);
 
   // The same count, in the same words, as the agent reads it
-  const tally = "2 problems (12 failing checks), 1 warning; 26 checks pass";
+  const tally = "2 problems (12 failing checks), 1 warning; 28 checks pass";
   expect(revision.report.tally.text).toBe(tally);
   await expect(page.locator(".report .tally")).toHaveText(tally);
   const { overview } = await api<{ overview: string }>("GET", `/api/designs/${id}/structure`);

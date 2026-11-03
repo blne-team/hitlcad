@@ -528,7 +528,7 @@ class BuildPipeline:
         parts = [_part_result(built, p) for p in built.parts.values()]
         ctx = Context(built=built, settings=self.analysis_settings, cache=self.results,
                       bodies=BuildBodies(built, self.analysis_settings, self.results))  # fmt: skip
-        plan = printing.plan(ctx, results, {n: c.print_plan for n, c in components.items()})
+        plan = printing.plan(ctx, {n: c.print_plan for n, c in components.items()})
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
         whole = ctx.bodies.whole()

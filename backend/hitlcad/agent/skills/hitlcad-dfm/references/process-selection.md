@@ -29,7 +29,7 @@ registered properties; it does not certify suitability for every application.
 ## Map advice to current checks
 
 The generated `hitlcad` reference is the installed authority. The built-in processes currently check
-FDM walls/overhangs/bed contact, resin walls/drains, CNC access/corners/pocket depth, sheet thickness/
+FDM walls/overhangs/teardrops/bed contact, resin walls/drains/supports, CNC access/corners/pocket depth, sheet thickness/
 bend radius, and molding draft/undercuts/wall variation. These are bounded geometric screens.
 
 Machine-envelope checks can be expressed as per-part `fits_within` requirements using the actual

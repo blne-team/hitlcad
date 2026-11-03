@@ -113,3 +113,33 @@ test("a click on a part in the print view opens its plan, and printing it a bett
   await expect.poll(() => JSON.parse(fs.readFileSync(path.join(folder, "design.json"), "utf8")).parts.bracket.manufacturing?.up).toBeDefined();
   await expect(item.locator(".plan-ways h4")).toHaveText(/^It prints the best way up\./, { timeout: 60_000 });
 });
+
+const BLOCK = `from build123d import *
+
+
+def build(p, i):
+    on = (Align.CENTER, Align.CENTER, Align.MIN)
+    return {"block": (Box(40, 20, 40, align=on) - Pos(0, 0, 20) * Rotation(90, 0, 0) * Cylinder(10, 20), {})}
+`;
+
+test("a round hole lying on its side is a teardrop finding, shaded where it needs support, in the plan's reasons", async ({ page }) => {
+  const project = path.join(WORK, "block-project");
+  const folder = path.join(project, "designs", "block");
+  const { id } = await api<{ id: string }>("POST", "/api/designs", { path: folder, create: { name: "Block", backend: "build123d" } });
+  fs.writeFileSync(path.join(project, "hitlcad.toml"),
+    '[plugins]\n\n[printer]\nname = "Bambu Lab P2S"\nbuild_volume_mm = [256, 256, 256]\nnozzle_mm = 0.4\nslicer = "bambu-studio"\n');
+  writeDesign(folder, { ground: "block", manufacturing: { process: "fdm" }, parts: { block: { role: "a block with a Ø20 bore across it", file: "parts/block.py", material: "PLA" } } },
+    { "parts/block.py": BLOCK, "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {\"block\": [Pos()]}\n" });
+  await api("POST", `/api/designs/${id}/build`);
+
+  await openPanel(page, { name: "design", id });
+  await viewerReady(page);
+  const side = page.locator(".review");
+  await side.getByRole("tab", { name: "Results" }).click();
+  await expect(side.locator(".report")).toContainText("1 round hole: Ø20.0 mm at (0.0, 0.0, 20.0)");
+  await side.getByRole("tab", { name: "Print" }).click();
+  await viewerReady(page);
+  await side.locator(".plan-row", { hasText: "block" }).click();
+  // Its top spans 14.1 mm, past a bridge: support is recommended for it, and the way it prints is shaded there
+  await expect(side.locator(".plan-settings")).toContainText(/supports recommended: 1 round hole: Ø20\.0 mm .* on support\)/);
+});

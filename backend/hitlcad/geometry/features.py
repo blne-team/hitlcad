@@ -49,8 +49,12 @@ TIP_SHARE = 0.1
 
 @dataclass(frozen=True)
 class Hole:
+    """A complete round hole, through or blind: its size, and where its axis runs (its middle and direction)."""
+
     diameter: float
     depth: float
+    center: tuple[float, float, float]
+    direction: tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -325,7 +329,8 @@ class BrepFeatures(Features):
 
     @cached_property
     def _holes(self) -> list[Hole]:
-        return [Hole(diameter=2 * w.radius, depth=w.extent) for w in self._walls if w.inward and w.full]
+        return [Hole(diameter=2 * w.radius, depth=w.extent, center=tuple(_vec(w.middle)), direction=tuple(_vec(w.axis.direction)))
+                for w in self._walls if w.inward and w.full]  # fmt: skip
 
 
 @dataclass
@@ -338,10 +343,20 @@ class _Wall:
     faces: list[Any]
 
     @cached_property
+    def _along(self) -> tuple[float, float]:
+        """Where it starts and ends along its axis, from the axis's position."""
+        along = [(v.center() - self.axis.position).dot(self.axis.direction) for f in self.faces for v in f.vertices()]
+        return min(along, default=0.0), max(along, default=0.0)
+
+    @property
     def extent(self) -> float:
         """Its length along its axis."""
-        along = [(v.center() - self.axis.position).dot(self.axis.direction) for f in self.faces for v in f.vertices()]
-        return max(along, default=0.0) - min(along, default=0.0)
+        return self._along[1] - self._along[0]
+
+    @property
+    def middle(self) -> Any:
+        """The point of its axis halfway along it."""
+        return self.axis.position + self.axis.direction * (sum(self._along) / 2)
 
     @property
     def full(self) -> bool:

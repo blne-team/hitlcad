@@ -56,28 +56,33 @@ to say: hitlcad neither slices nor drives the printer.
   through each part, what prints on nothing but support (not what is bridged or held at an edge) and what lies on
   the bed, as its process checks found them; pointing at a way in a part's plan shows the part lying that way,
   shaded so, and judged by looking before **Print this way**.
+- **Design for printing.** Findings with their usual fix, which the agent acts on as on any other: a round hole
+  lying on its side from `teardrop_from_mm` across, whose top prints as an arc bridged over nothing and sags
+  (`manufacturing.fdm_teardrops`: a teardrop, or the part turned so it prints upright; on support where its top
+  spans more than a bridge), its top the teardrop's finding, not the overhangs'; a part larger than the bed
+  (`printing.bed`: a split, with a joint, dowels or screws). Supports are recommended where any finding shades
+  what prints on nothing.
 
 Left, in this order:
 
-1. **Design for printing.** Findings with their usual fix, which the agent acts on as on any other: a horizontal
-   hole whose top sags (a teardrop), a bottom edge the first layer squashes into a lip (a chamfer); a part larger
-   than the bed is `printing.bed`, whose fix is a split, with a joint, dowels or screws.
-2. **Printed to work.** A part's ways and settings weigh what it does, from what the build already knows of it,
+1. **Printed to work.** A part's ways and settings weigh what it does, from what the build already knows of it,
    each with its reason: a screw threading into it pulls along its axis, which should not pull its layers apart
-   (and wants more walls round the hole); a hole or shaft with a fit comes out round only with its axis upright; a
-   part that flexes (a clip, a snap) bends along its layers, not across them; a face the design shows prints on top
-   or on the bed, not over support. Each is a criterion of a way's merit, judged for every way as the process's
-   are, and a way that costs one says so in the plan, so the human weighs it against the support it saves. Loads in general, declared by the design, stay under "Speeds and loads" (Later).
-3. **Plates and the slicer's file.** The parts are grouped onto plates by filament and bed, and written (when
+   (and wants more walls round the hole); a hole or shaft with a fit comes out round only with its axis upright,
+   and where it opens on the bed the first layer squashes into it (a chamfer at its bottom edge); a part that
+   flexes (a clip, a snap) bends along its layers, not across them; a face the design shows prints on top or on
+   the bed, not over support. Each is a criterion of a way's merit, judged for every way as the process's are, and
+   a way that costs one says so in the plan, so the human weighs it against the support it saves. Loads in
+   general, declared by the design, stay under "Speeds and loads" (Later).
+2. **Plates and the slicer's file.** The parts are grouped onto plates by filament and bed, and written (when
    `outputs` names `print`) as `print-plan.md` and a 3MF per plate in which the slicer adapter places each part
    lying as it prints and sets its settings as its own (Bambu Studio's per-object settings), so the human opens it
    in the slicer and prints with nothing to turn or adjust. These replace the `3mf` output's file per part. The
    check is the human's: the file opened in Bambu Studio, each part as the plan says.
-4. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
+3. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
    "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
    meet them and checks the one chosen. A material says its service temperature, whether it takes flexing, and its
    price per kilogram.
-5. **The whole product.** The totals across a design (parts, plates, filament by material, its cost) in its
+4. **The whole product.** The totals across a design (parts, plates, filament by material, its cost) in its
    report, filament estimated from volumes, walls and infill and labelled as an estimate, and requirements on them
    (`filament`, `cost`, `plates`), so they become checks the agent designs towards.
 

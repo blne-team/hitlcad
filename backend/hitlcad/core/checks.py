@@ -143,7 +143,9 @@ class PrintFacts(Model):
     tightest_fit_mm: float | None = Field(description="The least diametral clearance of its fits (negative: "
                                           "interference); none without a fit")  # fmt: skip
     threaded_into: list[str] = Field(description="The fastener sets whose screws thread into it")
-    findings: list[ProcessFinding] = Field(description="Its process checks, lying as it prints")
+    findings: list[ProcessFinding] = Field(
+        description="Its process checks, lying as it prints, with the faces each shades"
+    )
 
 
 class PrintSetting(Model):

@@ -11,9 +11,12 @@ construction makes direction relevant to performance. Split a part when it gives
 access or orientation, accounting for the added joint and assembly work. Plan thin sections, underside
 transitions and horizontal openings rather than relying on a universal overhang angle.
 
-Model the part in its manufacturing frame, with a useful bed-contact surface. A chamfer or adjusted
-hole profile can reduce an unsupported underside where function allows it. Keep precise circular
-interfaces circular when the intended mating feature requires that geometry.
+Model the part for the assembly and say which way up it prints (`up` in its `manufacturing`), with a
+useful bed-contact surface that way; the build judges each way it could lie and names a better one. A
+chamfer or adjusted hole profile can reduce an unsupported underside where function allows it: a round
+hole lying on its side sags at its top, which a teardrop (its top a 45° point) prints without. Keep
+precise circular interfaces circular when the intended mating feature requires that geometry, and print
+them upright.
 
 Do not treat slicer infill as equivalent to a modeled wall or structural analysis. Check actual
 piece dimensions against the intended bed, including practical room for brim/support where needed.
