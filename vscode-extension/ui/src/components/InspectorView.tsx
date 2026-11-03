@@ -111,7 +111,8 @@ export const TABS: Tab[] = [
     badge: ({ revision }) => (revision ? unfit(revision.report) : 0),
     render: ({ id, revision, ui, setUi }) => (
       <PrintPanel designId={id} revision={revision} chosen={revision && chosenPart(revision.report, ui.printFocus)}
-        onChoose={(path) => revision && setUi(choosePrinted(ui, revision.id, path))} />
+        onChoose={(path) => revision && setUi(choosePrinted(ui, revision.id, path))}
+        onPoint={(path, up) => setUi({ printWay: revision && up ? { revision: revision.id, path, up } : null })} />
     ),
   },
   { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },

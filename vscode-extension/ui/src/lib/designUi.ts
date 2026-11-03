@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { BuildProgress, RevisionInfo } from "../api/types";
 import { toExtension } from "./host";
 import type { Inspection } from "./inspection";
+import type { PointedWay } from "./shading";
 
 export type InspectorTab = "pins" | "structure" | "parameters" | "changes" | "report" | "print" | "bom" | "brief";
 
@@ -18,6 +19,8 @@ export interface DesignUi {
   /** What the print view frames: the printed part chosen in it or in the Print tab (`instances`: its path in the
    * print plan), whose plan the Print tab shows; "restore" back to all of them. */
   printFocus: Inspection | null;
+  /** A way up the human points at in a part's plan, which the print view shows the part lying; null: as it prints. */
+  printWay: PointedWay | null;
   placing: boolean;
   activePin: string | null;
   tab: InspectorTab;
@@ -40,7 +43,7 @@ export interface MotionAt {
 }
 
 const INITIAL: DesignUi = {
-  revision: null, base: null, compare: false, printFocus: null, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
+  revision: null, base: null, compare: false, printFocus: null, printWay: null, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
 };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;

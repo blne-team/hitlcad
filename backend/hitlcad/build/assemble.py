@@ -19,8 +19,9 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from hitlcad.analysis.base import Context
-from hitlcad.analysis.checks import process_findings
+from hitlcad.analysis.checks import print_way
 from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry
+from hitlcad.analysis.printing import orientations
 from hitlcad.core import frames as fr
 from hitlcad.core.checks import PrintedProcess
 from hitlcad.geometry import cadview
@@ -122,16 +123,13 @@ def printed(built: BuiltDesign, prefix: str = "") -> list[Printed]:
     return out
 
 
-def print_layout(built: BuiltDesign) -> tuple[list[tuple[Printed, fr.Frame]], list[list[float]]]:
-    """Where the print view lays each printed part: lying as it prints (`Process.made`), side by side along X on
-    Z = 0; with the project's printer, each in the middle of a bed of its own, the beds (x0, y0, x1, y1) beside."""
+def print_layout(built: BuiltDesign) -> tuple[list[tuple[Printed, float]], list[list[float]]]:
+    """Where the print view lays each printed part, lying as it prints, side by side along X: the middle of its slot
+    (`lying`); with the project's printer, each slot is a bed of its own, the beds (x0, y0, x1, y1) beside."""
     printer = built.printer
-    placed, beds, x = [], [], 0.0
+    slots, beds, x = [], [], 0.0
     for p in printed(built):
-        made = p.process.made()
-        bounds = np.array(cadview.PartView.header(p.part.view_file.read_bytes())["bounds"])
-        corners = fr.transform_points(np.array(list(itertools.product(*bounds.T))), made)
-        lo, hi = corners.min(axis=0), corners.max(axis=0)
+        lo, hi = _box(p, p.process)
         width = hi[0] - lo[0]
         if printer:  # its bed, and the part in its middle
             bed_x, bed_y = printer.build_volume_mm[:2]
@@ -139,38 +137,64 @@ def print_layout(built: BuiltDesign) -> tuple[list[tuple[Printed, fr.Frame]], li
             middle, width = x + bed_x / 2, max(width, bed_x)
         else:
             middle = x + width / 2
-        placed.append((p, fr.translation((middle - (lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, -lo[2])) @ made))
+        slots.append((p, middle))
         x += width + PRINT_GAP_MM
-    return placed, beds
+    return slots, beds
+
+
+def _box(p: Printed, process: PrintedProcess) -> tuple[np.ndarray, np.ndarray]:
+    """The box round a part lying as `process` makes it, from its view's bounds."""
+    bounds = np.array(cadview.PartView.header(p.part.view_file.read_bytes())["bounds"])
+    corners = fr.transform_points(np.array(list(itertools.product(*bounds.T))), process.made())
+    return corners.min(axis=0), corners.max(axis=0)
+
+
+def lying(p: Printed, process: PrintedProcess, middle: float) -> fr.Frame:
+    """A printed part lying as `process` makes it (any way up), on Z = 0 in the middle of its slot."""
+    lo, hi = _box(p, process)
+    return fr.translation((middle - (lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, -lo[2])) @ process.made()
 
 
 def write_print_scene(built: BuiltDesign, out_dir: Path) -> bool:
     """The print view of a build in `out_dir` (`print_layout`), its beds written beside its parts for the view to draw.
     False, and no file, where nothing is printed."""
-    layout, beds = print_layout(built)
+    slots, beds = print_layout(built)
     scene = cadview.Scene(out_dir)
-    placed = [scene.part(p.part.view_file, f"/print/{p.path}", p.path, at) for p, at in layout]
+    placed = [
+        scene.part(p.part.view_file, f"/print/{p.path}", p.path, lying(p, p.process, middle)) for p, middle in slots
+    ]
     if placed:
         scene.write(cadview.group("/print", "print", placed), cadview.PRINT_SCENE_FILE, beds=beds)
     return bool(placed)
 
 
 def write_print_shading(built: BuiltDesign, out_dir: Path, settings: AnalysisSettings, cache: Cache) -> bool:
-    """What the print view shades of each printed part, where it lays it: the faces its process checks found (each
-    finding's `faces`, read from the checks' cache), as triangles by how they are shaded ('support', 'bed'). False,
-    and no file, where nothing is printed."""
-    layout, _ = print_layout(built)
-    if not layout:
+    """What the print view shades of each printed part, each way it could lie (`analysis.printing.orientations`):
+    the faces its process found of it lying that way (each finding's `faces`, from the cache), as triangles by how
+    they are shaded ('support', 'bed') where the view would lay it so, with the move from where it lies now (by rows,
+    as the motion preview takes it), so the view shows any way the human points at. False, and no file, where
+    nothing is printed."""
+    slots, _ = print_layout(built)
+    if not slots:
         return False
-    shades: dict[str, list[np.ndarray]] = {}
-    for p, at in layout:
+    parts = []
+    for p, middle in slots:
         ctx = Context(built=p.built, settings=settings, bodies=BuildBodies(p.built, settings, cache), cache=cache)
-        mesh = p.part.mesh  # the made body's faces, in the part's own frame: `at` turns it as it prints
-        vertices = fr.transform_points(mesh.vertices, at)
-        for finding in process_findings(ctx, p.name, p.process):
-            for shade, faces in finding.faces.items():
-                shades.setdefault(shade, []).append(vertices[mesh.faces[faces]].reshape(-1))
+        mesh, now = p.part.mesh, lying(p, p.process, middle)
+        ways = []
+        for way in orientations(ctx, p.name, p.process):
+            turned = p.process if way.current else p.process.model_copy(update={"up": way.up})
+            at = lying(p, turned, middle)
+            vertices = fr.transform_points(mesh.vertices, at)  # the made body's faces are the part's own
+            shades: dict[str, list[int]] = {}
+            for finding in print_way(ctx, p.name, turned).findings:
+                for shade, faces in finding.faces.items():
+                    shades.setdefault(shade, []).extend(faces)
+            ways.append({"up": list(way.up), "current": way.current,
+                         "move": np.round((at @ np.linalg.inv(now))[:3], 6).ravel().tolist(),
+                         **{shade: np.round(vertices[mesh.faces[faces]], 2).ravel().tolist() for shade, faces in shades.items()}})  # fmt: skip
+        parts.append({"path": p.path, "ways": ways})
     (out_dir / cadview.PRINT_SHADING_FILE).write_text(
-        json.dumps({shade: np.round(np.concatenate(found), 2).tolist() for shade, found in shades.items()},
-                   separators=(",", ":")), encoding="utf-8")  # fmt: skip
+        json.dumps({"parts": parts}, separators=(",", ":")), encoding="utf-8"
+    )
     return True

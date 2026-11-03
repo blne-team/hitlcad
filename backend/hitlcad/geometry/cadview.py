@@ -46,7 +46,7 @@ IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 SCENE_FILE = "scene.json"
 #: The print view: a build's printed parts, each once, lying as it prints (`build.assemble.write_print_scene`).
 PRINT_SCENE_FILE = "print.json"
-#: What the print view shades on its parts: where they need support, what lies on the bed
+#: What the print view shades on its parts, each way each could lie: where it needs support, what lies on the bed
 #: (`build.assemble.write_print_shading`).
 PRINT_SHADING_FILE = "print-shading.json"
 VIEW_SUFFIX = ".view"

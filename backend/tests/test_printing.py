@@ -71,11 +71,21 @@ async def test_the_human_s_printer_is_kept_in_the_project_and_each_printed_part_
     shades = json.loads(
         (core.designs.store.revision_dir(state.id, revision.id) / shading.path).read_text(encoding="utf-8")
     )
-    assert list(shades) == ["bed"]  # boxes lying flat: nothing prints on nothing
-    bed = np.reshape(shades["bed"], (-1, 3, 3))
-    assert np.allclose(bed[:, :, 2], 0)  # on the bed, as the print view lays them
-    area = np.linalg.norm(np.cross(bed[:, 1] - bed[:, 0], bed[:, 2] - bed[:, 0]), axis=1).sum() / 2
-    assert area == pytest.approx(260 * 260 + 300 * 20, rel=1e-3)  # the plate's underside, the tower's side
+    ways = {part["path"]: part["ways"] for part in shades["parts"]}  # each way each part could lie
+    now = {path: next(w for w in found if w["current"]) for path, found in ways.items()}
+    assert [list(w) for w in now.values()] == [["up", "current", "move", "bed"]] * 2  # flat boxes: nothing on nothing
+    assert now["tower"]["move"] == [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]  # where it lies now: no move
+
+    def area(triangles: list[float]) -> float:
+        corners = np.reshape(triangles, (-1, 3, 3))
+        assert np.allclose(corners[:, :, 2], 0)  # on the bed, where the view lays it
+        return float(
+            np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1).sum() / 2
+        )
+
+    assert area(now["plate"]["bed"] + now["tower"]["bed"]) == pytest.approx(260 * 260 + 300 * 20, rel=1e-3)
+    standing = next(w for w in ways["tower"] if np.allclose(w["up"], (0, 0, 1)))  # as modelled: on its 20 mm end
+    assert area(standing["bed"]) == pytest.approx(20 * 20, rel=1e-3) and standing["move"] != now["tower"]["move"]
     plan = {p.path: p for p in revision.report.print_plan}  # each printed part once, how many, which way, settings
     assert (plan["plate"].count, plan["plate"].material, next(w.label for w in plan["tower"].ways if w.current)) == (
         1,

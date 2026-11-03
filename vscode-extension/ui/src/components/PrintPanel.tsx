@@ -19,8 +19,10 @@ export function choosePrinted(ui: DesignUi, revision: number, path: string | nul
  * Preparing the design for printing: the human's printer (asked for once, kept in the project's hitlcad.toml), then
  * the print plan of the revision on screen, the chosen part's in full.
  */
-export function PrintPanel({ designId, revision, chosen, onChoose }: {
+export function PrintPanel({ designId, revision, chosen, onChoose, onPoint }: {
   designId: string; revision: Revision | null; chosen: PlannedPart | null; onChoose: (path: string | null) => void;
+  /** A way up pointed at in a part's plan (null: none), which the print view shows the part lying. */
+  onPoint: (path: string, up: PrintOrientation["up"] | null) => void;
 }) {
   const [setup, setSetup] = useState<PrinterSetup | null>(null);
   const [editing, setEditing] = useState(false);
@@ -62,7 +64,7 @@ export function PrintPanel({ designId, revision, chosen, onChoose }: {
           <>
             <ShadeKey />
             <button type="button" className="link-button plan-back" onClick={() => onChoose(null)}>‹ All {plan.length} printed parts</button>
-            <PlanItem key={chosen.path} designId={designId} revision={revision} part={chosen} />
+            <PlanItem key={chosen.path} designId={designId} revision={revision} part={chosen} onPoint={(up) => onPoint(chosen.path, up)} />
           </>
         ) : (
           <>
@@ -134,7 +136,9 @@ export function printNames(report: BuildReport): (path: string) => string {
  * recommended or decided by the agent, with the reason; and the ways it can lie, best first, each one click from
  * printing that way (a panel edit of its `up`, no agent turn). A component's parts are its own design's to turn.
  */
-function PlanItem({ designId, revision, part }: { designId: string; revision: Revision; part: PlannedPart }) {
+function PlanItem({ designId, revision, part, onPoint }: {
+  designId: string; revision: Revision; part: PlannedPart; onPoint: (up: PrintOrientation["up"] | null) => void;
+}) {
   const [turning, setTurning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const now = current(part);
@@ -162,7 +166,8 @@ function PlanItem({ designId, revision, part }: { designId: string; revision: Re
           <h4>{part.ways.some((w) => w.better) ? "It could lie better." : "It prints the best way up."} The ways it can lie, best first:</h4>
           <ol>
             {part.ways.map((w, n) => (
-              <li key={w.up.join()} className={w.current ? "way-current" : ""}>
+              <li key={w.up.join()} className={w.current ? "way-current" : ""} tabIndex={0}
+                onMouseEnter={() => onPoint(w.up)} onMouseLeave={() => onPoint(null)} onFocus={() => onPoint(w.up)} onBlur={() => onPoint(null)}>
                 {n === 0 && <b>best </b>}{wayText(w)}
                 {w.current ? <span className="muted"> (as it prints now)</span> : !part.path.includes("/") && (
                   <button type="button" className="button small" disabled={turning} onClick={() => turn(w.up)}>Print this way</button>

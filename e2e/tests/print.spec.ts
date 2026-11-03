@@ -102,6 +102,12 @@ test("a click on a part in the print view opens its plan, and printing it a bett
   const item = side.locator(".plan-item"); // the click chose it: its plan opens beside it
   await expect(item.locator(".plan-ways h4")).toHaveText(/^It could lie better\./);
   await expect(item.locator(".plan-ways li").first()).toContainText(/^best on its .* face: 0 mm² support/);
+  // Pointing at a way shows the part lying so, shaded as its process found it; pointing away, as it prints
+  const best = item.locator(".plan-ways li").first();
+  await best.hover();
+  await expect(page.locator(".viewport-hint")).toContainText(/^Showing bracket on its .* face, as it would print\./);
+  await page.mouse.move(5, 5);
+  await expect(page.locator(".viewport-hint")).toContainText("Each printed part once, lying as it prints.");
   await item.getByRole("button", { name: "Print this way" }).first().click();
   // A panel edit: the part's own manufacturing turned, built again, and now it prints the best way up
   await expect.poll(() => JSON.parse(fs.readFileSync(path.join(folder, "design.json"), "utf8")).parts.bracket.manufacturing?.up).toBeDefined();

@@ -5,6 +5,7 @@ import { useDesign } from "../hooks/useDesign";
 import { useShown } from "../hooks/useRevision";
 import { useSelection } from "../hooks/useSelection";
 import { useScene, useShading } from "../hooks/useScene";
+import { pointedMove, shadingOf } from "../lib/shading";
 import { MOD, useUndo } from "../hooks/useUndo";
 import { type CadMarker, exactShapes } from "../lib/cadView";
 import { rangeAt, shown } from "../lib/motion";
@@ -64,7 +65,15 @@ export function DesignView({ id }: { id: string }) {
     : building?.scene ? { url: fileUrl(id, building.revision, building.scene) } : viewOf(id, revision);
   const { data, error: fetchError } = useScene(current.url, building?.started);
   const ghost = useScene(ui.compare && !printing ? viewOf(id, base).url : null).data;
-  const shading = useShading(printing ? viewOf(id, revision, "print_shading").url : null);
+  const shadingFile = useShading(printing ? viewOf(id, revision, "print_shading").url : null);
+  // A way pointed at in a part's plan: the part shown lying so, shaded as its process found it
+  const pointed = ui.printWay?.revision === revision?.id ? ui.printWay : null;
+  const shading = useMemo(() => shadingFile && shadingOf(shadingFile, pointed), [shadingFile, pointed]);
+  const turned = useMemo(() => shadingFile && pointedMove(shadingFile, pointed), [shadingFile, pointed]);
+  const pointedWay = useMemo(() => {
+    const way = pointed && revision ? plannedAt(revision.report, pointed.path)?.ways.find((w) => w.up.every((v, n) => Math.abs(v - pointed.up[n]!) < 1e-6)) : null;
+    return way && !way.current ? { part: pointed!.path, label: way.label } : null;
+  }, [pointed, revision]);
   const modelError = fetchError ?? (viewError?.url === current.url ? viewError.message : null);
 
   const describe = useCallback(async (picks: Pick[]) => {
@@ -228,7 +237,7 @@ export function DesignView({ id }: { id: string }) {
 
       <div className={`viewport${exploded ? " exploded" : ""}`}>
         {data !== null && !modelError && (
-          <CadCanvas data={data} placing={ui.placing && !building && !printing} markers={printing ? [] : markers} ghost={ghost} shading={printing ? shading : null} motion={building || printing ? null : motion} spread={spread} inspection={printing ? ui.printFocus : building ? null : inspection} onExplode={setExploded} onPick={printing ? onPrintPick : onPick} nameOf={nameOf} onError={(message) => setViewError({ url: current.url, message })}
+          <CadCanvas data={data} placing={ui.placing && !building && !printing} markers={printing ? [] : markers} ghost={ghost} shading={printing ? shading : null} motion={building ? null : printing ? turned : motion} spread={spread} inspection={printing ? ui.printFocus : building ? null : inspection} onExplode={setExploded} onPick={printing ? onPrintPick : onPick} nameOf={nameOf} onError={(message) => setViewError({ url: current.url, message })}
             tools={(activateInspection) => <InspectionControls count={building ? 0 : targets.length} onOpen={() => {
               activateInspection();
               setUi({ placing: false });
@@ -260,7 +269,9 @@ export function DesignView({ id }: { id: string }) {
         )}
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
-        {printing && data !== null && <p className="viewport-hint select-hint">Each printed part once, lying as it prints. Click one for its plan.</p>}
+        {printing && data !== null && <p className="viewport-hint select-hint">{pointedWay
+            ? `Showing ${pointedWay.part} ${pointedWay.label}, as it would print. Point away from it to see it as it prints.`
+            : "Each printed part once, lying as it prints. Click one for its plan."}</p>}
         {!ui.placing && !printing && data !== null && !building && !sel.items.length && (
           <SelectHint>
             {exactShapes(data).size ? "Click a part to select it, and again for the face, edge or vertex under the cursor (Alt-click goes there at once)." : "Click the model to select a point."} Shift-click adds more. Right-drag to pan; scroll to zoom.
