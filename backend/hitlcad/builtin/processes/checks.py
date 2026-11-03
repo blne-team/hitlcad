@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 
 import igl
 import numpy as np
+import shapely
 import trimesh
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, cKDTree
 
 from hitlcad.builtin.processes.processes import (
     CncMillingProcess,
@@ -20,7 +21,7 @@ from hitlcad.builtin.processes.processes import (
     ResinProcess,
     SheetMetalProcess,
 )
-from hitlcad.core.checks import PrintFacts, PrintSetting, ProcessFinding
+from hitlcad.core.checks import PrintFacts, PrintSetting, PrintWay, ProcessFinding
 from hitlcad.geometry.features import Features, InsideCorner
 from hitlcad.geometry.mesh import Probe
 from hitlcad.geometry.walls import fmt, listed
@@ -80,8 +81,13 @@ def _on_bed(body: Body, mesh: trimesh.Trimesh) -> np.ndarray:
 
 
 def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
-    walls = _walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))
-    return [walls, _fdm_overhangs(body, rules), _fdm_bed(body, rules)]
+    return [_walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))]
+
+
+def fdm_way(body: Body, rules: FdmProcess) -> PrintWay:
+    """An FDM part lying one way: what of it needs support, and whether its base holds it on the bed."""
+    bed = _fdm_bed(body, rules)
+    return PrintWay(findings=[_fdm_overhangs(body, rules), bed], stands=bed.passed is True)
 
 
 def fdm_recommend(rules: FdmProcess, facts: PrintFacts) -> list[PrintSetting]:
@@ -156,64 +162,126 @@ def _fdm_overhangs(body: Body, rules: FdmProcess) -> ProcessFinding:
     """Faces turned down more steeply than the steepest overhang print only on what holds them: a bridge between
     two supports up to `max_bridge_mm` long (the top of a horizontal hole is one), an edge within a nozzle's
     width of what is under it, or else support."""
-    mesh, tolerance = body.mesh, body.settings.mesh_tolerance_mm
+    mesh = body.mesh
     on_bed = _on_bed(body, mesh)
     steep = (mesh.face_normals[:, 2] < -math.sin(math.radians(rules.max_overhang_deg))) & ~on_bed
     angle = f"more than {rules.max_overhang_deg:g}° from vertical"
+    regions = _regions(mesh, steep)
     if rules.supports:
         if not steep.any():
             return ProcessFinding(name="fdm_overhangs", passed=True, detail=f"no overhang {angle}")
         return ProcessFinding(name="fdm_overhangs", passed=True,
                               detail=f"{mesh.area_faces[steep].sum():.0f} mm² overhangs {angle} and prints on support, "
-                                     f"{listed([_region(mesh, r) for r in _regions(mesh, steep)], 'region')}")  # fmt: skip
-    unheld = [u for faces in _regions(mesh, steep) if (u := _unheld(mesh, faces, on_bed, rules, tolerance))]
+                                     f"{listed([_region(mesh, r) for r in regions], 'region')}",
+                              faces={"support": np.flatnonzero(steep).tolist()})  # fmt: skip
+    holds = _holds(mesh, regions, on_bed, body.settings.mesh_tolerance_mm)
+    unheld = [
+        (u, faces) for faces, edges in zip(regions, holds, strict=True) if (u := _unheld(mesh, faces, edges, rules))
+    ]
     if not unheld:
         bridged = " (each bridged or held at its edge)" if steep.any() else ""
         return ProcessFinding(name="fdm_overhangs", passed=True, detail=f"no overhang {angle} needs support{bridged}")
     return ProcessFinding(name="fdm_overhangs", passed=False,
-                          detail=f"overhangs {angle} print on nothing, {listed(unheld, 'region')}; chamfer them, "
-                                 "turn the part in its own frame or split it")  # fmt: skip
+                          detail=f"overhangs {angle} print on nothing, {listed([u for u, _ in unheld], 'region')}; "
+                                 "chamfer them, turn the part in its own frame or split it",
+                          faces={"support": sorted(int(f) for _, faces in unheld for f in faces)})  # fmt: skip
 
 
-def _unheld(mesh: trimesh.Trimesh, faces: np.ndarray, on_bed: np.ndarray, rules: FdmProcess, tolerance: float) -> str:
+def _holds(mesh: trimesh.Trimesh, regions: list[np.ndarray], on_bed: np.ndarray, tolerance: float) -> list[np.ndarray]:
+    """Each region's edges that hold it, seen from above ((n, 2, 2) segments): where the surface goes on down past
+    the edge, or onto the bed. One pass over the mesh's edges for all of them."""
+    if not regions:
+        return []
+    region = np.full(len(mesh.faces), -1)
+    for n, faces in enumerate(regions):
+        region[faces] = n
+    sides = region[mesh.face_adjacency]
+    ends = mesh.vertices[mesh.face_adjacency_edges]
+    owners, segments = [], []
+    for inner in (0, 1):  # a region's face on this side of an edge, what is beyond it on the other
+        edge = np.flatnonzero((sides[:, inner] >= 0) & (sides[:, inner] != sides[:, 1 - inner]))
+        outer, beyond = mesh.face_adjacency[edge, 1 - inner], mesh.face_adjacency_unshared[edge, 1 - inner]
+        held = on_bed[outer] | (mesh.vertices[beyond, 2] < ends[edge, :, 2].min(axis=1) - tolerance)
+        owners.append(sides[edge[held], inner])
+        segments.append(ends[edge[held], :, :2])
+    owner, segment = np.concatenate(owners), np.concatenate(segments)
+    order = np.argsort(owner, kind="stable")
+    return np.split(segment[order], np.cumsum(np.bincount(owner, minlength=len(regions)))[:-1])
+
+
+def _unheld(mesh: trimesh.Trimesh, faces: np.ndarray, holds: np.ndarray, rules: FdmProcess) -> str:
     """What of one overhanging region prints on nothing, and where ('' if all of it prints). A point of it is
-    held by its supports (its edges where the surface goes on down, or onto the bed): within a nozzle's width
-    of one, or between two on either side of it no more than `max_bridge_mm` apart. Measured seen from above."""
-    adjacency = mesh.face_adjacency
-    inside = np.isin(adjacency, faces)
-    edge = np.flatnonzero(inside[:, 0] != inside[:, 1])
-    side = inside[edge, 0].astype(int)  # the column of the face outside the region
-    outer, beyond = adjacency[edge, side], mesh.face_adjacency_unshared[edge, side]
-    ends = mesh.vertices[mesh.face_adjacency_edges[edge]]
-    held = on_bed[outer] | (mesh.vertices[beyond, 2] < ends[:, :, 2].min(axis=1) - tolerance)
+    held by its supports (`holds`, its edges where the surface goes on down, or onto the bed): within a nozzle's
+    width of one, or between two on either side of it no more than `max_bridge_mm` apart. Measured seen from above,
+    in exact areas where the answer is known (beyond every support's reach, nothing holds it) and by a nozzle's
+    spacing of samples in the band within reach, so its cost follows the region's edges, not its area."""
     step = rules.nozzle_mm
-    supports = np.concatenate([np.linspace(a, b, int(np.ceil(np.linalg.norm(b - a) / step)) + 1)
-                               for a, b in ends[held]] or [np.empty((0, 3))])[:, :2]  # fmt: skip
-    region = mesh.submesh([faces], append=True)
-    points, _ = trimesh.sample.sample_surface_even(region, int(np.ceil(region.area / step**2)) + 1, seed=0)
-    nearest = np.full(len(points), np.inf)
+    shadow = shapely.union_all(shapely.polygons(mesh.triangles[faces][:, :, :2]))  # the region seen from above
+    surface = float(mesh.area_faces[faces].sum())
+    if not len(holds):
+        if surface <= rules.ignored_overhang_mm2:
+            return ""
+        return f"{surface:.0f} mm² at {fmt(_on(mesh, faces, shadow.centroid.coords[0]))} with nothing under it"
+    # Every support is at least as far as the nearest, so a point bridges only within half a bridge of one
+    reach = max(rules.max_bridge_mm / 2, step)
+    edges = shapely.line_merge(shapely.multilinestrings(holds))  # joined: GEOS buffers a few lines, not each segment
+    near = shadow.intersection(edges.buffer(reach))
+    band = near.difference(edges.buffer(step))  # within a nozzle's width of a support: held
+    supports = np.concatenate([np.linspace(a, b, int(np.ceil(np.linalg.norm(b - a) / step)) + 1) for a, b in holds])
+    tree = cKDTree(supports)
+    rng = np.random.default_rng(0)
+    points = _scatter(band, step, rng)
+    nearest, first = tree.query(points)
     span = np.full(len(points), np.inf)
-    for start in range(0, len(points) if len(supports) else 0, 1024):
-        chunk = slice(start, start + 1024)
-        offsets = supports[None] - points[chunk, None, :2]  # point → support
-        distance = np.linalg.norm(offsets, axis=2)
-        first = np.argmin(distance, axis=1)
-        rows = np.arange(len(first))
-        across = np.einsum("ijk,ik->ij", offsets, offsets[rows, first]) <= 0  # supports on its other side
-        nearest[chunk] = distance[rows, first]
-        span[chunk] = nearest[chunk] + np.where(across, distance, np.inf).min(axis=1)
-    unheld = (nearest > rules.nozzle_mm) & (span > rules.max_bridge_mm)
-    area = region.area * float(np.mean(unheld))
+    if len(points):
+        pairs = cKDTree(points).sparse_distance_matrix(tree, rules.max_bridge_mm, output_type="ndarray")
+        owner, others, reached = pairs["i"], pairs["j"], pairs["v"]
+        offsets = supports[others] - points[owner]
+        across = np.einsum("ij,ij->i", offsets, supports[first[owner]] - points[owner]) <= 0  # on its other side
+        other = np.full(len(points), np.inf)
+        np.minimum.at(other, owner[across], reached[across])
+        span = nearest + other
+    unheld = span > rules.max_bridge_mm
+    shown = (shadow.area - near.area) + band.area * (float(np.mean(unheld)) if len(points) else 0.0)
+    area = surface * shown / shadow.area
     if area <= rules.ignored_overhang_mm2:
         return ""
-    worst = int(np.argmax(np.where(unheld, nearest, -1)))
-    if not len(supports):
-        what = "with nothing under it"
-    elif np.isfinite(span[unheld]).all():
-        what = f"bridging {span[unheld].max():.1f} mm (up to {rules.max_bridge_mm:g} mm prints)"
+    # Where it is furthest from what holds it: among its corners, the band's unheld points and a spread beyond
+    beyond = shadow.difference(near)
+    candidates = np.vstack([shapely.get_coordinates(shadow), points[unheld], _scatter(beyond, reach / 4, rng)])
+    distance, _ = tree.query(candidates)
+    worst = candidates[int(np.argmax(distance))]
+    offsets = supports - worst
+    reached = np.linalg.norm(offsets, axis=1)
+    across = offsets @ offsets[int(np.argmin(reached))] <= 0
+    if across.any():
+        what = f"bridging {reached.min() + reached[across].min():.1f} mm (up to {rules.max_bridge_mm:g} mm prints)"
     else:
-        what = f"reaching {nearest[unheld].max():.1f} mm past what holds it"
-    return f"{area:.0f} mm² at {fmt(points[worst])} {what}"
+        what = f"reaching {reached.min():.1f} mm past what holds it"
+    return f"{area:.0f} mm² at {fmt(_on(mesh, faces, worst))} {what}"
+
+
+def _scatter(area: shapely.Geometry, spacing: float, rng: np.random.Generator) -> np.ndarray:
+    """Points spread at random over an area seen from above, about one to each `spacing`² of it."""
+    if area.is_empty or area.area <= 0:
+        return np.empty((0, 2))
+    triangles = shapely.get_parts(shapely.constrained_delaunay_triangles(area))
+    corners = shapely.get_coordinates(triangles).reshape(len(triangles), 4, 2)[:, :3]
+    a, b = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    sizes = np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]) / 2
+    count = int(np.ceil(area.area / spacing**2))
+    picked = corners[rng.choice(len(corners), count, p=sizes / sizes.sum())]
+    u, v = rng.random((2, count))
+    flip = u + v > 1
+    u[flip], v[flip] = 1 - u[flip], 1 - v[flip]
+    return picked[:, 0] + u[:, None] * (picked[:, 1] - picked[:, 0]) + v[:, None] * (picked[:, 2] - picked[:, 0])
+
+
+def _on(mesh: trimesh.Trimesh, faces: np.ndarray, at: tuple[float, float] | np.ndarray) -> np.ndarray:
+    """A point of a region seen from above, on the region: at the height of its face nearest it."""
+    centers = mesh.triangles_center[faces]
+    nearest = int(np.argmin(np.linalg.norm(centers[:, :2] - np.asarray(at)[:2], axis=1)))
+    return np.array([at[0], at[1], centers[nearest, 2]])
 
 
 def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
@@ -248,7 +316,8 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
             f"over {rules.max_height_to_base:g} × as tall as its base is wide, it may tip or wobble "
             "loose: print it with a brim (brim: true), widen its base or lay it down"
         )
-    return ProcessFinding(name="fdm_bed_contact", passed=not problems, detail="; ".join([detail, *problems]))
+    return ProcessFinding(name="fdm_bed_contact", passed=not problems, detail="; ".join([detail, *problems]),
+                          faces={"bed": np.flatnonzero(contact).tolist()})  # fmt: skip
 
 
 # --------------------------------------------------------------------------- resin
@@ -256,6 +325,18 @@ def _fdm_bed(body: Body, rules: FdmProcess) -> ProcessFinding:
 
 def resin_checks(body: Body, rules: ResinProcess) -> list[ProcessFinding]:
     return [_walls(body, "resin_wall_thickness", rules.min_wall_mm), _resin_drains(body, rules)]
+
+
+def resin_way(body: Body, rules: ResinProcess) -> PrintWay:
+    """A resin part lying one way: it hangs from the plate on supports, which hold whatever faces down more steeply
+    than cures on its own; it stands any way."""
+    mesh = body.mesh
+    steep = mesh.face_normals[:, 2] < -math.sin(math.radians(rules.max_overhang_deg))
+    detail = (f"{mesh.area_faces[steep].sum():.0f} mm² faces down more than {rules.max_overhang_deg:g}° from vertical "
+              "and cures on support" if steep.any() else "nothing faces down steeply enough to need support")  # fmt: skip
+    supports = ProcessFinding(name="resin_supports", passed=True, detail=detail,
+                              faces={"support": np.flatnonzero(steep).tolist()} if steep.any() else {})  # fmt: skip
+    return PrintWay(findings=[supports], stands=True)
 
 
 #: Most grid points resin drains are traced on; a larger part is traced on a coarser grid.

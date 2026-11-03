@@ -15,8 +15,9 @@ export interface DesignUi {
   /** Revision compared against; null means the one before `revision`. */
   base: number | null;
   compare: boolean;
-  /** The main view shows the print view: the printed parts lying as they print, with their plan. */
-  printing: boolean;
+  /** What the print view frames: the printed part chosen in it or in the Print tab (`instances`: its path in the
+   * print plan), whose plan the Print tab shows; "restore" back to all of them. */
+  printFocus: Inspection | null;
   placing: boolean;
   activePin: string | null;
   tab: InspectorTab;
@@ -39,7 +40,7 @@ export interface MotionAt {
 }
 
 const INITIAL: DesignUi = {
-  revision: null, base: null, compare: false, printing: false, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
+  revision: null, base: null, compare: false, printFocus: null, placing: false, activePin: null, tab: "pins", configuration: null, motion: null, inspection: null, crossedSeen: 0,
 };
 
 type Update = (patch: Partial<DesignUi>, reveal?: boolean) => void;

@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from hitlcad.analysis.base import Context, ResultCache, result
+from hitlcad.analysis.base import Context, result
 from hitlcad.analysis.coverage import Link, links, misplaced, top
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Cause, Result
 from hitlcad.core.structure import Tolerances
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import (
     INTERFERENCE_CLEAR,
     INTERFERENCE_EXPECTED,
@@ -91,7 +92,7 @@ def touching(boxes: list[np.ndarray], pad: float) -> list[list[int]]:
     return [sorted(js) for js in near]
 
 
-def overlap(cache: ResultCache, a: Leaf, b: Leaf) -> float:
+def overlap(cache: Cache, a: Leaf, b: Leaf) -> float:
     """Volume (mm³) two leaves share where they sit; cached by their parts and where b sits from a, so a pair that
     moved together (a subassembly placed elsewhere) is not measured again."""
     relative = fr.rigid_inverse(a.transform) @ b.transform

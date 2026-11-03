@@ -23,6 +23,7 @@ exactly one of, and whatever makes the results of different plugins comparable.
 | `Check.files()`: design files it reads | a requirement check (silhouette: its picture) | the build spec, which checksums them, so a changed one builds again |
 | `Check.figure(build)`: a PNG of what it measured | a requirement check (silhouette: both outlines on a grid) | `build_design`, which shows it to the agent with a failing result |
 | `Process.allowance("hole" or "shaft")` | a process | fits, fastener clearance |
+| `PrintedProcess.way(body)`: what it finds of the part lying one way (its findings that depend on how it lies, with the faces each shades, `support` or `bed`), and whether it stays put on the bed | a printed process (FDM, resin) | its checks of the way it prints, the ways it could lie weighed alike (`PrintOrientation.merit`), the print view's shading |
 | `Mate.holds`: what of b's frame stays as assembled in a's | a mate type | the block solver and the check of its every position |
 | `Relation.coordinates(fa0, fb0, fa, fb)`: how far each end moved, against what holds the coupling, written with `frames.heading`, `coordinate` and `wrapped` so a solver compiles it; `Relation.law(ends)`: b's coordinate as a function of a's | a relation type | motion: what a part a relation drives does, and each position of a block |
 
@@ -69,7 +70,9 @@ as it finishes, and the report gives its duration (`BuildReport.durations`).
 
 A process's findings for a part are kept by all a check reads of the part on its own (its mesh, its
 material, the tolerances and sampling, the process's fields) and by the code of the plugin that gives
-the process, so a part no edit touched is not checked again. A process check reads nothing else.
+the process, so a part no edit touched is not checked again. A process check reads nothing else. A printed
+process's `checks` are those that do not depend on which way up the part prints; its `way` is the rest, run for
+the way it prints and for each way the best orientation weighs, and kept the same way.
 
 ### hitlcad's own plugins
 
@@ -94,12 +97,13 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 
 ### What stays core
 
-- **Kernel** (`kernel/`): the plugin registry, diagnostics and their catalog.
+- **Kernel** (`kernel/`): the plugin registry, diagnostics and their catalog, and the cache layer every module and
+  plugin member keeps costly work in (`kernel.cache`; a member reaches it as `ctx.cache`).
 - **The design's skeleton**: `DesignSpec`, `PartSpec`, components, configurations, parameters,
   requirements and fastener sets, with slots the installed members fill; the bases members
   derive from (`Connector`, `Mate`, `Relation`, `Check`, `Process`).
 - **Execution**: the model runtime (`p`, `i`, what code read), the executor and the build workers,
-  the pipeline, the part and result caches.
+  the pipeline.
 - **The measuring toolkit**: features on B-rep and mesh, wall thickness, interference and minimum
   gap, motion sweeps, sections. Plugins call it; none replaces it.
 - **The analyses** above, and **the result contract**: `Result`, `Cause`, problems, the tally, the

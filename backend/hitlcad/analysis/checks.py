@@ -4,8 +4,11 @@ the component's own build."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from hitlcad.analysis.base import Context, member_code, member_failed, result, structural
-from hitlcad.core.checks import Process, ProcessFinding
+from hitlcad.core.checks import PrintedProcess, PrintWay, Process, ProcessFinding
 from hitlcad.core.report import Result
 from hitlcad.kernel.errors import (
     CONNECTOR_COUNT,
@@ -18,6 +21,9 @@ from hitlcad.kernel.errors import (
     StructureError,
     of,
 )
+
+if TYPE_CHECKING:
+    from hitlcad.analysis.model import Body
 
 
 class Parts:
@@ -104,7 +110,7 @@ class Manufacturing:
             if process is None or part.mesh.is_empty:  # an empty part fails as a part
                 continue
             try:
-                findings = _findings(ctx, name, process)
+                findings = process_findings(ctx, name, process)
             except Exception as e:  # the process's own code: its other parts, and the build, go on
                 out.append(member_failed(self.name, process, f"the {process.process} checks of {name}", e, [name]))
                 continue
@@ -114,21 +120,42 @@ class Manufacturing:
         return out
 
 
-def _findings(ctx: Context, name: str, process: Process) -> list[ProcessFinding]:
-    """A part's findings for its process, kept by all a process check reads of the part on its own: its mesh, its
-    material, the tolerances and sampling, and the process with its code. A part no edit touched is not checked
-    again."""
+def process_findings(ctx: Context, name: str, process: Process) -> list[ProcessFinding]:
+    """A part's findings for its process, lying as it is made: its checks, and a printed part's way's (`print_way`).
+    A printed part's checks do not depend on which way up it prints: they see it as modelled, so turning it checks
+    only its way again, and say where in the frame its part file models it in."""
+    own = process.model_copy(update={"up": (0.0, 0.0, 1.0)}) if isinstance(process, PrintedProcess) else process
+    found = _kept(ctx, "process", name, own, lambda body: [f.model_dump(mode="json") for f in own.checks(body)])
+    findings = [ProcessFinding.model_validate(f) for f in found]
+    if isinstance(process, PrintedProcess):
+        findings += print_way(ctx, name, process).findings
+    return findings
+
+
+def print_way(ctx: Context, name: str, process: PrintedProcess) -> PrintWay:
+    """What a printed part's process finds of it lying the way `process.up` says: the way it prints, or any other
+    the best orientation weighs (`analysis.printing.orientations`), judged alike."""
+    return PrintWay.model_validate(
+        _kept(ctx, "print way", name, process, lambda body: process.way(body).model_dump(mode="json"))
+    )
+
+
+def process_key(ctx: Context, what: str, name: str, process: Process) -> str:
+    """The key of what a process finds of a part as it is made: all it reads of the part on its own (its mesh, its
+    material, the tolerances and sampling) and the process with its code."""
     part = ctx.built.parts[name]
     material = ctx.built.materials.get(part.material or "")
     kind = type(process)
-    key = ctx.cache.key("process", part.digest, material.model_dump(mode="json") if material else part.material,
-                        ctx.tol.model_dump(mode="json"), ctx.settings.mesh_tolerance_mm, ctx.settings.wall_samples,
-                        ctx.settings.overlap_mm3, f"{kind.__module__}.{kind.__qualname__}", member_code(kind.__module__),
-                        process.model_dump(mode="json"))  # fmt: skip
-    found = ctx.cache.get_or(
-        key, lambda: [f.model_dump(mode="json") for f in process.checks(ctx.bodies.made(name, process))]
-    )
-    return [ProcessFinding.model_validate(f) for f in found]
+    return ctx.cache.key(what, part.digest, material.model_dump(mode="json") if material else part.material,
+                         ctx.tol.model_dump(mode="json"), ctx.settings.mesh_tolerance_mm, ctx.settings.wall_samples,
+                         ctx.settings.overlap_mm3, f"{kind.__module__}.{kind.__qualname__}", member_code(kind.__module__),
+                         process.model_dump(mode="json"))  # fmt: skip
+
+
+def _kept(ctx: Context, what: str, name: str, process: Process, compute: Callable[[Body], Any]) -> Any:
+    """What a process finds of a part as it is made, kept (`process_key`): a part no edit touched is not checked
+    again."""
+    return ctx.cache.get_or(process_key(ctx, what, name, process), lambda: compute(ctx.bodies.made(name, process)))
 
 
 class Requirements:

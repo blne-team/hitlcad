@@ -22,6 +22,7 @@ from hitlcad.core.report import Reads
 from hitlcad.execution import runtime
 from hitlcad.execution.executor import LocalExecutor, _memory_exceeds
 from hitlcad.execution.runtime import Exports, ModelError, Runtime, plan
+from hitlcad.kernel.cache import CacheDb
 
 from .conftest import write_design
 
@@ -111,7 +112,9 @@ def test_the_part_cache_keys_on_exactly_what_a_file_read(tmp_path: Path) -> None
     def key(declared: dict[str, list[str]] = declared, **change: Any) -> str | None:
         fields = {"fingerprint": "be", "sources": sources, "assets": {}, "values": {"t": 3, "od": 40},
                   "interfaces": {"holes": [1]}, **change}  # fmt: skip
-        return PartCache.key("parts/a.py", declared, Inputs(**fields), reads)
+        return cache.key("parts/a.py", declared, Inputs(**fields), reads)
+
+    cache = PartCache(CacheDb(tmp_path / "cache", 1 << 20))
 
     assert key() == key(values={"t": 3, "od": 99})  # od: not read
     assert key() != key(values={"t": 4, "od": 40})
@@ -245,14 +248,14 @@ class Counting:
 
 def test_a_worker_exports_a_shape_once_while_it_keeps_it(tmp_path: Path) -> None:
     adapter, exports, tolerance = Counting(), Exports(), {"linear": 0.01, "angular": 0.1}
-    exports.budget = 250  # two of the 100-byte files below, not three
+    exports.kept.capacity = 250  # two of the 100-byte files below, not three
     for shape in ("a", "b", "a"):
         exports.export(adapter, shape, "p", tmp_path, tolerance)  # type: ignore[arg-type]
     assert adapter.exported == ["a", "b"]  # the second "a" written from what was kept
     assert (tmp_path / "p.stl").read_text(encoding="utf-8") == "a" * 100
     exports.export(adapter, "a", "q", tmp_path, tolerance)  # type: ignore[arg-type]  # another part's name: its own files
     exports.export(adapter, "b", "p", tmp_path, tolerance)  # type: ignore[arg-type]  # let go for the q's
-    assert adapter.exported == ["a", "b", "a", "b"] and exports.bytes <= exports.budget
+    assert adapter.exported == ["a", "b", "a", "b"] and exports.kept.held <= exports.kept.capacity
 
 
 #: A build worker as the entry scripts are: `runtime.serve` with an adapter of its own modes only.

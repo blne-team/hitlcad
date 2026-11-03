@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from hitlcad.analysis.base import Context, ResultCache, label, result
+from hitlcad.analysis.base import Context, label, result
 from hitlcad.analysis.model import AnalysisSettings, BuiltDesign
 from hitlcad.analysis.motion import path
 from hitlcad.analysis.motion.findings import Contact, Least, Parted
@@ -28,6 +28,7 @@ from hitlcad.core import frames as fr
 from hitlcad.core.laws import Linear
 from hitlcad.core.report import Cause, MotionDrive, MotionPose, MotionRange, MotionStretch, Result
 from hitlcad.core.structure import Mate
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import (
     MOTION_CLEAR,
     MOTION_COLLISION,
@@ -227,7 +228,7 @@ def _span(plan: Plan, m: FreeMotion, traced: Traced) -> tuple[float, float]:
     return float(values.min() - rest + sits), float(values.max() - rest + sits)
 
 
-def least_gaps(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache) -> Iterator[tuple[str, Least]]:
+def least_gaps(built: BuiltDesign, settings: AnalysisSettings, cache: Cache) -> Iterator[tuple[str, Least]]:
     """Each least gap the sweeps found between pairs a clearance requirement names, with the input that brought them
     there."""
     for plan in built.motion_plans:
@@ -236,7 +237,7 @@ def least_gaps(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCach
                 yield plan.link.source.address, least
 
 
-def motions(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache,
+def motions(built: BuiltDesign, settings: AnalysisSettings, cache: Cache,
             instances: set[str]) -> Iterator[tuple[str, dict[str, np.ndarray]]]:  # fmt: skip
     """For each input that moves any of `instances` (leaves), the input and each of those it moves, its motion from
     where it sits at every position (a stack of frames): exact ones a degree (or half a millimetre) apart, traced
@@ -276,7 +277,7 @@ def _stretches(plan: Plan, traced: Traced) -> list[MotionStretch]:
     return out
 
 
-def reported(built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache) -> list[MotionRange]:
+def reported(built: BuiltDesign, settings: AnalysisSettings, cache: Cache) -> list[MotionRange]:
     """The ranges of motion a report carries, as swept, for the panel to move: about fixed axes by samples of their
     laws, or a traced motion's positions (at most `REPORTED`, evenly picked, so each one shown was checked)."""
     out = []

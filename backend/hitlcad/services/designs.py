@@ -12,8 +12,7 @@ files. Building (``builds``), what the human points at (``feedback``) and the ag
 from __future__ import annotations
 
 import asyncio
-import threading
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 from hitlcad.backends.registry import BackendRegistry
@@ -32,6 +31,7 @@ from hitlcad.core.events import (
 )
 from hitlcad.core.report import BuildSpec, BuiltFrom, Earlier, Revision
 from hitlcad.core.types import new_id
+from hitlcad.execution.runtime import MemoryLru
 from hitlcad.kernel.errors import NOT_FOUND_DESIGN, NOT_FOUND_REVISION, REQUEST_INVALID, STORE_UNREADABLE, HitlcadError
 from hitlcad.services.bus import EventBus
 from hitlcad.services.documents import Change, DocumentService
@@ -68,9 +68,9 @@ class DesignService:
         self.first_used: asyncio.Queue[str] = asyncio.Queue()
         self._folders = store.folders()
         self._cache: dict[str, DesignState] = {}
-        self.loaded = loaded  # revisions kept in memory: the panel and the tools read the same few
-        self._revisions: OrderedDict[tuple[str, int], Revision] = OrderedDict()
-        self._lock = threading.Lock()  # revision() runs in worker threads too
+        self._revisions: MemoryLru[tuple[str, int], Revision] = MemoryLru(
+            loaded
+        )  # the panel and tools read the same few
         # each design's edits one at a time: a take-in reads the folder off the event loop, and an edit merged while it
         # did would be undone by what it read
         self._editing: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -110,8 +110,7 @@ class DesignService:
         """A revision in full: what it built from, its spec made again from that, and its report. One that does not
         read sets the design's history aside, as events that do not read do."""
         key = (design_id, revision_id)
-        with self._lock:
-            found = self._revisions.get(key)
+        found = self._revisions.get(key)
         if found is None:
             if self.get(design_id).revision(revision_id) is None:
                 raise NOT_FOUND_REVISION(f"revision {revision_id} not found")
@@ -125,12 +124,7 @@ class DesignService:
             assert found is not None  # its event lists it
             if found.built is not None:
                 found.spec = self._spec(design_id, found.built, found.configuration)
-        with self._lock:
-            self._revisions[key] = found
-            self._revisions.move_to_end(key)
-            while len(self._revisions) > self.loaded:
-                self._revisions.popitem(last=False)
-        return found
+        return self._revisions.put(key, found)
 
     def _spec(self, design_id: str, built: BuiltFrom, configuration: str | None) -> BuildSpec:
         """A revision's build spec, made as it was for its build: of each design's files at the version it read."""
@@ -151,8 +145,7 @@ class DesignService:
     def add_revision(self, design_id: str, revision: Revision) -> Event:
         state = self.get(design_id)
         stored = self.store.add_revision(design_id, revision)
-        with self._lock:
-            self._revisions[(design_id, revision.id)] = revision
+        self._revisions.put((design_id, revision.id), revision)
         state.apply(stored)
         self.bus.publish(design_id, stored)
         return stored

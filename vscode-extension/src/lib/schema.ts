@@ -631,7 +631,7 @@ export interface components {
             media_type: string;
             /**
              * Role
-             * @description view, print_view, part_mesh, part_exchange, objects, log, or the output that wrote it (design.json `outputs`: step, stl, native, preview, an exporter's name)
+             * @description view, print_view, print_shading, part_mesh, part_exchange, objects, log, or the output that wrote it (design.json `outputs`: step, stl, native, preview, an exporter's name)
              */
             role: string;
             /**
@@ -2899,7 +2899,7 @@ export interface components {
         };
         /**
          * PrintOrientation
-         * @description One way a printed part can lie on the bed: a stable pose of it, scored.
+         * @description One way a printed part can lie on the bed (its own, or a stable pose of its hull), as its process judges it.
          */
         PrintOrientation: {
             /**
@@ -2917,10 +2917,20 @@ export interface components {
              */
             label: string;
             /**
-             * Overhang Mm2
-             * @description What prints over nothing, steeper than the process allows: the support it needs, roughly (bridges are not told apart)
+             * Fits
+             * @description On the project's printer; none without one
              */
-            overhang_mm2: number;
+            fits: boolean | null;
+            /**
+             * Stands
+             * @description It stays put on the bed as it prints (`PrintWay.stands`)
+             */
+            stands: boolean;
+            /**
+             * Support Mm2
+             * @description What prints on nothing but support, as its process's checks find it (bridged and held edges excluded)
+             */
+            support_mm2: number;
             /**
              * Bed Mm2
              * @description What lies on the bed
@@ -2929,15 +2939,34 @@ export interface components {
             /** Height Mm */
             height_mm: number;
             /**
-             * Fits
-             * @description On the project's printer; none without one
+             * Footprint Mm
+             * @description Its length and width seen from above: the least rectangle round it
              */
-            fits: boolean | null;
+            footprint_mm: [
+                number,
+                number
+            ];
+            /**
+             * Turn Deg
+             * @description The least turn about Z that fits it on the project's printer's bed; none without a printer, or where none does
+             */
+            turn_deg: number | null;
+            /**
+             * Problems
+             * @description What its process's checks find wrong with it lying this way
+             */
+            problems: string[];
             /**
              * Current
              * @description The way it prints now (`up`)
              */
             current: boolean;
+            /**
+             * Better
+             * @description Better than the way it prints now (`merit`)
+             * @default false
+             */
+            better: boolean;
         };
         /**
          * PrintSetting
@@ -3200,6 +3229,12 @@ export interface components {
              * @default 3.5
              */
             min_drain_mm: number;
+            /**
+             * Max Overhang Deg
+             * @description Steepest overhang, from vertical, that cures without support
+             * @default 45
+             */
+            max_overhang_deg: number;
         };
         /**
          * Result

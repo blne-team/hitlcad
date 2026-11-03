@@ -137,56 +137,14 @@ samples for wall evidence, layer polygons for printing support, B-rep features f
 bends, and a volume-connectivity representation for resin drainage. A single increasingly dense mesh
 is not the best intermediate representation for every process.
 
-## Remaining design work, in priority order
+## Since then
 
-1. **Give adaptive wall sampling an explicit accuracy and coverage policy.** Refinement candidates are
-   currently selected before knife-edge readings are filtered, and the seven-neighbour/third-reading
-   rule depends on sample placement. Separate genuine wall evidence from taper evidence before
-   spending the refinement budget. Evaluate a direct sampler against a corpus of analytic walls,
-   rims, fins, narrow necks and threshold cases, including the cylinder-bank discrepancy. Preserve
-   area weighting for typical wall statistics. Sampled evidence should not imply an exact global
-   minimum.
-2. **Reuse evidence and findings across builds with explicit dependencies.** The current
-   `Body.walls` cache lasts one build, and `Manufacturing.run` does not use `ResultCache`. Cache wall
-   evidence independently of process thresholds; cache findings separately by process settings.
-   Moving a part in an assembly need not invalidate local manufacturing evidence. Keys need the
-   actual geometry and tolerances: mesh content alone is insufficient for checks that read STEP
-   features. Include implementation/plugin versions, and define what external processes may depend
-   on before assuming all plugin checks are geometry-only. This improves repeated builds, not the
-   cold algorithm measured above.
-3. **Profile each process on representative workloads before changing its algorithm.** CNC visibility
-   and molding undercuts still refine the entire surface in `_split`; local pruning does not apply
-   to a query that intentionally covers every region. Area-weighted surface samples with original
-   face identities could avoid that tessellation. FDM's `_unheld` compares each sampled point with
-   every support sample; bounded spatial queries could reduce candidate pairs, but choosing a few
-   nearest neighbours is insufficient to find support on the opposite side. Resin drainage builds
-   a dense bounding-box grid and queries exterior air as well as hollows; its resolution/cost tradeoff
-   needs separate study, potentially using adaptive volume connectivity or a distance transform.
-   These are code-derived opportunities, not measured V8 bottlenecks.
-4. **Benchmark query backends and concurrency after work reduction.** Rays and nearest-point queries
-   now dominate the optimized wall measurement. Measure an alternative backend with the same
-   numerical tests and workloads. Pick one level of parallelism deliberately; nested part workers
-   and native query workers can compete for the same cores.
+The FDM overhang check (`builtin.processes.checks._unheld`) measures each overhanging region seen from above:
+the area beyond every held edge's reach (`max_bridge_mm / 2`) is unheld by definition and measured exactly
+(shapely), and only the band within reach is sampled, a nozzle's spacing apart, against a KD-tree of its
+supports. Its cost follows the region's edges, not its area: on the NAS case, judging every candidate way up
+of every part (637 regions) went from 73.6 s, comparing every point with every support, to 2.4 s.
 
-The existing division between process policy (`Process.checks`) and shared geometry measurement
-(`Body`, `geometry/`) is useful. Keeping this separation of concerns puts work reduction and evidence
-reuse in the measuring layer, while process thresholds remain in plugins. A new hierarchy of
-per-process runners would duplicate responsibilities without addressing the measured cost.
-
-## Reproduce
-
-Use an existing successful build whose sources and `design.json` still match its saved geometry:
-
-```bash
-uv run python scripts/profile_manufacturing.py /path/to/design \
-  --repeat 3 --out /tmp/manufacturing.json
-uv run python scripts/profile_manufacturing.py /path/to/design \
-  --repeat 1 --out /tmp/manufacturing-profile.json --profile /tmp/manufacturing.prof
-python -m pstats /tmp/manufacturing.prof
-```
-
-The script loads the saved model through `load_built`, preloads part geometry, then creates fresh
-measurement bodies for each repetition. It records per-part times, settings, mesh digests, dependency
-versions, wall-point counts and findings. It does not rebuild parts, time exports, or use cached
-manufacturing results. It covers the selected design's own parts, matching one invocation of the
-manufacturing analysis; components can be measured using their own saved build directories.
+Process findings are cached across builds (`analysis.checks.process_key`, in the cache layer `kernel.cache`):
+a printed part's checks that do not depend on which way up it prints see it as modelled, so turning a part
+checks only its way again. Rebuilding the NAS case unchanged, or turned, checks no part again.

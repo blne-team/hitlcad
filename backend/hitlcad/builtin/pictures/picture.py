@@ -9,16 +9,18 @@ the other, where.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import math
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from scipy import ndimage
+
+from hitlcad.execution.runtime import MemoryLru
 
 #: The picture's right and up as (design axis, sign), looking at the design from that side.
 VIEWS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
@@ -66,13 +68,16 @@ class Subject:
 def cut_out(path: Path) -> Subject:
     if not path.is_file():
         raise PictureError(f"there is no picture at {path.name}: save it there, or correct `image`")
-    stat = path.stat()
-    return _cut_out(str(path), stat.st_mtime_ns, stat.st_size)
+    data = path.read_bytes()
+    return CUT_OUT.get_or(hashlib.sha256(data).hexdigest(), lambda: _cut_out(path.name, data))
 
 
-@lru_cache(maxsize=16)
-def _cut_out(path: str, _mtime: int, _size: int) -> Subject:
-    with Image.open(path) as im:
+#: Pictures cut out, by their content: a requirement checked again, or another's of the same picture, cuts out none.
+CUT_OUT: MemoryLru[str, Subject] = MemoryLru(16)
+
+
+def _cut_out(name: str, data: bytes) -> Subject:
+    with Image.open(io.BytesIO(data)) as im:
         im = ImageOps.exif_transpose(im).convert("RGBA")
     im.thumbnail((WORKING_SIZE, WORKING_SIZE))
     rgba = np.asarray(im)
@@ -82,7 +87,7 @@ def _cut_out(path: str, _mtime: int, _size: int) -> Subject:
     mask = ~cut if 0.01 < cut.mean() < 0.99 else _separate(rgba[..., :3])
     mask = _clean(mask)
     if not mask.any():
-        raise PictureError(f"found no subject in {Path(path).name}: give a picture of it on a plain background, or "
+        raise PictureError(f"found no subject in {name}: give a picture of it on a plain background, or "
                            "cut out (a PNG with a transparent background)")  # fmt: skip
     return Subject(pixels, mask)
 

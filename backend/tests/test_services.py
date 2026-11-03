@@ -197,7 +197,7 @@ async def test_revisions_compare_and_designs_using_a_design_rebuild(core: HitlCa
     assert "Parts rebuilt in 2: base, lid" in text
 
     built = await core.builds.build(shelf.id)  # its spec made again holds the hinge's files as they were
-    core.designs._revisions.clear()
+    core.designs._revisions.pop((shelf.id, built.id))  # read back from the store
     again = core.designs.revision(shelf.id, built.id)
     assert again.built is not None and {at.design for at in again.built.files.values()} == {shelf.id, hinge.id}
     assert again.spec is not None and built.spec is not None and again.spec.key == built.spec.key
@@ -693,7 +693,7 @@ async def test_a_revision_keeps_what_it_built_from_and_only_the_builds_something
     assert "spec" not in stored and stored["built"]["files"] == {
         str(folder.resolve()): {"design": state.id, "version": 1}
     }
-    core.designs._revisions.clear()  # read back from the store
+    core.designs._revisions.pop((state.id, first.id))  # read back from the store
     again = core.designs.revision(state.id, first.id)
     assert again.spec is not None and again.spec.key == first.spec.key
     files = core.designs.store.revision_dir(state.id, first.id)

@@ -18,7 +18,6 @@ import itertools
 import json
 import shutil
 import struct
-import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from build123d import Location, Shape
 
     from hitlcad.geometry.features import Features
+    from hitlcad.kernel.cache import Cache
 
 VIEWABLE = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".step", ".stp"}
 BREP = {".step", ".stp"}
@@ -46,6 +46,9 @@ IDENTITY = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 SCENE_FILE = "scene.json"
 #: The print view: a build's printed parts, each once, lying as it prints (`build.assemble.write_print_scene`).
 PRINT_SCENE_FILE = "print.json"
+#: What the print view shades on its parts: where they need support, what lies on the bed
+#: (`build.assemble.write_print_shading`).
+PRINT_SHADING_FILE = "print-shading.json"
 VIEW_SUFFIX = ".view"
 
 
@@ -456,23 +459,19 @@ def write_scene(source: Path, root: Path, tolerance: float, angular_tolerance: f
     scene.write(group(f"/{source.stem}", source.stem, placed))
 
 
-def cached_scene(source: Path, cache_dir: Path, tolerance: float, angular_tolerance: float) -> str:
-    """The key of a loose model file's scene, a directory of `cache_dir` holding `scene.json` and its parts' views,
-    cached by the file's content and how finely it is meshed. Each request writes its own, and the first to finish
-    is kept: a scene being read is never replaced."""
-    key = hashlib.sha256(source.read_bytes() + f"{tolerance:g} {angular_tolerance:g}".encode()).hexdigest()[:24]
-    root = cache_dir / key
-    if not (root / SCENE_FILE).is_file():
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=f".{key}.", dir=cache_dir))
-        try:
-            write_scene(source, staging, tolerance, angular_tolerance)
-            staging.rename(root)
-        except OSError:
-            if not (root / SCENE_FILE).is_file():  # not another request's, finished first
-                raise
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+def cached_scene(source: Path, cache: Cache, tolerance: float, angular_tolerance: float) -> str:
+    """The key of a loose model file's scene, an entry of `cache` (`scene.json` and its parts' views), by the file's
+    content and how finely it is meshed."""
+    key = cache.key(hashlib.sha256(source.read_bytes()).hexdigest(), tolerance, angular_tolerance)
+    if cache.files(key):
+        return key
+    staging = cache.staging(key)
+    try:
+        write_scene(source, staging, tolerance, angular_tolerance)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    cache.commit(key, staging)
     return key
 
 

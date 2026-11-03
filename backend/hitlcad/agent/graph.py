@@ -206,8 +206,8 @@ class DesignGraph:
         for p in plan:
             now, best = next(w for w in p.ways if w.current), p.ways[0]
             fits = "" if now.fits is None else ", fits the bed" if now.fits else ", does not fit the bed"
-            better = "" if best.current else (f"; best {best.label} (`up` {list(best.up)}): {best.overhang_mm2:.0f} mm² "
-                                              f"of support, against {now.overhang_mm2:.0f}")  # fmt: skip
+            better = ("" if not best.better else
+                      f"; better {best.label} (`up` {list(best.up)}): {best.described()}; as it prints now: {now.described()}")  # fmt: skip
             lines.append(
                 f"  {p.path} ×{p.count}: {p.material or 'no material'}, {p.process}, {now.label}{fits}{better}"
             )

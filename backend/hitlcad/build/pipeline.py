@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import shutil
 import time
@@ -32,7 +31,7 @@ import numpy as np
 
 from hitlcad import materials
 from hitlcad.analysis import motion, printing
-from hitlcad.analysis.base import Analysis, Context, ResultCache, analysis_code, reported, result
+from hitlcad.analysis.base import Analysis, Context, analysis_code, reported, result
 from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PartGeometry, Shapes
 from hitlcad.backends.base import BuiltPart, FileOutcome, PlanOutcome
 from hitlcad.backends.registry import BackendRegistry
@@ -59,6 +58,7 @@ from hitlcad.core.types import Value
 from hitlcad.exporters import Exporter
 from hitlcad.geometry import cadview
 from hitlcad.kernel import plugins
+from hitlcad.kernel.cache import CacheDb
 from hitlcad.kernel.errors import (
     BACKEND_UNAVAILABLE,
     BUILD_BINDING,
@@ -80,7 +80,6 @@ from hitlcad.render.base import NullRenderer, Renderer
 
 MESH_FILE = "mesh.stl"
 STEP_FILE = "model.step"
-REPORT_FILE = "report.json"
 SOURCES = "src"
 
 logger = logging.getLogger(__name__)
@@ -205,10 +204,15 @@ class BuildPipeline:
         #: Every output design.json may name, by name: its title (the panel's label for its files) and summary.
         self.outputs = {**{n: (e.title, e.summary) for n, e in exporters.items()}, **OUTPUTS}
         self.renderer: Renderer = renderer or NullRenderer()
-        self.parts_cache = PartCache(settings.cache_dir / "parts")
+        self.caches = CacheDb(settings.cache_dir, settings.cache_mb << 20)
+        self.parts_cache = PartCache(self.caches)
         self.shapes = Shapes(settings.loaded_parts)
-        self.results_cache = ResultCache(settings.cache_dir / "results")
-        self.components_dir = settings.cache_dir / "components"
+        #: Costly analysis results, by what each depends on and the analyses' code, read through memory
+        self.results = self.caches.cache("results", analysis_code(), settings.cache_memory_mb << 20)
+        #: Each component's build (its report and files), by its bound spec, backends and materials
+        self.components = self.caches.cache("components", analysis_code())
+        #: Model files opened in the panel's file viewer, as scenes (`geometry.cadview.cached_scene`)
+        self.scenes = self.caches.cache("scenes")
         self._component_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.analysis_settings = AnalysisSettings(overlap_mm3=settings.overlap_mm3,
                                                   mesh_tolerance_mm=settings.mesh_tolerance_mm,
@@ -269,6 +273,8 @@ class BuildPipeline:
             ticket.check()
             progress.doing("writing outputs")
             with clock.step("outputs"):
+                await asyncio.to_thread(assemble.write_print_shading, built, out_dir, self.analysis_settings,
+                                        self.results)  # fmt: skip
                 written, unavailable = await self.export(spec.design.outputs, built, out_dir, report_fields, ticket)
             report_fields["artifacts"] = self._files(built, out_dir) + written
             report_fields["results"] += unavailable
@@ -287,6 +293,7 @@ class BuildPipeline:
         (out_dir / "build.log").write_text("\n".join(log), encoding="utf-8")
         await asyncio.to_thread(assemble.write_scene, built, out_dir)
         await asyncio.to_thread(assemble.write_print_scene, built, out_dir)
+        await asyncio.to_thread(assemble.write_print_shading, built, out_dir, self.analysis_settings, self.results)
         await self.export(spec.design.outputs, built, out_dir, dict(report), Ticket())
 
     async def check_structure(
@@ -435,24 +442,20 @@ class BuildPipeline:
         # backends, the materials it sees and the analyses that judged it.
         backends = sorted({child.design.part_backend(p) for p in child.design.parts} | {child.design.backend})
         registry = {n: m.model_dump() for n, m in materials.for_design(child_folder, child.project.plugins).items()}
-        key = json.dumps([bound.key, [self._backend(b).fingerprint(child.project.plugins) for b in backends], registry, analysis_code()],
-                         sort_keys=True)  # fmt: skip
-        target = self.components_dir / hashlib.sha256(key.encode()).hexdigest()
-        report_file = target / REPORT_FILE
-        async with self._component_locks[target.name]:  # two components may be the same design bound alike
-            if (
-                report_file.is_file()
-                and (cached := BuildReport.model_validate_json(report_file.read_text(encoding="utf-8"))).status
-                == "succeeded"
-            ):
-                report = cached
+        key = self.components.key(bound.key, [self._backend(b).fingerprint(child.project.plugins) for b in backends],
+                                  registry)  # fmt: skip
+        async with self._component_locks[key]:  # two components may be the same design bound alike
+            if found := self.components.files(key):
+                target, report = found[0], BuildReport.model_validate(found[1])
             else:
-                report, _ = await self._build(bound, child_folder, target, ticket, _Quiet(), outputs=False)
-                report_file.write_text(report.model_dump_json(), encoding="utf-8")
-        if report.status != "succeeded":
-            lead = report.lead()
-            why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
-            raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
+                staging = self.components.staging(key)
+                report, _ = await self._build(bound, child_folder, staging, ticket, _Quiet(), outputs=False)
+                if report.status != "succeeded":  # not kept: it builds again, and says why again
+                    shutil.rmtree(staging, ignore_errors=True)
+                    lead = report.lead()
+                    why = f": {lead.code} {lead.subject}: {lead.detail}" if lead else ""
+                    raise BUILD_COMPONENT(f"component {name} ({use.design}) did not build{why}", Location(address=name))
+                target = self.components.commit(key, staging, report.model_dump(mode="json"))
         shutil.copytree(target, out_dir / "components" / name, copy_function=link)
         return report, load_built(report, bound, child_folder, out_dir / "components" / name, self.shapes)
 
@@ -470,8 +473,8 @@ class BuildPipeline:
                                                    assets=spec.assets, values=values, interfaces=interfaces))  # fmt: skip
             hit = self.parts_cache.lookup(file, declared[file], inputs[backend.name])
             if hit:
-                key, cached = hit
-                self.parts_cache.restore(key, cached, out_dir)
+                kept, cached = hit
+                self.parts_cache.restore(kept, cached, out_dir)
                 return cached.model_copy(update={"cached": True}), ""
             work = out_dir / "work" / f"part-{n}"
             outcome, printed = await backend.build_file(
@@ -503,8 +506,8 @@ class BuildPipeline:
     def _analyse(self, built: BuiltDesign, active: Mapping[str, str], watched: Mapping[str, int], ticket: Ticket,
                  progress: Progress, clock: _Clock) -> list[Result]:  # fmt: skip
         """The analyses of hitlcad and of the design's plugins, in order."""
-        ctx = Context(built=built, settings=self.analysis_settings, cache=self.results_cache, watched=watched,
-                      bodies=BuildBodies(built, self.analysis_settings, self.results_cache))  # fmt: skip
+        ctx = Context(built=built, settings=self.analysis_settings, cache=self.results, watched=watched,
+                      bodies=BuildBodies(built, self.analysis_settings, self.results))  # fmt: skip
         found = plugins.registry()
         analyses = [a for a in self.analyses if found.is_active(a, active)]
         out: list[Result] = []
@@ -523,11 +526,13 @@ class BuildPipeline:
         """The parts, instances, mass, bill of materials and print plan (from what the analyses found, its components'
         folded in) of a built design, for its report."""
         parts = [_part_result(built, p) for p in built.parts.values()]
-        plan = printing.plan(built, results, self.results_cache, {n: c.print_plan for n, c in components.items()})
+        ctx = Context(built=built, settings=self.analysis_settings, cache=self.results,
+                      bodies=BuildBodies(built, self.analysis_settings, self.results))  # fmt: skip
+        plan = printing.plan(ctx, results, {n: c.print_plan for n, c in components.items()})
         instances = [InstanceInfo(path=a, part=n if n in built.parts else None, component=n if n in built.components else None,
                                   transform=fr.as_matrix(t)) for a, n, t in built.instances()]  # fmt: skip
-        whole = BuildBodies(built, self.analysis_settings, self.results_cache).whole()
-        return {"motions": motion.reported(built, self.analysis_settings, self.results_cache), "parts": parts,
+        whole = ctx.bodies.whole()
+        return {"motions": motion.reported(built, self.analysis_settings, self.results), "parts": parts,
                 "instances": instances,
                 "metrics": whole.metrics if whole.leaves else None, "mass": _mass(built), "bom": bom(built),
                 "print_plan": plan}  # fmt: skip
@@ -609,6 +614,8 @@ class BuildPipeline:
             )
         if (out_dir / cadview.PRINT_SCENE_FILE).is_file():
             artifacts.append(_artifact(out_dir, cadview.PRINT_SCENE_FILE, "application/json", "print_view"))
+        if (out_dir / cadview.PRINT_SHADING_FILE).is_file():
+            artifacts.append(_artifact(out_dir, cadview.PRINT_SHADING_FILE, "application/json", "print_shading"))
         return [*artifacts, _artifact(out_dir, cadview.SCENE_FILE, "application/json", "view")]
 
 

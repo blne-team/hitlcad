@@ -34,7 +34,10 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol
+from typing import Any, Generic, Protocol, TypeVar
+
+K = TypeVar("K")
+V = TypeVar("V")
 
 INTERFACES = "interfaces.py"
 ASSEMBLY = "assembly.py"
@@ -322,33 +325,73 @@ class Adapter(Protocol):
         `out`), with `valid` where the worker checks shapes."""
 
 
+class MemoryLru(Generic[K, V]):
+    """Values in this process by key, the least recently used let go first once they measure more than `capacity`
+    (each `size`: one by default, so the capacity is a count). Safe across threads."""
+
+    def __init__(self, capacity: int, size: Callable[[V], int] = lambda _: 1) -> None:
+        self.capacity = capacity
+        self.size = size
+        self.held = 0
+        self._kept: OrderedDict[K, tuple[V, int]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: K) -> V | None:
+        with self._lock:
+            found = self._kept.get(key)
+            if found is None:
+                return None
+            self._kept.move_to_end(key)
+            return found[0]
+
+    def put(self, key: K, value: V) -> V:
+        size = self.size(value)
+        with self._lock:
+            if (old := self._kept.pop(key, None)) is not None:
+                self.held -= old[1]
+            if size <= self.capacity:
+                self._kept[key] = value, size
+                self.held += size
+            while self.held > self.capacity:
+                _, (_, gone) = self._kept.popitem(last=False)
+                self.held -= gone
+        return value
+
+    def get_or(self, key: K, make: Callable[[], V]) -> V:
+        """Its value, made and kept when there is none (two threads asking at once may both make it)."""
+        found = self.get(key)
+        return found if found is not None else self.put(key, make())
+
+    def pop(self, key: K) -> None:
+        with self._lock:
+            if (old := self._kept.pop(key, None)) is not None:
+                self.held -= old[1]
+
+    def __len__(self) -> int:
+        return len(self._kept)
+
+
 class Exports:
-    """What a worker exported, by the shape's digest, the part's name and the mesh tolerances: the files' bytes,
-    the least recently used let go first once they hold more than `budget` bytes."""
+    """What a worker exported, by the shape's digest, the part's name and the mesh tolerances: the files' bytes, up
+    to the job's `cache_mb` (`capacity`, in bytes)."""
 
     def __init__(self) -> None:
-        self.budget = 0
-        self.bytes = 0
-        self._kept: OrderedDict[str, tuple[dict[str, Any], dict[str, bytes]]] = OrderedDict()
+        self.kept: MemoryLru[str, tuple[dict[str, Any], dict[str, bytes]]] = MemoryLru(
+            0, size=lambda kept: sum(len(data) for data in kept[1].values())
+        )
 
     def export(self, adapter: Adapter, shape: Any, name: str, out: Path, tolerance: dict[str, float]) -> dict[str, Any]:
         digest = adapter.digest(shape)
         key = digest and hashlib.sha256(json.dumps([digest, name, tolerance], sort_keys=True).encode()).hexdigest()
-        if key in self._kept:
-            self._kept.move_to_end(key)
-            fields, files = self._kept[key]
+        if key and (found := self.kept.get(key)):
+            fields, files = found
             for rel, data in files.items():
                 (out / rel).parent.mkdir(parents=True, exist_ok=True)
                 (out / rel).write_bytes(data)
             return fields
         fields = adapter.export(shape, name, out, tolerance)
         if key:
-            files = {fields[f]: (out / fields[f]).read_bytes() for f in FILES if fields.get(f)}
-            self._kept[key] = fields, files
-            self.bytes += sum(len(data) for data in files.values())
-            while self.bytes > self.budget and self._kept:
-                _, (_, gone) = self._kept.popitem(last=False)
-                self.bytes -= sum(len(data) for data in gone.values())
+            self.kept.put(key, (fields, {fields[f]: (out / fields[f]).read_bytes() for f in FILES if fields.get(f)}))
         return fields
 
 
@@ -387,7 +430,7 @@ def _job(job_file: Path, adapter: Adapter, exports: Exports) -> None:
     job = json.loads(job_file.read_text(encoding="utf-8"))
     sys.path[:0] = [p for p in job.get("paths", []) if p not in sys.path]  # the plugins' model packages
     job["out"] = str(out)
-    exports.budget = job.get("cache_mb", 0) << 20
+    exports.kept.capacity = job.get("cache_mb", 0) << 20
     result: dict[str, Any] = {"ok": False}
     rt = None
     try:

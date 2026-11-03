@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from hitlcad.app import HitlCad
 from hitlcad.builtin.processes.processes import FdmProcess
-from hitlcad.core.checks import PrintFacts, ProcessFinding
+from hitlcad.core.checks import PrintFacts, PrintOrientation, ProcessFinding
 from hitlcad.core.project import Filament, Printer
 from hitlcad.kernel.errors import HitlcadError
 
@@ -65,6 +66,16 @@ async def test_the_human_s_printer_is_kept_in_the_project_and_each_printed_part_
     assert [p["id"] for p in laid["shapes"]["parts"]] == ["/print/plate", "/print/tower"]
     assert laid["shapes"]["bb"]["zmax"] < 30  # the 300 mm tower lies down
     assert [b[2] - b[0] for b in laid["beds"]] == [256, 256]  # each part on a bed of the printer's
+    shading = revision.report.artifact("print_shading")  # what it shades, where the print view lays each part
+    assert shading is not None
+    shades = json.loads(
+        (core.designs.store.revision_dir(state.id, revision.id) / shading.path).read_text(encoding="utf-8")
+    )
+    assert list(shades) == ["bed"]  # boxes lying flat: nothing prints on nothing
+    bed = np.reshape(shades["bed"], (-1, 3, 3))
+    assert np.allclose(bed[:, :, 2], 0)  # on the bed, as the print view lays them
+    area = np.linalg.norm(np.cross(bed[:, 1] - bed[:, 0], bed[:, 2] - bed[:, 0]), axis=1).sum() / 2
+    assert area == pytest.approx(260 * 260 + 300 * 20, rel=1e-3)  # the plate's underside, the tower's side
     plan = {p.path: p for p in revision.report.print_plan}  # each printed part once, how many, which way, settings
     assert (plan["plate"].count, plan["plate"].material, next(w.label for w in plan["tower"].ways if w.current)) == (
         1,
@@ -122,17 +133,25 @@ async def test_the_build_names_the_best_way_up_and_turning_a_part_there_writes_i
     state, _ = core.designs.open(write_design(tmp_path / "bracket", BRACKET))
     revision = await core.builds.build(state.id)
     way = next(r for r in revision.report.results if r.code == "printing.orientation")
-    assert way.status == "fail" and way.severity == "warning" and "of support" in way.detail
+    # It stands on its post's 4 mm end as modelled, which decides before the support its arm needs
+    assert (
+        way.status == "fail"
+        and way.severity == "warning"
+        and "as modelled, as it prints now, it does not stay put" in way.detail
+    )
     assert way.values["best_support_mm2"] < 10 < way.values["support_mm2"]  # its arm overhangs as modelled
     (bracket,) = revision.report.print_plan
     ways = bracket.ways
     now = next(w for w in ways if w.current)
-    assert ways[0].overhang_mm2 < 10 and now.up == (0, 0, 1) and now.label == "as modelled"
+    assert ways[0].support_mm2 < 10 and ways[0].stands and now.up == (0, 0, 1) and now.label == "as modelled"
+    assert [w.merit for w in ways] == sorted(w.merit for w in ways)  # judged by its process, best first
+    # As modelled it stands on its post's 4 mm end, 10 × as tall: its process says why it is no way to print it
+    assert not now.stands and any("as tall as its base is wide" in p for p in now.problems)
 
     told = core.explore.graph(state.id, None).explore("print")  # what the agent reads to judge it
     assert (
         told.startswith("Print plan of rev 1: 1 piece of 1 part")
-        and "bracket ×1: PLA, fdm, as modelled; best on" in told
+        and "bracket ×1: PLA, fdm, as modelled; better on" in told
     )
     assert "0.2 mm layers (recommended: half the 0.4 mm nozzle" in told
     turned = await core.builds.turn(state.id, "bracket", ways[0].up, revision.version)
@@ -162,3 +181,16 @@ async def test_a_component_s_printed_parts_join_the_plan_times_its_placements(co
     revision = await core.builds.build(state.id)
     plan = {p.path: (p.count, p.material) for p in revision.report.print_plan}
     assert plan == {"seat": (1, "PLA"), "leg/foot": (2, "PETG")}
+
+
+def test_a_way_up_is_better_by_fitting_then_standing_then_support_never_by_height_alone() -> None:
+    def way(**kw: object) -> PrintOrientation:
+        fields = {"up": (0, 0, 1), "label": "x", "fits": True, "stands": True, "support_mm2": 0.0, "bed_mm2": 100.0,
+                  "height_mm": 10.0, "footprint_mm": (20.0, 10.0), "turn_deg": 0.0, "problems": [], "current": False} | kw  # fmt: skip
+        return PrintOrientation.model_validate(fields)
+
+    tilted = way(stands=False, support_mm2=4039, label="tilted")  # the dog's body: less support, on a 7 mm² base
+    upright = way(support_mm2=4648, label="upright")
+    assert upright.merit < tilted.merit
+    assert way(fits=False).merit > way(support_mm2=9000).merit  # off the bed is worse than any support
+    assert way(support_mm2=12, height_mm=50).merit == way(support_mm2=8, height_mm=5).merit  # within a facet's noise

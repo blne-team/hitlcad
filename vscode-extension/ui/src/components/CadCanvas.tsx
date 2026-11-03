@@ -6,6 +6,7 @@ import type { Pick } from "../api/types";
 import { type CadBounds, type CadMarker, type CadMotion, CadView, exactShapes, type ViewPlane } from "../lib/cadView";
 import type { Inspection } from "../lib/inspection";
 import type { CadScene } from "../lib/scene";
+import type { Shading } from "../lib/shading";
 import { SketchPicker, ViewToolbox } from "./ViewToolbox";
 
 interface Props {
@@ -16,6 +17,8 @@ interface Props {
   markers: CadMarker[];
   /** A scene to show as a ghost, e.g. the revision being compared against. */
   ghost?: Shapes | null;
+  /** The print view's shading of its parts: where they need support, what lies on the bed. */
+  shading?: Shading | null;
   /** Instances moved along a mate's range of motion. */
   motion?: CadMotion | null;
   /** How far the toolbar's explode pulls the shapes apart, times their distance from the model's middle. */
@@ -74,6 +77,7 @@ export function CadCanvas(props: Props) {
     }
     cad.setMarkers(now.markers);
     cad.setGhost(now.ghost ?? null);
+    cad.setShading(now.shading ?? null);
     cad.setMotion(now.motion ?? null);
     if (now.spread !== undefined) cad.setSpread(now.spread);
     if (now.inspection) cad.inspect(now.inspection);
@@ -102,6 +106,7 @@ export function CadCanvas(props: Props) {
   }, [props.placing]);
   useEffect(() => view.current?.setMarkers(props.markers), [props.markers]);
   useEffect(() => view.current?.setGhost(props.ghost ?? null), [props.ghost]);
+  useEffect(() => view.current?.setShading(props.shading ?? null), [props.shading]);
   useEffect(() => view.current?.setMotion(props.motion ?? null), [props.motion]);
   useEffect(() => {
     if (props.spread !== undefined) view.current?.setSpread(props.spread);

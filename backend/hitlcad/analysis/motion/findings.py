@@ -8,12 +8,12 @@ from typing import TypeVar
 
 from pydantic import Field
 
-from hitlcad.analysis.base import ResultCache
 from hitlcad.analysis.coverage import Link
 from hitlcad.analysis.interference import beyond, overlap
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.analysis.motion.plans import World
 from hitlcad.core.structure import Tolerances
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import Unmeasurable
 from hitlcad.kernel.model import Model
 
@@ -101,7 +101,7 @@ class Pair:
 P = TypeVar("P", bound=Pair)
 
 
-def at_rest(pairs: list[P], world: World, settings: AnalysisSettings, cache: ResultCache, out: Findings) -> list[P]:
+def at_rest(pairs: list[P], world: World, settings: AnalysisSettings, cache: Cache, out: Findings) -> list[P]:
     """The pairs to sweep: not those overlapping where they sit beyond what a mate allows (interference reports
     them, into `out.resting`), nor those that cannot be measured (`out.unmeasurable`). Each kept pair learns what
     it may share where it sits."""

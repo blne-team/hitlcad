@@ -69,7 +69,8 @@ async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(cor
     assert not (out / "model.blend").exists()  # no Blender part
     # A part's glTF carries names and colours; not the PBR texture maps bd_warehouse gives its fasteners.
     assert b'"images"' not in (out / "parts/insert.glb").read_bytes()
-    rows = list(csv.DictReader((out / "bom.csv").open()))
+    with (out / "bom.csv").open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
     assert {r["name"]: int(r["quantity"]) for r in rows} == {"base": 1, "lid": 1, "insert": 4, "screw": 4}
     urdf = ET.parse(next((out / "urdf").glob("*.urdf"))).getroot()
     assert len(urdf.findall("link")) == 10 and all(j.get("type") == "fixed" for j in urdf.findall("joint"))

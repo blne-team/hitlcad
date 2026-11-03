@@ -5,6 +5,7 @@ import type { Pick, Vec3 } from "../api/types";
 import type { CadMove } from "./motion";
 import type { Inspection } from "./inspection";
 import type { Bed, CadScene } from "./scene";
+import { type Shade, SHADES, type Shading } from "./shading";
 import { sketchLoops, type SketchView } from "./sketch";
 
 /** A numbered marker drawn over the model: an agent pin or a selected item. */
@@ -114,6 +115,7 @@ export class CadView {
   private readonly highlights: Three.Group;
   private readonly sketchLines: Three.Group;
   private readonly bedPlates: Three.Group;
+  private readonly shades: Three.Group;
   private sketches: SketchView[] = [];
   private sketchesShown = false;
   /** The 2D view's plane, and the 3D view to come back to; null in 3D. */
@@ -204,7 +206,8 @@ export class CadView {
     this.highlights = new this.three.Group();
     this.sketchLines = new this.three.Group();
     this.bedPlates = this.beds(shapes.beds);
-    this.viewer.scene.add(this.markers, this.highlights, this.sketchLines, this.bedPlates);
+    this.shades = new this.three.Group();
+    this.viewer.scene.add(this.markers, this.highlights, this.sketchLines, this.bedPlates, this.shades);
     this.viewer.scene.onBeforeRender = (renderer, _scene, camera) => this.sizeMarkers(renderer, camera);
     this.explodeFrom(ids);
     // The toolbar's explode button (and its key, x) calls the viewer's setExplode, which only armed a clip to
@@ -565,6 +568,7 @@ export class CadView {
     this.clear(this.highlights);
     this.clear(this.sketchLines);
     this.clear(this.bedPlates);
+    this.clear(this.shades);
     if (this.ghost) this.clear(this.ghost);
     this.viewer.dispose();
     this.display.dispose();
@@ -748,6 +752,30 @@ export class CadView {
       group.add(plate, edge);
     }
     return group;
+  }
+
+  /**
+   * The print view's shading over its parts (none: cleared). What it shades faces down, under the part, so it shows
+   * through the part as well: faint where the part hides it, full where it does not.
+   */
+  setShading(shading: Shading | null): void {
+    const T = this.three;
+    this.clear(this.shades);
+    for (const [shade, corners] of Object.entries(shading ?? {}) as [Shade, number[]][]) {
+      const geometry = new T.BufferGeometry();
+      geometry.setAttribute("position", new T.Float32BufferAttribute(corners, 3));
+      const seen = (hidden: boolean) => {
+        const mesh = new T.Mesh(geometry, new T.MeshBasicMaterial({
+          color: SHADES[shade].color, transparent: true, opacity: hidden ? 0.35 : 0.8, side: T.DoubleSide, depthWrite: false,
+          depthFunc: hidden ? T.GreaterDepth : T.LessEqualDepth, // the part's own faces lie on these: offset in front
+          polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+        }));
+        mesh.renderOrder = 8; // after the parts, whose depth it is seen through
+        return mesh;
+      };
+      this.shades.add(seen(false), seen(true));
+    }
+    this.redraw();
   }
 
   /** Whether the instance is selected as a whole part. */

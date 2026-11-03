@@ -1,12 +1,27 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { BuildReport, PlannedPart, Printer, PrinterSetup, PrintOrientation, Revision } from "../api/types";
+import type { DesignUi } from "../lib/designUi";
+import type { Inspection } from "../lib/inspection";
+import { SHADES } from "../lib/shading";
+
+/** The printed part a print focus (`DesignUi.printFocus`) chose, while it is in the plan. */
+export function chosenPart(report: BuildReport, focus: Inspection | null): PlannedPart | null {
+  return focus?.action === "focus" ? plannedAt(report, focus.instances[0] ?? "") : null;
+}
+
+/** Choose a printed part (by its path in the plan), or none: the print view frames it, the Print tab shows its plan. */
+export function choosePrinted(ui: DesignUi, revision: number, path: string | null): Partial<DesignUi> {
+  return { printFocus: { revision, instances: path ? [path] : [], action: path ? "focus" : "restore", sequence: (ui.printFocus?.sequence ?? 0) + 1 } };
+}
 
 /**
  * Preparing the design for printing: the human's printer (asked for once, kept in the project's hitlcad.toml), then
- * the print plan of the revision on screen.
+ * the print plan of the revision on screen, the chosen part's in full.
  */
-export function PrintPanel({ designId, revision }: { designId: string; revision: Revision | null }) {
+export function PrintPanel({ designId, revision, chosen, onChoose }: {
+  designId: string; revision: Revision | null; chosen: PlannedPart | null; onChoose: (path: string | null) => void;
+}) {
   const [setup, setSetup] = useState<PrinterSetup | null>(null);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,14 +36,18 @@ export function PrintPanel({ designId, revision }: { designId: string; revision:
   }
   if (!setup.printer || editing) {
     return (
-      <PrinterForm setup={setup} onCancel={setup.printer ? () => setEditing(false) : null} onSave={async (printer) => {
-        setSetup(await api.setPrinter(designId, printer));
-        setEditing(false);
-      }} />
+      <div className="print">
+        <PrinterForm setup={setup} onCancel={setup.printer ? () => setEditing(false) : null} onSave={async (printer) => {
+          setSetup(await api.setPrinter(designId, printer));
+          setEditing(false);
+        }} />
+      </div>
     );
   }
   const printer = setup.printer;
   const slicer = setup.slicers.find((s) => s.name === printer.slicer)?.title ?? printer.slicer;
+  const plan = revision?.report.print_plan ?? [];
+  const pieces = plan.reduce((n, p) => n + p.count, 0);
   return (
     <div className="print">
       <div className="printer-summary">
@@ -37,18 +56,62 @@ export function PrintPanel({ designId, revision }: { designId: string; revision:
         </p>
         <button type="button" className="button small" onClick={() => setEditing(true)}>Edit printer</button>
       </div>
-      {revision ? <PlanList designId={designId} revision={revision} /> : <p className="muted pad">The print plan appears after the first build.</p>}
+      {!revision ? <p className="muted">The print plan appears after the first build.</p>
+        : !plan.length ? <p className="muted">No part of revision {revision.id} is printed: give a part an FDM or resin process.</p>
+        : chosen ? (
+          <>
+            <ShadeKey />
+            <button type="button" className="link-button plan-back" onClick={() => onChoose(null)}>‹ All {plan.length} printed parts</button>
+            <PlanItem key={chosen.path} designId={designId} revision={revision} part={chosen} />
+          </>
+        ) : (
+          <>
+            <ShadeKey />
+            <p className="muted tiny">{pieces} piece{pieces === 1 ? "" : "s"} of {plan.length} part{plan.length === 1 ? "" : "s"}. Click one, here or in the print view, for its plan.</p>
+            <ol className="print-plan">
+              {plan.map((p) => {
+                const now = current(p);
+                return (
+                  <li key={p.path}>
+                    <button type="button" className="plan-row" onClick={() => onChoose(p.path)}>
+                      <b>{p.path}</b> ×{p.count} · {p.material ?? "no material"} · {now.label}
+                      {now.fits === false && <span className="print-fail"> · does not fit</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        )}
     </div>
   );
 }
 
 /** The way a planned part prints now. */
+/** What the print view's shading means, as its process checks found it. */
+function ShadeKey() {
+  return (
+    <p className="shade-key muted tiny">
+      In the print view, shaded through the part:
+      {Object.values(SHADES).map(({ color, label }) => <span key={label}><span className="shade-swatch" style={{ background: color }} />{label}</span>)}
+    </p>
+  );
+}
+
 const current = (p: PlannedPart): PrintOrientation => p.ways.find((w) => w.current)!;
 
-/** One way a planned part can lie, as a person weighs it: the support it needs, what lies on the bed, its height. */
+/** The planned part a path of the print view is of (a part of several colours is a group under its own path). */
+export function plannedAt(report: BuildReport, path: string): PlannedPart | null {
+  return report.print_plan.filter((p) => path === p.path || path.startsWith(`${p.path}/`))
+    .sort((a, b) => b.path.length - a.path.length)[0] ?? null;
+}
+
+/** One way a planned part can lie, as its process judges it: whether it fits and stays put, the support it needs, what
+ * lies on the bed, its height. */
 function wayText(w: PrintOrientation): string {
   const fits = w.fits === null ? "" : w.fits ? " · fits" : " · does not fit";
-  return `${w.label}: ${w.overhang_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}`;
+  const stands = w.stands ? "" : " · does not stay put";
+  return `${w.label}: ${w.support_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}${stands}`;
 }
 
 /** The planned parts that do not fit the printer's bed as they lie: what the Print tab's badge counts. */
@@ -56,86 +119,67 @@ export function unfit(report: BuildReport): number {
   return report.print_plan.filter((p) => current(p).fits === false).length;
 }
 
-/** What the print view's hover names a printed part with: its path, how many, which way up, and its settings. */
+/** What the print view's hover calls a printed part: its path, how many, and which way up; its plan is a click away. */
 export function printNames(report: BuildReport): (path: string) => string {
-  const by = new Map(report.print_plan.map((p) => [p.path, p]));
   return (path) => {
-    const p = by.get(path);
-    return p ? `${p.path} ×${p.count} · ${current(p).label} · ${p.settings.map((s) => s.text).join(", ")}` : path;
+    const p = plannedAt(report, path);
+    if (!p) return path;
+    const now = current(p);
+    return `${p.path} ×${p.count} · ${now.label}${now.fits === false ? " · does not fit" : ""}`;
   };
 }
 
 /**
- * A revision's print plan (`BuildReport.print_plan`): each printed part with how many, its material, which way up and
- * whether it fits the bed, its settings (recommended, or decided by the agent, each with its reason), and the other
- * ways it could lie, best first, each one click from printing that way: a panel edit of its `up`, no agent turn. A
- * component's parts are its own design's to turn.
+ * One printed part's plan: how many, its material, which way up and whether it fits the bed; its settings, each
+ * recommended or decided by the agent, with the reason; and the ways it can lie, best first, each one click from
+ * printing that way (a panel edit of its `up`, no agent turn). A component's parts are its own design's to turn.
  */
-function PlanList({ designId, revision }: { designId: string; revision: Revision }) {
-  const [turning, setTurning] = useState<string | null>(null);
+function PlanItem({ designId, revision, part }: { designId: string; revision: Revision; part: PlannedPart }) {
+  const [turning, setTurning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const plan = revision.report.print_plan;
-  if (!plan.length) return <p className="muted pad">No part of revision {revision.id} is printed: give a part an FDM or resin process.</p>;
-  const turn = (part: string, up: PrintOrientation["up"]) => {
-    setTurning(part);
+  const now = current(part);
+  const turn = (up: PrintOrientation["up"]) => {
+    setTurning(true);
     setError(null);
-    api.turn(designId, part, up, revision.version).catch((e: Error) => setError(e.message)).finally(() => setTurning(null));
+    api.turn(designId, part.path, up, revision.version).catch((e: Error) => setError(e.message)).finally(() => setTurning(false));
   };
   return (
-    <>
-      <ol className="print-plan">
-        {plan.map((p) => {
-          const now = current(p);
-          const best = p.ways[0]!;
-          return (
-            <li key={p.path}>
-              <div className="plan-head">
-                <b>{p.path}</b> ×{p.count} · {p.material ?? "no material"} · {now.label}
-                {now.fits !== null && <span className={now.fits ? "print-pass" : "print-fail"}> · {now.fits ? "fits the bed" : "does not fit the bed"}</span>}
-              </div>
-              <div className="plan-settings">
-                {p.settings.map((s) => (
-                  <span key={s.name} className={s.decided ? "print-decided" : "print-recommended"} title={`${s.decided ? "Decided" : "Recommended"}: ${s.why}`}>
-                    {s.text}
-                  </span>
-                ))}
-              </div>
-              {p.ways.length > 1 && (
-                <details className="plan-ways" open={!best.current}>
-                  <summary>{best.current ? "It prints the best way up" : `Best: ${wayText(best)}`}</summary>
-                  <ol>
-                    {p.ways.map((w, n) => (
-                      <li key={w.up.join()} className={w.current ? "way-current" : ""}>
-                        {n === 0 && <b>best </b>}{wayText(w)}
-                        {w.current ? <span className="muted"> (as it prints now)</span> : !p.path.includes("/") && (
-                          <button type="button" className="button small" disabled={turning !== null} onClick={() => turn(p.path, w.up)}>Print this way</button>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-      {turning && <p className="muted tiny">Turning {turning} and building…</p>}
+    <article className="plan-item">
+      <h3 className="plan-head">
+        <b>{part.path}</b> ×{part.count} · {part.material ?? "no material"} · {now.label}
+        {now.fits !== null && <span className={now.fits ? "print-pass" : "print-fail"}> · {now.fits ? "fits the bed" : "does not fit the bed"}</span>}
+      </h3>
+      <ul className="plan-settings">
+        {part.settings.map((s) => (
+          <li key={s.name}>
+            <span className={s.decided ? "print-decided" : "print-recommended"}>{s.text}</span>
+            <span className="muted"> {s.decided ? "decided" : "recommended"}: {s.why}</span>
+          </li>
+        ))}
+      </ul>
+      {part.ways.length > 1 && (
+        <section className="plan-ways">
+          <h4>{part.ways.some((w) => w.better) ? "It could lie better." : "It prints the best way up."} The ways it can lie, best first:</h4>
+          <ol>
+            {part.ways.map((w, n) => (
+              <li key={w.up.join()} className={w.current ? "way-current" : ""}>
+                {n === 0 && <b>best </b>}{wayText(w)}
+                {w.current ? <span className="muted"> (as it prints now)</span> : !part.path.includes("/") && (
+                  <button type="button" className="button small" disabled={turning} onClick={() => turn(w.up)}>Print this way</button>
+                )}
+                {w.problems.length > 0 && (
+                  <details className="way-problems"><summary className="muted tiny">what its checks find</summary>
+                    <ul>{w.problems.map((p) => <li key={p} className="muted tiny">{p}</li>)}</ul>
+                  </details>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {turning && <p className="muted tiny">Turning {part.path} and building…</p>}
       {error && <p className="notice fail">{error}</p>}
-    </>
-  );
-}
-
-/** Beside the print view: the revision's print plan. */
-export function PrintPlanBox({ designId, revision }: { designId: string; revision: Revision }) {
-  const pieces = revision.report.print_plan.reduce((n, p) => n + p.count, 0);
-  return (
-    <section className="selection-box print-plan-box" aria-label="Print plan">
-      <header>
-        <span className="sel-title">Print plan</span>
-        <span className="muted tiny">{pieces} piece{pieces === 1 ? "" : "s"} of {revision.report.print_plan.length} part{revision.report.print_plan.length === 1 ? "" : "s"}</span>
-      </header>
-      <PlanList designId={designId} revision={revision} />
-    </section>
+    </article>
   );
 }
 

@@ -30,6 +30,10 @@ class Settings(BaseSettings):
                          "files built in them in parallel: about 400 MB each for build123d, and what they export")  # fmt: skip
     worker_cache_mb: int = Field(default=256, ge=0, description="What a build worker keeps of what it exported, by "
                                  "the shape's content, so a part that comes out the same is not exported again")  # fmt: skip
+    cache_mb: int = Field(default=8192, gt=0, description="The data folder's cache on disk (part files, analysis "
+                          "results, components, model scenes), the least recently used let go first")  # fmt: skip
+    cache_memory_mb: int = Field(default=256, ge=0, description="Analysis results kept decoded in memory as well, so "
+                                 "a build and the next read them without the disk")  # fmt: skip
     mesh_tolerance_mm: float = Field(default=0.01, gt=0, description="Chordal deviation of exported meshes")
     mesh_angular_tolerance: float = Field(default=0.1, gt=0, description="Angular deviation of exported meshes, rad")
 

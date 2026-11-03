@@ -102,7 +102,7 @@ prints the commands for both.
 
 ## Printing
 
-**Print** in a design's tab asks once for your printer (build volume, nozzle, slicer, and the filament
+The **Print** tab beside a design's 3D view asks once for your printer (build volume, nozzle, slicer, and the filament
 and AMS slot for each material) and keeps it in the project's `hitlcad.toml`, under `[printer]`; edit it
 there or with **Edit printer**. hitlcad ships no printer profiles: it checks each printed part against
 yours, lying the way it prints, and tells you how to print it; you slice and print in your slicer.
@@ -156,6 +156,8 @@ Environment variables (or a `.env` file), prefix `HITLCAD_`:
 | `HITLCAD_BUILD_MEMORY_MB` | `4096` | Memory a build worker may use, with everything it starts; one that ends a job holding more than half of it is replaced |
 | `HITLCAD_WORKERS` | `4` | Build workers each backend keeps, each one design's, its part files built in them in parallel (about 400 MB each for build123d) |
 | `HITLCAD_WORKER_CACHE_MB` | `256` | What a build worker keeps of what it exported, by the shape's content |
+| `HITLCAD_CACHE_MB` | `8192` | The data folder's cache on disk (part files, analysis results, components, model scenes), the least recently used let go first |
+| `HITLCAD_CACHE_MEMORY_MB` | `256` | Analysis results kept decoded in memory as well |
 | `HITLCAD_MESH_TOLERANCE_MM` | `0.01` | Chordal deviation of exported meshes |
 | `HITLCAD_VERIFY_POSITION_MM` / `HITLCAD_VERIFY_ANGLE_DEG` | `0.01` / `0.05` | Default tolerances of every check; a design's `verification` overrides them |
 | `HITLCAD_VERIFY_MOTION_STEPS` | `2000` | Most positions motion analysis checks per mate before it reports the motion unverified |

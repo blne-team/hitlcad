@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 from pydantic import Field
 
-from hitlcad.analysis.base import ResultCache
 from hitlcad.analysis.interference import boxes_touch
 from hitlcad.analysis.model import AnalysisSettings, Leaf
 from hitlcad.analysis.motion.findings import Contact, Findings, Least, Pair, Parted, Stop, at_rest
@@ -34,6 +33,7 @@ from hitlcad.core import frames as fr
 from hitlcad.core.loops import SAMPLE_MM
 from hitlcad.core.structure import Axis
 from hitlcad.geometry.mesh import Collider
+from hitlcad.kernel.cache import Cache
 
 if TYPE_CHECKING:
     import manifold3d
@@ -48,7 +48,7 @@ class Swept(Findings):
     key: str = ""
 
 
-def sweep(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Swept:
+def sweep(plan: Plan, settings: AnalysisSettings, cache: Cache) -> Swept:
     """The plan swept through its range: once per plan, and cached by what it depends on."""
     if plan.swept is None:
         plan.swept = _sweep(plan, settings, cache)
@@ -75,7 +75,7 @@ class _Pair(Pair):
                 round(self.sitting_mm3, 6), self.contact_key()]  # fmt: skip
 
 
-def _sweep(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Swept:
+def _sweep(plan: Plan, settings: AnalysisSettings, cache: Cache) -> Swept:
     traced = None if plan.exact else positions(plan, settings, cache)
     if traced is not None and (traced.why or traced.held or len(traced.values) < 2):
         return Swept(traced=traced)

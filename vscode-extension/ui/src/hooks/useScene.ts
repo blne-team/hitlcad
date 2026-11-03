@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { json } from "../api/client";
 import { loadScene, type CadScene } from "../lib/scene";
+import type { Shading } from "../lib/shading";
 
 /**
  * Load a 3D view's scene and its part views from the server; errors carry the server's reason (e.g. 415/422 detail).
@@ -22,4 +24,19 @@ export function useScene(url: string | null, version?: string): { data: CadScene
 
   // Never hand out the previous URL's data while the new one loads.
   return state.url === url ? { data: state.data, error: state.error } : { data: null, error: null };
+}
+
+/** The print view's shading (`print_shading`), once read; none while it loads, or where the revision has none. */
+export function useShading(url: string | null): Shading | null {
+  const [state, setState] = useState<{ url: string; shading: Shading } | null>(null);
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    fetch(url).then((res) => json<Shading>(res)).then((shading) => !cancelled && setState({ url, shading }))
+      .catch(() => undefined); // the view stands without its shading
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+  return state?.url === url ? state.shading : null;
 }

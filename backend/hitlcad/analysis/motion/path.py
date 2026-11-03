@@ -12,11 +12,11 @@ from functools import cached_property
 import numpy as np
 from pydantic import Field
 
-from hitlcad.analysis.base import ResultCache
 from hitlcad.analysis.model import AnalysisSettings
 from hitlcad.analysis.motion.plans import Plan, Stage
 from hitlcad.core import frames as fr
 from hitlcad.core.loops import SAMPLE_MM, Position, Solver
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.model import Model
 
 _FINEST = 1e-3  # of a first step: the smallest step tried before giving up
@@ -69,7 +69,7 @@ class Traced(Model):
         return self._stack
 
 
-def positions(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Traced:
+def positions(plan: Plan, settings: AnalysisSettings, cache: Cache) -> Traced:
     """The plan's positions, once per plan: exact ones a degree (or half a millimetre) apart, or traced (`trace`)."""
     if plan.traced is None:
         plan.traced = trace(plan, settings, cache) if not plan.exact else _exact(plan)
@@ -86,7 +86,7 @@ def _exact(plan: Plan) -> Traced:
     return Traced(clusters=list(drives), values=values, poses=poses, rest=rest)
 
 
-def trace(plan: Plan, settings: AnalysisSettings, cache: ResultCache) -> Traced:
+def trace(plan: Plan, settings: AnalysisSettings, cache: Cache) -> Traced:
     """The plan's positions, traced through its blocks: once per plan, cached by what they depend on."""
     solver = settings.motion_solver
     if solver is None:
@@ -191,7 +191,7 @@ class _Corners:
         return float(np.linalg.norm(moved, axis=1).max())
 
 
-def _key(plan: Plan, solver: Solver, cache: ResultCache) -> str:
+def _key(plan: Plan, solver: Solver, cache: Cache) -> str:
     """What a trace depends on, as plain values: never an object, whose text may carry a build's path."""
 
     def rounded(f: np.ndarray) -> list[object]:

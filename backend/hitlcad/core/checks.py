@@ -109,6 +109,9 @@ class ProcessFinding(Model):
     name: str
     passed: bool | None
     detail: str
+    faces: dict[str, list[int]] = Field(default_factory=dict, description="Faces of the part's mesh as it lies when "
+                                        "made, by how a view shades them: 'support' (prints on nothing but support), "
+                                        "'bed' (lies on the bed)")  # fmt: skip
 
 
 class Process(Model):
@@ -120,7 +123,9 @@ class Process(Model):
     findings: ClassVar[dict[str, tuple[str, str]]]
 
     @abstractmethod
-    def checks(self, body: Body) -> list[ProcessFinding]: ...
+    def checks(self, body: Body) -> list[ProcessFinding]:
+        """What it finds of the part as it lies when made (`body`). A printed process's are those that do not depend on
+        which way up it prints; those that do are its `way`'s."""
 
     def allowance(self, feature: Literal["hole", "shaft"]) -> float:
         """How much the process makes a round feature's diameter smaller (hole) or larger (shaft) than modelled, mm."""
@@ -151,17 +156,52 @@ class PrintSetting(Model):
     why: str
 
 
+#: Below this, two ways up need the same support: about what the facets of a curved surface differ by, mm².
+SUPPORT_RESOLUTION_MM2 = 10.0
+
+
+class PrintWay(Model):
+    """What a printed part's process finds of it lying one way up (`PrintedProcess.way`)."""
+
+    findings: list[ProcessFinding] = Field(description="Its checks that depend on how it lies, each with the faces "
+                                           "it shades: 'support' (what prints on nothing but support), 'bed'")  # fmt: skip
+    stands: bool = Field(description="It stays put on the bed as it prints, with the brim it is given: a way it does "
+                         "not is a way to print it only where no other stands")  # fmt: skip
+
+
 class PrintOrientation(Model):
-    """One way a printed part can lie on the bed: a stable pose of it, scored."""
+    """One way a printed part can lie on the bed (its own, or a stable pose of its hull), as its process judges it."""
 
     up: tuple[float, float, float] = Field(description="The direction of the part's own frame that points up")
     label: str = Field(description="Which way up, as a person reads it: 'as modelled', 'on its +Y face'")
-    overhang_mm2: float = Field(description="What prints over nothing, steeper than the process allows: the support "
-                                "it needs, roughly (bridges are not told apart)")  # fmt: skip
+    fits: bool | None = Field(description="On the project's printer; none without one")
+    stands: bool = Field(description="It stays put on the bed as it prints (`PrintWay.stands`)")
+    support_mm2: float = Field(description="What prints on nothing but support, as its process's checks find it "
+                               "(bridged and held edges excluded)")  # fmt: skip
     bed_mm2: float = Field(description="What lies on the bed")
     height_mm: float
-    fits: bool | None = Field(description="On the project's printer; none without one")
+    footprint_mm: tuple[float, float] = Field(description="Its length and width seen from above: the least rectangle "
+                                              "round it")  # fmt: skip
+    turn_deg: float | None = Field(description="The least turn about Z that fits it on the project's printer's bed; "
+                                   "none without a printer, or where none does")  # fmt: skip
+    problems: list[str] = Field(description="What its process's checks find wrong with it lying this way")
     current: bool = Field(description="The way it prints now (`up`)")
+    better: bool = Field(default=False, description="Better than the way it prints now (`merit`)")
+
+    @property
+    def merit(self) -> tuple[bool, bool, int]:
+        """What makes one way up better than another, the first that differs deciding: it fits the printer, it stays
+        put on the bed, it needs less support (to `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is
+        listed first, but height alone makes no way better."""
+        return self.fits is False, not self.stands, round(self.support_mm2 / SUPPORT_RESOLUTION_MM2)
+
+    def described(self) -> str:
+        """As its plan weighs it."""
+        stands = "it stands on the bed" if self.stands else "it does not stay put on the bed"
+        return (
+            f"{stands}, {self.support_mm2:.0f} mm² on support, {self.bed_mm2:.0f} mm² on the bed, "
+            f"{self.height_mm:.1f} mm tall"
+        )
 
 
 class PrintedProcess(Process):
@@ -188,9 +228,10 @@ class PrintedProcess(Process):
     def allowance(self, feature: Literal["hole", "shaft"]) -> float:
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
 
-    def overhang_limit_deg(self) -> float:
-        """The steepest overhang, from vertical, that prints without support: what the best orientation weighs."""
-        return 45.0
+    @abstractmethod
+    def way(self, body: Body) -> PrintWay:
+        """What it finds of the part lying as `body` does that depends on how it lies: the same judgment for the way
+        it prints and for any other it could, so the ways it could lie are weighed as it is checked."""
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         """The part's settings: those the design sets, the rest recommended from what the build knows of it."""

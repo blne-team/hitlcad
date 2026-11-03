@@ -337,7 +337,7 @@ class Artifact(Model):
     name: str
     path: str
     media_type: str
-    role: str = Field(description="view, print_view, part_mesh, part_exchange, objects, log, or the output that wrote it "
+    role: str = Field(description="view, print_view, print_shading, part_mesh, part_exchange, objects, log, or the output that wrote it "
                       "(design.json `outputs`: step, stl, native, preview, an exporter's name)")  # fmt: skip
     label: str = Field(default="", description="What the file is, for the panel's file list; empty for the files it "
                        "shows its own way (the 3D view, the preview)")  # fmt: skip

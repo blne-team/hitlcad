@@ -549,7 +549,7 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
         """A model file tessellated for the 3D file viewer: to its scene, whose part views lie beside it."""
         source = model_file(path)
         try:
-            key = await asyncio.to_thread(cadview.cached_scene, source, settings.cache_dir / "cad",
+            key = await asyncio.to_thread(cadview.cached_scene, source, core.pipeline.scenes,
                                           settings.mesh_tolerance_mm, settings.mesh_angular_tolerance)  # fmt: skip
         except Exception as e:  # any file: its reader's error, whatever its kind, is what the panel shows
             log.exception("could not convert %s", source)
@@ -559,9 +559,10 @@ def create_app(core: HitlCad | None = None) -> FastAPI:
     @app.get("/api/files/cad/{key}/{name}")
     async def cad_scene_file(key: str, name: str) -> FileResponse:
         """A file of a model file's scene: the scene, or one of its part views."""
-        file = settings.cache_dir / "cad" / key / name
         names = rf"{re.escape(cadview.SCENE_FILE)}|\d+{re.escape(cadview.VIEW_SUFFIX)}"
-        if not (re.fullmatch(r"[0-9a-f]{24}", key) and re.fullmatch(names, name) and file.is_file()):
+        found = core.pipeline.scenes.files(key) if re.fullmatch(r"[0-9a-f]{64}", key) else None
+        file = found[0] / name if found else None
+        if not (found and re.fullmatch(names, name) and file and file.is_file()):
             raise NOT_FOUND_FILE(f"no scene file {key}/{name}")
         media = "application/json" if name == cadview.SCENE_FILE else "application/octet-stream"
         return FileResponse(file, media_type=media)

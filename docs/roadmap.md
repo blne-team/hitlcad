@@ -37,45 +37,54 @@ hitlcad designs, assembles and checks parts, but stops short of the printer: a p
 (+Z up in its own frame), so the agent models each part lying the way it prints rather than the way it fits;
 nothing knows the printer's bed (the NAS case's 249 × 251 mm front shell is on no bed's measure); and nothing
 tells the human how to print what was designed. v0.2 makes the design aware of its printing, and ends where
-the slicer begins: hitlcad says how to print each part, and the human slices and prints it.
+the slicer begins: hitlcad says how to print each part so it works as designed (strong where it is loaded, true
+where it fits, clean where it shows), and the human slices and prints it. How long a print takes is the slicer's
+to say: hitlcad neither slices nor drives the printer.
 
 - **Your printer, and slicers as adapters.** hitlcad defines no printer: the panel's **Print** asks for the human's
   once (build volume, nozzle, slicer, the filament and AMS slot of each material) and the project keeps it in its
-  `hitlcad.toml`; a plugin gives slicers (`hitlcad_slicers`), Bambu Studio first. Left: each slicer adapter says
-  how to print a part in its slicer's terms and writes a 3MF its slicer opens with the parts placed on their plates
-  (with "How to print it", below); PrusaSlicer, OrcaSlicer or Cura are another adapter each.
+  `hitlcad.toml`; a plugin gives slicers (`hitlcad_slicers`), Bambu Studio first. PrusaSlicer, OrcaSlicer or Cura
+  are another adapter each.
 - **Print orientation.** A printed part's process says which way up it prints (`"up": [0, -1, 0]`), so parts
   are modelled for the assembly; its process checks, its 3MF and its fit on the printer's bed (`printing.bed`,
-  turned about Z as a slicer would) are of it lying that way. **Print** turns the panel's main view into the print
-  view: each printed part once, lying as it prints, on a bed of the printer's size, with its plan beside it. Each
-  part's candidates are the stable poses of its hull, scored by the support they need, what lies on the bed, the
-  height and the fit; the build names the best when it beats the part's own (`printing.orientation`), and **Print
-  this way** in the plan writes the part's `up` (a panel edit, no agent turn). Left: shading a part's overhangs
-  and bed contact in the print view, and weighing a load across the layers, where the design says how a part is
-  loaded.
-- **Design for printing.** Findings with their usual fix, which the agent acts on as on any other: a part
-  larger than the bed (split it, with a joint or dowels), a horizontal hole (a teardrop), a bottom edge the first
-  layer squashes (a chamfer), a load across the layers, small parts that could be one.
-- **How to print it: a print plan.** A build's report has its print plan (`print_plan`): each printed part, its
-  components' included, with how many, which way up, and its settings (layer height, walls, infill,
-  supports, brim), each with its reason: its process recommends them from what the build found (finer layers for
-  a tight fit, more walls and infill where screws thread in, supports where its overhangs need them, a brim for a
-  tall narrow part), and the agent judges, keeping or setting each in the part's `manufacturing` with its reason;
-  the Print tab and the print view show the plan. Left: a part's material follows its needs,
-  which the agent declares from the brief (`{"kind": "service", "target": "clip", "max_temperature_c": 70,
-  "flexes": true}`): hitlcad recommends the materials that meet them and checks the one chosen. And the parts are
-  grouped onto plates by filament and bed, and written (when `outputs` names `print`) as `print-plan.md` and a
-  3MF per plate in which the slicer adapter sets each part's settings as its own, so the human opens it in the
-  slicer and prints with nothing to adjust; estimates of filament and time come from volumes, walls and infill,
-  labelled as estimates.
-- **The whole product.** The totals across a design (filament, estimated hours, plates, parts, material cost)
-  in its report, and requirements on them (`print_time`, `filament`, `cost`, `plates`), so they become checks the
-  agent designs towards.
+  turned about Z as a slicer would) are of it lying that way. The 3D view's **Print** tab is the print view: each
+  printed part once, lying as it prints, on a bed of the printer's size, with its plan; a click on a part frames it
+  and shows its whole plan. Each part's candidates are its own way and the stable poses of its hull, each judged by
+  its process as the way it prints is: whether it fits the printer, whether it stays put on the bed, and the support
+  it needs, in that order; the build names the best when it beats the part's own (`printing.orientation`), and
+  **Print this way** in the plan writes the part's `up` (a panel edit, no agent turn). The print view shades, seen through each part, what prints on nothing but support (not what is bridged
+  or held at an edge) and what lies on the bed, as its process checks found them.
+
+Left, in this order:
+
+1. **Seeing another way.** A way the human points at in a part's plan is shown turned and shaded the same way, so
+   **Print this way** is judged by looking, not by the numbers alone.
+2. **Design for printing.** Findings with their usual fix, which the agent acts on as on any other: a horizontal
+   hole whose top sags (a teardrop), a bottom edge the first layer squashes into a lip (a chamfer); a part larger
+   than the bed is `printing.bed`, whose fix is a split, with a joint, dowels or screws.
+3. **Printed to work.** A part's ways and settings weigh what it does, from what the build already knows of it,
+   each with its reason: a screw threading into it pulls along its axis, which should not pull its layers apart
+   (and wants more walls round the hole); a hole or shaft with a fit comes out round only with its axis upright; a
+   part that flexes (a clip, a snap) bends along its layers, not across them; a face the design shows prints on top
+   or on the bed, not over support. Each is a criterion of a way's merit, judged for every way as the process's
+   are, and a way that costs one says so in the plan, so the human weighs it against the support it saves. Loads in general, declared by the design, stay under "Speeds and loads" (Later).
+4. **Plates and the slicer's file.** The parts are grouped onto plates by filament and bed, and written (when
+   `outputs` names `print`) as `print-plan.md` and a 3MF per plate in which the slicer adapter places each part
+   lying as it prints and sets its settings as its own (Bambu Studio's per-object settings), so the human opens it
+   in the slicer and prints with nothing to turn or adjust. These replace the `3mf` output's file per part. The
+   check is the human's: the file opened in Bambu Studio, each part as the plan says.
+5. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
+   "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
+   meet them and checks the one chosen. A material says its service temperature, whether it takes flexing, and its
+   price per kilogram.
+6. **The whole product.** The totals across a design (parts, plates, filament by material, its cost) in its
+   report, filament estimated from volumes, walls and infill and labelled as an estimate, and requirements on them
+   (`filament`, `cost`, `plates`), so they become checks the agent designs towards.
 
 Done when, for a printer the human enters (a Bambu Lab P2S with a 0.4 mm nozzle, in Bambu Studio), every printed
-part of the NAS case lies the way its best orientation says, needing no support it could avoid; the front shell's
-size is a finding whose fix (a split) the agent makes; and the human prints the case from its print sheet in Bambu
-Studio without turning a part or guessing a setting.
+part of the NAS case lies the way its best orientation says, needing no support it could avoid, with each way's
+cost to its strength or fit named in the plan; the front shell's size is a finding whose fix (a split) the agent
+makes; and the human prints the case from its plates in Bambu Studio without turning a part or guessing a setting.
 
 ## Not yet ordered
 
@@ -231,6 +240,15 @@ that changed for small models.
 
 - Sheet metal: flange length, hole-to-bend distance, bend relief.
 - CNC: walls too thin to mill without chatter or breaking.
+
+**Cheaper manufacturing checks** (measured in [manufacturing-performance.md](manufacturing-performance.md))
+
+- Wall sampling with an explicit accuracy and coverage policy: genuine wall evidence told apart from tapers
+  before the refinement budget is spent, judged on a corpus of analytic walls, rims, fins and necks.
+- CNC visibility and molding undercuts refine the whole surface (`_split`); resin drainage traces a dense grid
+  of the bounding box. Each profiled on representative parts before its algorithm changes.
+- Ray and nearest-point backends (an Embree-based one against libigl's) benchmarked on the same workloads,
+  with one level of parallelism chosen deliberately.
 
 **Platforms and distribution**
 

@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -24,6 +23,7 @@ import numpy as np
 from hitlcad.analysis.model import AnalysisSettings, BuildBodies, BuiltDesign, PlacedFrame
 from hitlcad.core import frames as fr
 from hitlcad.core.report import Result, Severity, Status
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import Diagnostic, ErrorKind, StructureError
 
 
@@ -48,33 +48,12 @@ def member_code(module: str) -> str:
     return hashlib.sha256(b"".join(p.read_bytes() for p in files)).hexdigest()
 
 
-class ResultCache:
-    """Results of costly checks by the hash of what they depend on and of hitlcad's code (`analysis_code`), shared
-    across builds."""
-
-    def __init__(self, root: Path) -> None:
-        self.root = root
-
-    @staticmethod
-    def key(*parts: Any) -> str:
-        return hashlib.sha256(json.dumps([analysis_code(), *parts], sort_keys=True, default=str).encode()).hexdigest()
-
-    def get_or(self, key: str, compute: Callable[[], Any]) -> Any:
-        path = self.root / key[:2] / f"{key}.json"
-        if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-        value = compute()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value), encoding="utf-8")
-        return value
-
-
 @dataclass
 class Context:
     built: BuiltDesign
     settings: AnalysisSettings
     bodies: BuildBodies
-    cache: ResultCache
+    cache: Cache  # analysis results (`BuildPipeline.results`)
     watched: Mapping[str, int] = field(default_factory=dict)  # loop sweeps the human watched: key -> revision
 
     @property

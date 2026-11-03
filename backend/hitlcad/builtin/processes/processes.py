@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
-from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintSetting, Process, ProcessFinding
+from hitlcad.core.checks import PrintedProcess, PrintFacts, PrintSetting, PrintWay, Process, ProcessFinding
 
 if TYPE_CHECKING:
     from hitlcad.analysis.model import Body
@@ -68,8 +68,10 @@ class FdmProcess(PrintedProcess):
 
         return fdm_checks(body, self)
 
-    def overhang_limit_deg(self) -> float:
-        return self.max_overhang_deg
+    def way(self, body: Body) -> PrintWay:
+        from hitlcad.builtin.processes.checks import fdm_way
+
+        return fdm_way(body, self)
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         from hitlcad.builtin.processes.checks import fdm_recommend
@@ -85,6 +87,9 @@ class ResinProcess(PrintedProcess):
     process: Literal["resin"]
     min_wall_mm: float = Field(default=0.6, gt=0, description="Thinnest wall that prints and survives washing")
     min_drain_mm: float = Field(default=3.5, gt=0, description="Narrowest opening resin drains out of a hollow by")
+    max_overhang_deg: float = Field(
+        default=45, ge=0, lt=90, description="Steepest overhang, from vertical, that cures without support"
+    )
     example = {"process": "resin", "min_wall_mm": 0.6}
     findings = {
         "resin_wall_thickness": ("A resin wall thinner than the minimum", "Thicken the walls to the minimum."),
@@ -92,12 +97,21 @@ class ResinProcess(PrintedProcess):
             "A hollow in a resin part without drain holes",
             "Add drain holes of at least the minimum diameter to every hollow.",
         ),
+        "resin_supports": (
+            "What of a resin part cures on support",
+            "Turn the part so less of it faces down (`up`), or chamfer what does; supports mark the faces they hold.",
+        ),
     }
 
     def checks(self, body: Body) -> list[ProcessFinding]:
         from hitlcad.builtin.processes.checks import resin_checks
 
         return resin_checks(body, self)
+
+    def way(self, body: Body) -> PrintWay:
+        from hitlcad.builtin.processes.checks import resin_way
+
+        return resin_way(body, self)
 
 
 class CncMillingProcess(Process):

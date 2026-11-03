@@ -80,6 +80,11 @@ def passed(findings, name: str) -> bool | None:
     return finding(findings, name).passed
 
 
+def way(process, body: Body):
+    """What a printed process finds of a part lying as `body` does (`PrintedProcess.way`)."""
+    return process.way(body).findings
+
+
 def pocket(radius: float) -> object:
     with BuildPart() as block:
         Box(60, 40, 20, align=ON)
@@ -199,41 +204,45 @@ def test_fdm_overhangs_print_where_bridged_and_fail_unless_on_support(tmp_path: 
     fdm = FdmProcess(process="fdm")
     tee = Box(10, 10, 20, align=ON) + Pos(0, 0, 20) * Box(40, 10, 5, align=ON)  # arms out flat: 90° overhangs
     shape = body(tee, tmp_path, "tee")
-    arms = finding(fdm.checks(shape), "fdm_overhangs")
+    arms = finding(way(fdm, shape), "fdm_overhangs")
     assert (
         arms.passed is False and "2 regions: " in arms.detail and "reaching 15.0 mm past what holds it" in arms.detail
     )
-    supported = FdmProcess(process="fdm", supports=True).checks(shape)
+    # What the print view shades: the arms' undersides, each 15 × 10 mm, need support; the stem's foot is on the bed
+    assert shape.mesh.area_faces[arms.faces["support"]].sum() == pytest.approx(2 * 15 * 10)
+    assert shape.mesh.area_faces[finding(way(fdm, shape), "fdm_bed_contact").faces["bed"]].sum() == pytest.approx(100)
+    supported = way(FdmProcess(process="fdm", supports=True), shape)
     assert passed(supported, "fdm_overhangs") is True
     assert "prints on support" in finding(supported, "fdm_overhangs").detail
+    assert shape.mesh.area_faces[finding(supported, "fdm_overhangs").faces["support"]].sum() == pytest.approx(300)
     m3 = Box(20, 5, 10, align=ON) - Pos(0, 0, 5) * Rotation(90, 0, 0) * Cylinder(1.7, 20)  # an M3 clearance hole
-    assert passed(fdm.checks(body(m3, tmp_path, "m3")), "fdm_overhangs") is True
-    short = fdm.checks(body(Box(28, 10, 20, align=ON) - Box(8, 20, 15, align=ON), tmp_path, "short"))
-    assert passed(short, "fdm_overhangs") is True  # an 8 mm bridge
+    assert passed(way(fdm, body(m3, tmp_path, "m3")), "fdm_overhangs") is True
+    short = way(fdm, body(Box(28, 10, 20, align=ON) - Box(8, 20, 15, align=ON), tmp_path, "short"))
+    assert passed(short, "fdm_overhangs") is True and not finding(short, "fdm_overhangs").faces  # an 8 mm bridge
     shape = body(Box(40, 10, 20, align=ON) - Box(20, 20, 15, align=ON), tmp_path, "long")
-    long = finding(fdm.checks(shape), "fdm_overhangs")
+    long = finding(way(fdm, shape), "fdm_overhangs")
     assert long.passed is False and "bridging 20.0 mm" in long.detail
-    assert passed(FdmProcess(process="fdm", max_bridge_mm=25).checks(shape), "fdm_overhangs") is True
+    assert passed(way(FdmProcess(process="fdm", max_bridge_mm=25), shape), "fdm_overhangs") is True
 
 
 def test_fdm_bed_contact_is_the_base_under_its_outline_and_its_height(tmp_path: Path) -> None:
     fdm = FdmProcess(process="fdm")
     for name, shape in [("bar", Box(100, 5, 5, align=ON)), ("turned", Rotation(0, 0, 45) * Box(100, 5, 5, align=ON)),
                         ("ring", Cylinder(50, 5, align=ON) - Cylinder(48, 5, align=ON))]:  # fmt: skip
-        assert passed(fdm.checks(body(shape, tmp_path, name, FEW_SAMPLES)), "fdm_bed_contact") is True, name
+        assert passed(way(fdm, body(shape, tmp_path, name, FEW_SAMPLES)), "fdm_bed_contact") is True, name
     tower = body(Box(5, 5, 100, align=ON), tmp_path, "tower", FEW_SAMPLES)
-    tall = finding(fdm.checks(tower), "fdm_bed_contact")
+    tall = finding(way(fdm, tower), "fdm_bed_contact")
     assert tall.passed is False and "20.0 × that tall" in tall.detail and "brim" in tall.detail
-    assert passed(FdmProcess(process="fdm", brim=True).checks(tower), "fdm_bed_contact") is True
+    assert passed(way(FdmProcess(process="fdm", brim=True), tower), "fdm_bed_contact") is True
     # Modelled standing, printed lying on its side: the checks see it as it prints
     lying = FdmProcess(process="fdm", up=(1, 0, 0))
     assert np.allclose(fr.transform_points([[1, 0, 0]], lying.made()), [[0, 0, 1]])
     side = Body(
         "side", [Leaf("side", part(Box(5, 5, 100, align=ON), tmp_path, "side"), None, lying.made())], FEW_SAMPLES, TOL
     )  # type: ignore[arg-type]
-    assert passed(lying.checks(side), "fdm_bed_contact") is True
+    assert passed(way(lying, side), "fdm_bed_contact") is True
     assert np.allclose(FdmProcess(process="fdm").made(), fr.IDENTITY)
-    ball = fdm.checks(body(Pos(0, 0, 10) * Sphere(10), tmp_path, "ball", FEW_SAMPLES))
+    ball = way(fdm, body(Pos(0, 0, 10) * Sphere(10), tmp_path, "ball", FEW_SAMPLES))
     assert passed(ball, "fdm_bed_contact") is False and passed(ball, "fdm_overhangs") is False
 
 

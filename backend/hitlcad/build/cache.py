@@ -1,17 +1,13 @@
 """The part cache: each part file's outputs, by exactly the inputs it read.
 
 A part file's outputs are reused when its own text, the `lib/` modules it imported, the values of the
-parameters and interface values it read, and its backend's code and settings are all as they were.
-What a file reads is only known after it runs, so the cache remembers the read-sets each file has
-had, by its path and text, and tries each against the current values: a design copied or moved to
-another folder finds its parts too.
+parameters and interface values it read, and its backend's code and settings are all as they were: a design
+copied or moved to another folder finds its parts too.
 """
 
 from __future__ import annotations
 
 import errno
-import hashlib
-import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -20,8 +16,7 @@ from typing import Any
 
 from hitlcad.backends.base import FileOutcome
 from hitlcad.core.report import Reads
-
-OUTCOME = "outcome.json"
+from hitlcad.kernel.cache import CacheDb
 
 
 def link(source: Path | str, target: Path | str) -> None:
@@ -50,58 +45,52 @@ class Inputs:
 
 
 class PartCache:
-    def __init__(self, root: Path) -> None:
-        self.root = root
+    """Each part file's outputs, an entry of the `parts` cache: its parts' files with its outcome. What a file reads
+    is only known after it runs, so the `part reads` cache keeps the read-sets each file has had, by its path and
+    text, and a lookup tries each against the current values."""
 
-    def _index(self, file: str, inputs: Inputs) -> Path:
-        digest = hashlib.sha256(json.dumps([file, inputs.sources.get(file)]).encode()).hexdigest()
-        return self.root / "index" / f"{digest}.json"
+    def __init__(self, db: CacheDb) -> None:
+        self.outputs = db.cache("parts")
+        self.reads = db.cache("part reads")
 
-    @staticmethod
-    def key(file: str, declared: dict[str, list[str]], inputs: Inputs, reads: Reads) -> str | None:
-        """The cache key of `file`, asked by design.json for the parts and connectors `declared`, given what it
+    def key(self, file: str, declared: dict[str, list[str]], inputs: Inputs, reads: Reads) -> str | None:
+        """The key of `file`'s outputs, asked by design.json for the parts and connectors `declared`, given what it
         read; None when something it read no longer exists."""
         if (any(n not in inputs.values for n in reads.parameters) or any(n not in inputs.interfaces for n in reads.interfaces)
                 or any(m not in inputs.sources for m in reads.modules)):  # fmt: skip
             return None
-        data = {"backend": inputs.fingerprint, "file": inputs.sources.get(file), "declared": declared,
-                "modules": {m: inputs.sources[m] for m in reads.modules}, "assets": inputs.assets,
-                "parameters": {n: inputs.values[n] for n in reads.parameters},
-                "interfaces": {n: inputs.interfaces[n] for n in reads.interfaces}}  # fmt: skip
-        return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+        return self.outputs.key({"backend": inputs.fingerprint, "file": inputs.sources.get(file), "declared": declared,
+                                 "modules": {m: inputs.sources[m] for m in reads.modules}, "assets": inputs.assets,
+                                 "parameters": {n: inputs.values[n] for n in reads.parameters},
+                                 "interfaces": {n: inputs.interfaces[n] for n in reads.interfaces}})  # fmt: skip
 
-    def lookup(self, file: str, declared: dict[str, list[str]], inputs: Inputs) -> tuple[str, FileOutcome] | None:
-        index = self._index(file, inputs)
-        if not index.is_file():
-            return None
-        for raw in json.loads(index.read_text(encoding="utf-8")):
+    def _seen(self, file: str, inputs: Inputs) -> str:
+        return self.reads.key(file, inputs.sources.get(file))
+
+    def lookup(self, file: str, declared: dict[str, list[str]], inputs: Inputs) -> tuple[Path, FileOutcome] | None:
+        """Where `file`'s outputs are kept, and its outcome, when what it read is as it was."""
+        for raw in self.reads.get(self._seen(file, inputs)) or []:
             key = self.key(file, declared, inputs, Reads.model_validate(raw))
-            if key and (self.root / key / OUTCOME).is_file():
-                return key, FileOutcome.model_validate_json((self.root / key / OUTCOME).read_text(encoding="utf-8"))
+            if key and (found := self.outputs.files(key)):
+                return found[0], FileOutcome.model_validate(found[1])
         return None
 
     def store(self, outcome: FileOutcome, declared: dict[str, list[str]], work: Path, inputs: Inputs) -> None:
         key = self.key(outcome.file, declared, inputs, outcome.reads)
         if key is None or outcome.error:
             return
-        target = self.root / key
-        staging = target.with_name(f".{key}.tmp")
-        shutil.rmtree(staging, ignore_errors=True)
+        staging = self.outputs.staging(key)
         for part in outcome.parts:
             for rel in part.files():
                 link(work / rel, staging / rel)
-        staging.mkdir(parents=True, exist_ok=True)
-        (staging / OUTCOME).write_text(outcome.model_dump_json(), encoding="utf-8")
-        shutil.rmtree(target, ignore_errors=True)
-        staging.rename(target)
-        index = self._index(outcome.file, inputs)
-        seen = json.loads(index.read_text(encoding="utf-8")) if index.is_file() else []
-        reads = outcome.reads.model_dump()
-        if reads not in seen:
-            index.parent.mkdir(parents=True, exist_ok=True)
-            index.write_text(json.dumps([*seen, reads]), encoding="utf-8")
+        self.outputs.commit(key, staging, outcome.model_dump(mode="json"))
+        seen = self._seen(outcome.file, inputs)
+        reads = outcome.reads.model_dump(mode="json")
+        if reads not in (known := self.reads.get(seen) or []):
+            self.reads.put(seen, [*known, reads])
 
-    def restore(self, key: str, outcome: FileOutcome, out: Path) -> None:
+    @staticmethod
+    def restore(kept: Path, outcome: FileOutcome, out: Path) -> None:
         for part in outcome.parts:
             for rel in part.files():
-                link(self.root / key / rel, out / rel)
+                link(kept / rel, out / rel)

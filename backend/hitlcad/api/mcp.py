@@ -107,7 +107,7 @@ def build_mcp(core: HitlCad) -> MCPServer:
         pictured = [(r, checks[r.subject]) for r in leads if r.analysis == "requirement" and r.subject in checks]
         if pictured and rev.report.status == "succeeded":
             bodies = BuildBodies(await revisions.built(design_id, rev), core.pipeline.analysis_settings,
-                                 core.pipeline.results_cache)  # fmt: skip
+                                 core.pipeline.results)  # fmt: skip
             for result, check in pictured:
                 if png := check.figure(bodies):
                     out += [f"{MARK['fail']} requirement {result.subject!r}:", Image(data=png, format="png")]

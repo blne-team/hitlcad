@@ -12,7 +12,7 @@ import { CrossedEdits } from "./CrossedEdits";
 import { ParametersPanel } from "./ParametersPanel";
 import { deliveryStatus } from "../lib/delivery";
 import { PinsPanel } from "./PinsPanel";
-import { PrintPanel, unfit } from "./PrintPanel";
+import { choosePrinted, chosenPart, PrintPanel, unfit } from "./PrintPanel";
 import { ReportPanel } from "./ReportPanel";
 import { StructurePanel } from "./StructurePanel";
 import { inspectionTargets } from "../lib/inspection";
@@ -109,7 +109,10 @@ export const TABS: Tab[] = [
     id: "print",
     label: "Print",
     badge: ({ revision }) => (revision ? unfit(revision.report) : 0),
-    render: ({ id, revision }) => <PrintPanel designId={id} revision={revision} />,
+    render: ({ id, revision, ui, setUi }) => (
+      <PrintPanel designId={id} revision={revision} chosen={revision && chosenPart(revision.report, ui.printFocus)}
+        onChoose={(path) => revision && setUi(choosePrinted(ui, revision.id, path))} />
+    ),
   },
   { id: "bom", label: "BOM", render: ({ revision }) => <BomPanel revision={revision} /> },
   { id: "brief", label: "Brief", render: ({ state }) => <BriefPanel brief={state.brief} /> },

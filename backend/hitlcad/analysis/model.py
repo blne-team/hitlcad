@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import threading
-from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -25,9 +23,11 @@ from hitlcad.core.design import DesignSpec, PartSpec
 from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
 from hitlcad.core.structure import Axis, Connector, Measured, Tolerances
 from hitlcad.core.types import Value
+from hitlcad.execution.runtime import MemoryLru
 from hitlcad.geometry import cadview
 from hitlcad.geometry.features import BrepFeatures, Features, Hole, MeshFeatures
 from hitlcad.geometry.mesh import Collider, MeshIssue, closed, load_mesh, measure, measure_union, topology
+from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import StructureError, Unmeasurable
 from hitlcad.materials import Material
 
@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     import manifold3d
     import trimesh
 
-    from hitlcad.analysis.base import ResultCache
     from hitlcad.core.checks import Process
     from hitlcad.core.loops import Solver
     from hitlcad.core.project import Printer
@@ -143,28 +142,20 @@ class Shape:
 
 
 class Shapes:
-    """Part shapes by their files' content, the `limit` used last, shared by the builds of this process and the
-    revisions they load back: a part no edit changed is not loaded or measured again."""
+    """Part shapes by their files' content, shared by the builds of this process and the revisions they load back: a
+    part no edit changed is not loaded or measured again."""
 
     def __init__(self, limit: int) -> None:
-        self.limit = limit
-        self._kept: OrderedDict[str, Shape] = OrderedDict()
-        self._lock = threading.Lock()
+        self._kept: MemoryLru[str, Shape] = MemoryLru(limit)
 
     def of(self, name: str, mesh_file: Path, step_file: Path | None, objects_file: Path) -> Shape:
         content = hashlib.sha256(name.encode())
         for file in (mesh_file, step_file, objects_file):
             content.update(file.read_bytes() if file else b"")
-        key = content.hexdigest()
-        with self._lock:
-            shape = self._kept.pop(key, None)
-            if shape is None:
-                shape = Shape(name, mesh_file, step_file, objects_file)
-            else:
-                shape.files(mesh_file, step_file, objects_file)
-            self._kept[key] = shape
-            while len(self._kept) > self.limit:
-                self._kept.popitem(last=False)
+        shape = self._kept.get(key := content.hexdigest())
+        if shape is None:
+            return self._kept.put(key, Shape(name, mesh_file, step_file, objects_file))
+        shape.files(mesh_file, step_file, objects_file)
         return shape
 
 
@@ -583,7 +574,7 @@ class Moved:
 class BuildBodies:
     """The bodies of a built design, by address, for requirement checks."""
 
-    def __init__(self, built: BuiltDesign, settings: AnalysisSettings, cache: ResultCache) -> None:
+    def __init__(self, built: BuiltDesign, settings: AnalysisSettings, cache: Cache) -> None:
         self.built = built
         self.settings = settings
         self.cache = cache

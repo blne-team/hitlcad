@@ -4,7 +4,7 @@ import type { Pick, Revision } from "../api/types";
 import { useDesign } from "../hooks/useDesign";
 import { useShown } from "../hooks/useRevision";
 import { useSelection } from "../hooks/useSelection";
-import { useScene } from "../hooks/useScene";
+import { useScene, useShading } from "../hooks/useScene";
 import { MOD, useUndo } from "../hooks/useUndo";
 import { type CadMarker, exactShapes } from "../lib/cadView";
 import { rangeAt, shown } from "../lib/motion";
@@ -12,7 +12,7 @@ import { currentRevision, shownBuild, useDesignUi, type InspectorTab } from "../
 import { deliveryStatus } from "../lib/delivery";
 import { toExtension } from "../lib/host";
 import { partNames, selectionMarker } from "../lib/selection";
-import { PrintPlanBox, printNames } from "./PrintPanel";
+import { choosePrinted, plannedAt, printNames } from "./PrintPanel";
 import { inspectionTargets, type InspectionAction } from "../lib/inspection";
 import { CadCanvas } from "./CadCanvas";
 import { ExplodeSpread } from "./ExplodeSpread";
@@ -31,7 +31,7 @@ function shortPath(path: string, keep = 3): string {
 }
 
 /** The revision's 3D view, or its print view (`print_view`: its printed parts, lying as they print). */
-function viewOf(designId: string, revision: Revision | null, role: "view" | "print_view" = "view"): { url: string | null } {
+function viewOf(designId: string, revision: Revision | null, role: "view" | "print_view" | "print_shading" = "view"): { url: string | null } {
   const view = revision?.report.artifacts.find((a) => a.role === role);
   return { url: revision && view ? fileUrl(designId, revision.id, view.path) : null };
 }
@@ -58,12 +58,13 @@ export function DesignView({ id }: { id: string }) {
   // its results, motion and picks come with its revision.
   const running = state?.building ?? null;
   const building = shownBuild(running, ui);
-  // The print view is of the revision on screen, as built: no build running replaces it
-  const printing = ui.printing && revision !== null;
+  // The side panel's Print tab shows the print view of the revision on screen, as built: no build running replaces it
+  const printing = reviewTab === "print" && revision !== null;
   const current = printing ? viewOf(id, revision, "print_view")
     : building?.scene ? { url: fileUrl(id, building.revision, building.scene) } : viewOf(id, revision);
   const { data, error: fetchError } = useScene(current.url, building?.started);
   const ghost = useScene(ui.compare && !printing ? viewOf(id, base).url : null).data;
+  const shading = useShading(printing ? viewOf(id, revision, "print_shading").url : null);
   const modelError = fetchError ?? (viewError?.url === current.url ? viewError.message : null);
 
   const describe = useCallback(async (picks: Pick[]) => {
@@ -107,6 +108,19 @@ export function DesignView({ id }: { id: string }) {
       setUi({ inspection: null });
       sel.select(pick, additive);
     }
+  };
+
+  // In the print view a click chooses a printed part: the view frames it and the Print tab shows its plan
+  const onPrintPick = (pick: Pick) => {
+    const part = revision && pick.component ? plannedAt(revision.report, pick.component.instance) : null;
+    if (!revision || !part) return;
+    setUi(choosePrinted(ui, revision.id, part.path));
+  };
+
+  // Opening Print shows the print view, from all its parts; a pin is placed on the assembly
+  const openReview = (tab: InspectorTab | null) => {
+    if (tab === "print") setUi({ printFocus: null, placing: false });
+    setReviewTab(tab);
   };
 
   const nameOf = useMemo(() => (revision && printing ? printNames(revision.report) : revision && !building ? partNames(revision.report) : undefined),
@@ -185,7 +199,7 @@ export function DesignView({ id }: { id: string }) {
             type="button"
             className={`toggle pin-toggle${ui.placing ? " on" : ""}`}
             aria-pressed={ui.placing}
-            disabled={data === null || building !== null}
+            disabled={data === null || building !== null || printing}
             onClick={() => setUi({ placing: !ui.placing })}
           >
             {ui.placing ? "Placing pins" : "Place pins"}
@@ -202,16 +216,6 @@ export function DesignView({ id }: { id: string }) {
           </button>
           <button
             type="button"
-            className={`toggle print-toggle${ui.printing ? " on" : ""}`}
-            aria-pressed={ui.printing}
-            disabled={revision === null}
-            title="The print view: each printed part lying as it prints, with its plan; your printer in the Design view's Print tab"
-            onClick={() => setUi({ printing: !ui.printing, tab: "print", placing: false })}
-          >
-            Print
-          </button>
-          <button
-            type="button"
             className="icon-button full-screen"
             aria-label="Full screen"
             title="Full screen: hide VS Code's bars (Zen mode); again to bring them back"
@@ -224,7 +228,7 @@ export function DesignView({ id }: { id: string }) {
 
       <div className={`viewport${exploded ? " exploded" : ""}`}>
         {data !== null && !modelError && (
-          <CadCanvas data={data} placing={ui.placing && !building && !printing} markers={printing ? [] : markers} ghost={ghost} motion={building || printing ? null : motion} spread={spread} inspection={building || printing ? null : inspection} onExplode={setExploded} onPick={printing ? () => undefined : onPick} nameOf={nameOf} onError={(message) => setViewError({ url: current.url, message })}
+          <CadCanvas data={data} placing={ui.placing && !building && !printing} markers={printing ? [] : markers} ghost={ghost} shading={printing ? shading : null} motion={building || printing ? null : motion} spread={spread} inspection={printing ? ui.printFocus : building ? null : inspection} onExplode={setExploded} onPick={printing ? onPrintPick : onPick} nameOf={nameOf} onError={(message) => setViewError({ url: current.url, message })}
             tools={(activateInspection) => <InspectionControls count={building ? 0 : targets.length} onOpen={() => {
               activateInspection();
               setUi({ placing: false });
@@ -256,7 +260,7 @@ export function DesignView({ id }: { id: string }) {
         )}
         {exploded && <ExplodeSpread value={spread} onChange={setSpread} />}
         {ui.placing && <p className="viewport-hint">Click the surface to pin a note for your agent. Drag to orbit.</p>}
-        {printing && data !== null && <p className="viewport-hint select-hint">Each printed part once, lying as it prints. Hover one for its plan.</p>}
+        {printing && data !== null && <p className="viewport-hint select-hint">Each printed part once, lying as it prints. Click one for its plan.</p>}
         {!ui.placing && !printing && data !== null && !building && !sel.items.length && (
           <SelectHint>
             {exactShapes(data).size ? "Click a part to select it, and again for the face, edge or vertex under the cursor (Alt-click goes there at once)." : "Click the model to select a point."} Shift-click adds more. Right-drag to pan; scroll to zoom.
@@ -264,8 +268,7 @@ export function DesignView({ id }: { id: string }) {
         )}
 
         <div className="side">
-          <ReviewPanel ctx={{ id, state, revision, building, base, ui, setUi, refresh: live.refresh }} open={reviewTab} onToggle={setReviewTab} />
-          {printing && <PrintPlanBox designId={id} revision={revision} />}
+          <ReviewPanel ctx={{ id, state, revision, building, base, ui, setUi, refresh: live.refresh }} open={reviewTab} onToggle={openReview} />
           {!printing && <SelectionBox items={sel.items} busy={sel.busy} error={sel.error} onClear={sel.clear} status={sel.items.length ? deliveryStatus(state) : null}>
             {selection.length === 2 && revisionId !== null && !sel.busy && !ui.motion && (
               <MeasurementPanel key={`${revisionId}:${selection.map((i) => i.id).join(",")}`} designId={id} revision={revisionId}

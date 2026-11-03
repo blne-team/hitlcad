@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hitlcad.analysis.model import BuiltDesign
 from hitlcad.core.report import Revision
+from hitlcad.execution.runtime import MemoryLru
 from hitlcad.services.designs import DesignService
 
 if TYPE_CHECKING:
@@ -22,8 +23,9 @@ class RevisionFiles:
     def __init__(self, designs: DesignService, pipeline: BuildPipeline, loaded: int) -> None:
         self.designs = designs
         self.pipeline = pipeline  # makes a revision's files again; its part shapes, those a build loaded back shares
-        self.loaded = loaded  # built revisions kept in memory: picks and carries reload the same few
-        self._loaded: OrderedDict[tuple[str, int], BuiltDesign] = OrderedDict()
+        self._loaded: MemoryLru[tuple[str, int], BuiltDesign] = MemoryLru(
+            loaded
+        )  # picks and carries reload the same few
         self._making: defaultdict[Path, asyncio.Lock] = defaultdict(asyncio.Lock)  # a revision's files, made again
 
     async def files(self, design_id: str, rev: Revision) -> Path:
@@ -53,7 +55,7 @@ class RevisionFiles:
             directory = self.designs.store.revision_dir(design_id, rev.id)
             making = self._making.get(directory)
             if directory.is_dir() and not (making and making.locked()):  # not while it is made again
-                self._loaded.pop((design_id, rev.id), None)
+                self._loaded.pop((design_id, rev.id))
                 shutil.rmtree(directory)
 
     async def built(self, design_id: str, rev: Revision) -> BuiltDesign:
@@ -66,8 +68,4 @@ class RevisionFiles:
             directory = await self.files(design_id, rev)
             built = await asyncio.to_thread(load_built, rev.report, rev.spec, Path(self.designs.get(design_id).path),
                                             directory, self.pipeline.shapes)  # fmt: skip
-        self._loaded[key] = built
-        self._loaded.move_to_end(key)
-        while len(self._loaded) > self.loaded:
-            self._loaded.popitem(last=False)
-        return built
+        return self._loaded.put(key, built)
