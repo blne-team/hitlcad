@@ -21,7 +21,7 @@ from hitlcad.builtin.processes.processes import (
     ResinProcess,
     SheetMetalProcess,
 )
-from hitlcad.core.checks import PrintFacts, PrintSetting, PrintWay, ProcessFinding, RoundInterface
+from hitlcad.core.checks import Flex, PrintFacts, PrintNeeds, PrintSetting, PrintWay, ProcessFinding, RoundInterface
 from hitlcad.geometry.features import Features, InsideCorner
 from hitlcad.geometry.mesh import Probe
 from hitlcad.geometry.walls import fmt, listed
@@ -84,15 +84,37 @@ def fdm_checks(body: Body, rules: FdmProcess) -> list[ProcessFinding]:
     return [_walls(body, "fdm_wall_thickness", rules.min_wall_mm, (rules.nozzle_mm, "nozzle"))]
 
 
-def fdm_way(body: Body, rules: FdmProcess, interfaces: list[RoundInterface]) -> PrintWay:
+def fdm_way(body: Body, rules: FdmProcess, needs: PrintNeeds) -> PrintWay:
     """An FDM part lying one way: what of it needs support (a round hole on its side by its own finding, the rest
-    by the overhangs'), whether its base holds it on the bed, and whether what fits on it or threads into it comes
-    out round."""
+    by the overhangs'), whether its base holds it on the bed, whether what fits on it comes out round, and whether
+    what flexes runs along its layers."""
     teardrops, tops = _fdm_teardrops(body, rules)
     bed = _fdm_bed(body, rules)
-    rounds, harmed = _fdm_round(body, rules, interfaces)
-    return PrintWay(findings=[teardrops, _fdm_overhangs(body, rules, tops), bed, *rounds], stands=bed.passed is True,
-                    harmed=harmed)  # fmt: skip
+    rounds, harmed = _fdm_round(body, rules, needs.rounds)
+    flexes, bent = _fdm_flex(rules, needs.flexes)
+    return PrintWay(findings=[teardrops, _fdm_overhangs(body, rules, tops), bed, *rounds, *flexes],
+                    stands=bed.passed is True, harmed=harmed + bent)  # fmt: skip
+
+
+def _fdm_flex(rules: FdmProcess, flexes: list[Flex]) -> tuple[list[ProcessFinding], list[str]]:
+    """What flexes is pulled along the way it runs; of that pull, the share across its layers is the square of how
+    steeply it runs from them (sin² θ: a uniaxial stress resolved onto the layers' normal). Past `layer_bond`, bent,
+    it pulls them apart before it breaks along them. None for a part where nothing flexes. Also: what is bent across
+    its layers."""
+    if not flexes:
+        return [], []
+    across, bent = [], []
+    for f in flexes:
+        rise = abs(float(f.along[2])) / float(np.linalg.norm(f.along))
+        if rise * rise > rules.layer_bond:
+            across.append(f"{f.name} runs {math.degrees(math.asin(rise)):.0f}° from its layers: bent, it pulls them "
+                          f"apart with {rise * rise:.0%} of its pull, past the {rules.layer_bond:.0%} they hold")  # fmt: skip
+            bent.append(f"{f.name} across its layers")
+    return [ProcessFinding(
+        name="fdm_flex", passed=not across,
+        detail="; ".join(across) + ": turn the part so it runs along them" if across
+        else f"{', '.join(f.name for f in flexes)} {'runs' if len(flexes) == 1 else 'run'} along its layers",
+    )], bent  # fmt: skip
 
 
 def _fdm_round(
@@ -119,7 +141,7 @@ def _fdm_round(
         if steps > greatest - least:
             stepped.append(f"{what} {tilt:.0f}° from upright: its {layer:g} mm layers step it {steps:.2f} mm out of round, "
                            f"its fit lets {greatest - least:.2f}")  # fmt: skip
-            harmed.append(it.name)
+            harmed.append(f"{it.name} out of round")
             continue
         offset = mesh.triangles_center - np.asarray(it.origin)
         radial = offset - np.outer(offset @ axis, axis)

@@ -82,14 +82,12 @@ it uses and what it costs are the slicer's to say: hitlcad neither slices nor dr
   on support, and of what lies on the bed, shows; the print view shades what shows on support apart (scarred), and
   the ways weigh it after their fits and before the rest of their support. Whether a scar matters is the human's to
   judge, from the plan and the view.
-
-Left:
-
-1. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
-   "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
-   meet them and checks the one chosen. A material says its service temperature and whether it takes flexing. A
-   part that flexes bends along its layers, not across them, where layers part: its ways weigh that, as they weigh
-   its fits.
+- **Materials for what a part must do.** A `service` requirement states what a part takes, from the brief (`{"kind":
+  "service", "target": "clip", "max_temperature_c": 70, "flexes": [0, 0, 1]}`): its material is checked against it
+  (a material says its service temperature, heat deflection at 0.45 MPa, and whether it takes flexing; unknown is
+  unverified), and the result names the materials its process makes that take it. What flexes is one of what a part
+  must do (`PrintNeeds`, with its fits): bent, it is pulled along the way it runs, and the share across the layers
+  (sin² of its rise) must stay within what they hold (`layer_bond`), so its ways weigh it as they weigh its fits.
 
 Done when, for a printer the human enters (a Bambu Lab P2S with a 0.4 mm nozzle, in Bambu Studio), every printed
 part of the NAS case lies the way its best orientation says, needing no support it could avoid, with each way's

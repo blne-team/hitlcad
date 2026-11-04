@@ -1,18 +1,19 @@
-"""The requirement checks: size, fits within, volume, mass, holes, walls, bodies, clearance, tolerance stacks and
-spans."""
+"""The requirement checks: size, fits within, volume, mass, holes, walls, bodies, clearance, tolerance stacks,
+spans, and what a part takes in service."""
 
 from __future__ import annotations
 
 from collections import Counter
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from hitlcad.core.checks import AXES, Bounded, Check, Number, OnTarget, Verdict, need
 from hitlcad.kernel.errors import Unmeasurable
 
 if TYPE_CHECKING:
     from hitlcad.analysis.model import BuildBodies
+    from hitlcad.materials import Material
 
 
 class SizeCheck(Bounded, OnTarget):
@@ -252,3 +253,77 @@ class SpanCheck(Bounded, Check):
         ok = (least is None or lo >= least) and (most is None or hi <= most)
         through = f", {lo:.2f} … {hi:.2f} mm through {', '.join(sorted({m for *_, m in moved}))}" if moved else ""
         return ok, f"{sitting:.2f} mm where they sit{through} (needs {need(least, most)})"
+
+
+class ServiceCheck(Check):
+    """What a part must take in service, from the brief: the hottest it gets, and that it flexes (a snap, a clip, a
+    living hinge), along which way. Its material must take both; the result names the materials that do, among
+    those its process makes. A printed part that flexes prints with its flexing along its layers (`Check.flexing`)."""
+
+    kind: Literal["service"]
+    target: str = Field(description="A part")
+    max_temperature_c: Number | None = Field(default=None, description="The hottest it gets in service, °C")
+    flexes: tuple[float, float, float] | None = Field(
+        default=None,
+        description="The direction its flexing runs (along what bends), in the part's own frame: its material must "
+        "take flexing, and a printed part prints with this direction along its layers",
+    )
+    example = {"kind": "service", "target": "clip", "max_temperature_c": 70, "flexes": [1, 0, 0]}
+    hint = ("Choose one of the materials the result names (each suits the part's process), or what it must take, "
+            "where the brief allows.")  # fmt: skip
+
+    @model_validator(mode="after")
+    def _says_something(self) -> ServiceCheck:
+        if self.max_temperature_c is None and self.flexes is None:
+            raise ValueError("give max_temperature_c, flexes or both")
+        if self.flexes is not None and not any(self.flexes):
+            raise ValueError("flexes is a direction, so not [0, 0, 0]")
+        return self
+
+    def targets(self) -> list[str]:
+        return [self.target]
+
+    def flexing(self) -> tuple[str, tuple[float, float, float]] | None:
+        return (self.target, self.flexes) if self.flexes is not None else None
+
+    def verify(self, build: BuildBodies) -> Verdict:
+        built = build.built
+        part = built.parts.get(self.target)
+        if part is None:
+            return False, f"no part {self.target!r} in the design"
+        hottest = build.number(self.max_temperature_c)
+        process = built.spec.process(self.target)
+        takes = [name for name, m in built.materials.items() if (process is None or process.process in m.processes)
+                 and _service(m, hottest, self.flexes is not None) == ([], [])]  # fmt: skip
+        maker = process.process if process else "any process"
+        others = f"; of what {maker} makes, " + (f"{', '.join(takes)} take{'s' * (len(takes) == 1)} it" if takes
+                                                 else "nothing in the material registry takes it")  # fmt: skip
+        material = built.materials.get(part.material or "")
+        if material is None:
+            return False, f"{self.target} has no material the registry knows{others}"
+        wrong, unknown = _service(material, hottest, self.flexes is not None)
+        if wrong:
+            return False, f"{self.target} is {part.material}: {'; '.join(wrong)}{others}"
+        if unknown:
+            return None, (f"{self.target} is {part.material}, and the material registry does not say "
+                          f"{' or '.join(unknown)}: add it to a materials.json{others}")  # fmt: skip
+        said = [f"keeps its shape to {material.service_temperature_c:g} °C"] if hottest is not None else []
+        said += ["takes flexing"] if self.flexes is not None else []
+        return True, f"{self.target} is {part.material}, which {' and '.join(said)}"
+
+
+def _service(material: Material, hottest: float | None, flexes: bool) -> tuple[list[str], list[str]]:
+    """What of a part's service a material does not take, and what the registry does not say of it."""
+    wrong, unknown = [], []
+    if hottest is not None:
+        if material.service_temperature_c is None:
+            unknown.append("how hot it keeps its shape")
+        elif material.service_temperature_c < hottest:
+            wrong.append(f"it keeps its shape only to {material.service_temperature_c:g} °C, not the {hottest:g} °C "
+                         "it gets to")  # fmt: skip
+    if flexes:
+        if material.flexes is None:
+            unknown.append("whether it takes flexing")
+        elif not material.flexes:
+            wrong.append("it cracks when flexed again and again")
+    return wrong, unknown

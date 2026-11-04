@@ -224,7 +224,7 @@ async def test_a_fitted_hole_printed_on_its_side_comes_out_of_round_which_the_wa
     base = next(p for p in revision.report.print_plan if p.path == "base")
     now = next(w for w in base.ways if w.current)
     # Its knuckle's hole runs along X as modelled: on its side its 0.2 mm layers step it 0.4 mm out of round
-    assert now.harmed == ["hinge[0]"] and "hinge[0] not round" in now.described()
+    assert now.harmed == ["hinge[0] out of round"] and ", hinge[0] out of round," in now.described()
     stepped = next(r for r in revision.report.results if r.code == "manufacturing.fdm_round" and "base" in r.about)
     assert (
         stepped.status == "fail"
@@ -362,3 +362,49 @@ async def test_what_shows_of_the_assembly_prints_on_support_only_where_it_must(c
         "support" in ways[tuple(float(v) for v in modelled.up)]
         and "scar" not in ways[tuple(float(v) for v in modelled.up)]
     )
+
+
+CLIP = {
+    "design.json": {
+        "hitlcad": 2, "name": "clip", "backend": "build123d", "ground": "clip",
+        "manufacturing": {"process": "fdm"},
+        "parts": {"clip": {"role": "a clip that flexes along its length, warm in service", "file": "parts/clip.py",
+                           "material": "PLA"}},
+        "requirements": [{"text": "The clip snaps on again and again, up to 70 °C",
+                          "check": {"kind": "service", "target": "clip", "max_temperature_c": 70, "flexes": [0, 0, 1]}}],
+    },
+    "parts/clip.py": "from build123d import Align, Box\n\n\ndef build(p, i):\n"
+                     "    return {'clip': (Box(10, 10, 30, align=(Align.CENTER, Align.CENTER, Align.MIN)), {})}\n",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'clip': [Pos()]}\n",
+}  # fmt: skip
+
+
+async def test_a_part_s_service_picks_its_material_and_what_flexes_prints_along_its_layers(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    folder = write_design(tmp_path / "clip", CLIP)
+    state, _ = core.designs.open(folder)
+    report = (await core.builds.build(state.id)).report
+
+    def service(report) -> tuple[str, str]:
+        (found,) = [r for r in report.results if r.code == "requirement.service"]
+        return found.status, found.detail
+
+    assert service(report) == ("fail", "clip is PLA: it keeps its shape only to 57 °C, not the 70 °C it gets to; it "
+                               "cracks when flexed again and again; of what fdm makes, ABS, ASA, PC take it")  # fmt: skip
+    # Upright, its flexing runs straight across its layers: on its side, along them, and that way is better
+    (clip,) = report.print_plan
+    now = next(w for w in clip.ways if w.current)
+    assert now.harmed == ["its flexing across its layers"] and not clip.ways[0].harmed and clip.ways[0].better
+    (orientation,) = [r for r in report.results if r.subject == "clip: orientation"]
+    assert orientation.detail.endswith("it would print its flexing across its layers"), orientation.detail
+    (bent,) = [r for r in report.results if r.code == "manufacturing.fdm_flex"]
+    assert bent.status == "fail" and bent.detail.startswith("its flexing runs 90° from its layers")
+
+    edit_json(folder / "design.json", lambda d: d["parts"]["clip"].update(material="ASA"))
+    report = (await core.builds.build(state.id)).report
+    assert service(report) == ("pass", "clip is ASA, which keeps its shape to 100 °C and takes flexing")
+    edit_json(folder / "design.json", lambda d: d["parts"]["clip"].update(material="PA12"))
+    report = (await core.builds.build(state.id)).report
+    assert service(report) == ("unverified", "clip is PA12, and the material registry does not say how hot it keeps "
+                               "its shape: add it to a materials.json; of what fdm makes, ABS, ASA, PC take it")  # fmt: skip

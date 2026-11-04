@@ -1860,6 +1860,12 @@ export interface components {
              */
             first_layer_squash_mm: number;
             /**
+             * Layer Bond
+             * @description How strongly its layers hold to each other, as a share of its strength along them: what flexes must not pull them apart harder
+             * @default 0.5
+             */
+            layer_bond: number;
+            /**
              * Ignored Overhang Mm2
              * @description An overhang that prints on nothing over less than this still prints
              * @default 1
@@ -2940,7 +2946,7 @@ export interface components {
             stands: boolean;
             /**
              * Harmed
-             * @description Its round features with a fit that would not come out round within it (`PrintWay.harmed`)
+             * @description What it must do that lying this way harms (`PrintWay.harmed`): its fits out of round, its flexing across its layers
              */
             harmed: string[];
             /**
@@ -3200,7 +3206,7 @@ export interface components {
             /** Text */
             text: string;
             /** Check */
-            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"] | components["schemas"]["SpanCheck"] | components["schemas"]["SilhouetteCheck"]) | null;
+            check: (components["schemas"]["SizeCheck"] | components["schemas"]["FitsWithinCheck"] | components["schemas"]["VolumeCheck"] | components["schemas"]["MassCheck"] | components["schemas"]["HoleCheck"] | components["schemas"]["WallCheck"] | components["schemas"]["BodiesCheck"] | components["schemas"]["ClearanceCheck"] | components["schemas"]["StackCheck"] | components["schemas"]["SpanCheck"] | components["schemas"]["ServiceCheck"] | components["schemas"]["SilhouetteCheck"]) | null;
         };
         /**
          * ResinProcess
@@ -3562,6 +3568,38 @@ export interface components {
              * @description The connector whose feature was picked, e.g. 'lid.screws'
              */
             connector: string | null;
+        };
+        /**
+         * ServiceCheck
+         * @description What a part must take in service, from the brief: the hottest it gets, and that it flexes (a snap, a clip, a
+         *     living hinge), along which way. Its material must take both; the result names the materials that do, among
+         *     those its process makes. A printed part that flexes prints with its flexing along its layers (`Check.flexing`).
+         */
+        ServiceCheck: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "service";
+            /**
+             * Target
+             * @description A part
+             */
+            target: string;
+            /**
+             * Max Temperature C
+             * @description The hottest it gets in service, °C
+             */
+            max_temperature_c: number | string | null;
+            /**
+             * Flexes
+             * @description The direction its flexing runs (along what bends), in the part's own frame: its material must take flexing, and a printed part prints with this direction along its layers
+             */
+            flexes: [
+                number,
+                number,
+                number
+            ] | null;
         };
         /** SetSelection */
         SetSelection: {

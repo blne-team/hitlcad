@@ -83,7 +83,7 @@ class Printing:
             return result(self.name, PRINTING_ORIENTATION, f"{name}: orientation", True, detail, [name])
         worse = ("it does not fit the printer" if now.fits is False and best.fits is not False
                  else f"it does not stay put on the bed ({'; '.join(now.problems)})" if best.stands and not now.stands
-                 else f"{', '.join(now.harmed)} would not come out round" if len(now.harmed) > len(best.harmed)
+                 else f"it would print {', '.join(now.harmed)}" if len(now.harmed) > len(best.harmed)
                  else f"{now.shown_support_mm2:.0f} mm² of what shows would print on support"
                  if now.merit[3] > best.merit[3]
                  else f"it needs {now.support_mm2:.0f} mm² of support")  # fmt: skip

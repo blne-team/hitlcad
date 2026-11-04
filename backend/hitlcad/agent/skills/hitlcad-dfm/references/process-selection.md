@@ -24,7 +24,10 @@ supplier-specific rules, record the supplier and conditions rather than generali
 For material selection, consider the use temperature, moisture or chemical exposure, UV, repeated
 deformation, contact requirements and finish as relevant to the actual task. Look up grade-specific
 data when a property determines the design. A material name in the framework supplies only its
-registered properties; it does not certify suitability for every application.
+registered properties; it does not certify suitability for every application. Where the brief says how
+hot a part gets or that it flexes (a snap, a clip, a living hinge), state it as a `service` requirement
+on that part, with the direction its flexing runs: the build checks the material against it, names the
+materials that take it, and prints the part with its flexing along its layers.
 
 ## Map advice to current checks
 

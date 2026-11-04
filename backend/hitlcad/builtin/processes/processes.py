@@ -9,11 +9,11 @@ from pydantic import Field
 from hitlcad.core.checks import (
     PrintedProcess,
     PrintFacts,
+    PrintNeeds,
     PrintSetting,
     PrintWay,
     Process,
     ProcessFinding,
-    RoundInterface,
 )
 
 if TYPE_CHECKING:
@@ -57,6 +57,13 @@ class FdmProcess(PrintedProcess):
         ge=0,
         description="How far the first layer, pressed onto the bed, spreads past its outline each side",
     )
+    layer_bond: float = Field(
+        default=0.5,
+        gt=0,
+        le=1,
+        description="How strongly its layers hold to each other, as a share of its strength along them: what flexes "
+        "must not pull them apart harder",
+    )
     ignored_overhang_mm2: float = Field(
         default=1.0, ge=0, description="An overhang that prints on nothing over less than this still prints"
     )
@@ -89,6 +96,10 @@ class FdmProcess(PrintedProcess):
             "A round feature with a fit whose edge on the bed the first layer squashes past its fit",
             "Chamfer the edge where it meets the bed, at least the first layer's squash, so the fit holds there.",
         ),
+        "fdm_flex": (
+            "What of an FDM part flexes, bent across its layers, pulls them apart",
+            "Turn the part so what flexes runs along its layers (`up`), or split it so that part can.",
+        ),
         "fdm_bed_contact": (
             "An FDM part without a face to stand on the bed",
             "Give the part a flat face to stand on, large enough to hold it, and turn it onto that face (`up`).",
@@ -100,10 +111,10 @@ class FdmProcess(PrintedProcess):
 
         return fdm_checks(body, self)
 
-    def way(self, body: Body, interfaces: list[RoundInterface]) -> PrintWay:
+    def way(self, body: Body, needs: PrintNeeds) -> PrintWay:
         from hitlcad.builtin.processes.checks import fdm_way
 
-        return fdm_way(body, self, interfaces)
+        return fdm_way(body, self, needs)
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         from hitlcad.builtin.processes.checks import fdm_recommend
@@ -140,7 +151,7 @@ class ResinProcess(PrintedProcess):
 
         return resin_checks(body, self)
 
-    def way(self, body: Body, interfaces: list[RoundInterface]) -> PrintWay:
+    def way(self, body: Body, needs: PrintNeeds) -> PrintWay:
         from hitlcad.builtin.processes.checks import resin_way
 
         return resin_way(body, self)

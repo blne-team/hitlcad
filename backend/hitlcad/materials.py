@@ -1,5 +1,5 @@
-"""The material registry: density, the processes a material suits, and the minimum thread engagement
-(in nominal diameters) a screw needs in it.
+"""The material registry: density, the processes a material suits, the minimum thread engagement (in nominal
+diameters) a screw needs in it, and what it takes in service: how hot, and whether it flexes.
 
 Plugins give materials.json files (hitlcad's own: `hitlcad.builtin.materials`); a design sees those of hitlcad's
 own and its project's plugins. A project adds or overrides materials with its own `materials.json`: the nearest one
@@ -24,6 +24,16 @@ class Material(Model):
     processes: list[str] = Field(default_factory=list)
     min_thread_engagement_d: float = Field(
         gt=0, description="Minimum engagement of a screw thread in it, × nominal diameter"
+    )
+    service_temperature_c: float | None = Field(
+        default=None,
+        description="The hottest it keeps its shape at under a light load: its heat deflection temperature at "
+        "0.45 MPa (ISO 75); none where the registry does not know it",
+    )
+    flexes: bool | None = Field(
+        default=None,
+        description="It takes being flexed again and again (a snap, a clip, a living hinge) without cracking: it "
+        "yields well before it breaks; none where the registry does not know",
     )
 
 

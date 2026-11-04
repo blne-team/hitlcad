@@ -72,6 +72,11 @@ class Check(Model):
         sweeps."""
         return None
 
+    def flexing(self) -> tuple[str, tuple[float, float, float]] | None:
+        """The part it says flexes, and the direction its flexing runs in the part's own frame (along what bends):
+        what printing lays along the layers (`Flex`)."""
+        return None
+
 
 class Bounded(Model):
     min: Number | None = None
@@ -174,6 +179,33 @@ class RoundInterface(Model):
     clearance_mm: tuple[float, float] = Field(description="Its fit's least and greatest diametral clearance")
 
 
+class Flex(Model):
+    """What of a printed part flexes (a snap, a clip, a living hinge), as a requirement says (`Check.flexing`): bent,
+    it is pulled along `along`, which must run along its layers, where they part least."""
+
+    name: str = Field(description="As the plan names it: 'its flexing'")
+    along: tuple[float, float, float] = Field(description="The direction its flexing runs, where the part lies")
+
+
+class PrintNeeds(Model):
+    """What a printed part must do that how it lies can harm: its fits come out round (`RoundInterface`), its
+    flexing runs along its layers (`Flex`)."""
+
+    rounds: list[RoundInterface] = Field(default_factory=list)
+    flexes: list[Flex] = Field(default_factory=list)
+
+    def placed(self, frame: fr.Frame) -> PrintNeeds:
+        """Where the part lies when `frame` places it."""
+        turn = frame[:3, :3]
+
+        def moved(v: tuple[float, float, float]) -> tuple[float, float, float]:
+            return tuple(float(x) for x in turn @ np.asarray(v))  # type: ignore[return-value]
+
+        rounds = [it.model_copy(update={"origin": tuple(float(v) for v in fr.transform_points(np.array([it.origin]), frame)[0]),
+                                        "axis": moved(it.axis)}) for it in self.rounds]  # fmt: skip
+        return PrintNeeds(rounds=rounds, flexes=[f.model_copy(update={"along": moved(f.along)}) for f in self.flexes])
+
+
 class PrintWay(Model):
     """What a printed part's process finds of it lying one way up (`PrintedProcess.way`)."""
 
@@ -181,8 +213,8 @@ class PrintWay(Model):
                                            "it shades: 'support' (what prints on nothing but support), 'bed'")  # fmt: skip
     stands: bool = Field(description="It stays put on the bed as it prints, with the brim it is given: a way it does "
                          "not is a way to print it only where no other stands")  # fmt: skip
-    harmed: list[str] = Field(default_factory=list, description="Its round features with a fit that would not come out round within it "
-                              "lying this way")  # fmt: skip
+    harmed: list[str] = Field(default_factory=list, description="What it must do (`PrintNeeds`) that lying this way "
+                              "harms, as the plan says it: 'bore[0] out of round', 'its flexing across its layers'")  # fmt: skip
 
 
 class PrintOrientation(Model):
@@ -193,7 +225,8 @@ class PrintOrientation(Model):
     fits: bool | None = Field(description="On the project's printer; none without one")
     stands: bool = Field(description="It stays put on the bed as it prints (`PrintWay.stands`)")
     harmed: list[str] = Field(
-        description="Its round features with a fit that would not come out round within it (`PrintWay.harmed`)"
+        description="What it must do that lying this way harms (`PrintWay.harmed`): its fits out of round, its "
+        "flexing across its layers"
     )
     support_mm2: float = Field(description="What prints on nothing but support, as its process's checks find it "
                                "(bridged and held edges excluded)")  # fmt: skip
@@ -213,7 +246,7 @@ class PrintOrientation(Model):
     @property
     def merit(self) -> tuple[bool, bool, int, int, int]:
         """What makes one way up better than another, the first that differs deciding: it fits the printer, it stays
-        put on the bed, it keeps more of its fitted round features round, less of what shows prints on support, it
+        put on the bed, it harms less of what the part must do (`PrintNeeds`), less of what shows prints on support, it
         needs less support (each to `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is listed first,
         but height alone makes no way better."""
         return (self.fits is False, not self.stands, len(self.harmed),
@@ -222,7 +255,7 @@ class PrintOrientation(Model):
     def described(self) -> str:
         """As its plan weighs it."""
         stands = "it stands on the bed" if self.stands else "it does not stay put on the bed"
-        oval = f", {', '.join(self.harmed)} not round" if self.harmed else ""
+        oval = f", {', '.join(self.harmed)}" if self.harmed else ""
         scarred = f" ({self.shown_support_mm2:.0f} mm² of it shows)" if round(self.shown_support_mm2) else ""
         textured = f" ({self.shown_bed_mm2:.0f} mm² of it shows)" if round(self.shown_bed_mm2) else ""
         return (
@@ -256,10 +289,10 @@ class PrintedProcess(Process):
         return self.hole_allowance_mm if feature == "hole" else self.shaft_allowance_mm
 
     @abstractmethod
-    def way(self, body: Body, interfaces: list[RoundInterface]) -> PrintWay:
-        """What it finds of the part lying as `body` does that depends on how it lies, its round `interfaces` placed
-        so too: the same judgment for the way it prints and for any other it could, so the ways it could lie are
-        weighed as it is checked."""
+    def way(self, body: Body, needs: PrintNeeds) -> PrintWay:
+        """What it finds of the part lying as `body` does that depends on how it lies, what it must do (`needs`)
+        placed so too: the same judgment for the way it prints and for any other it could, so the ways it could lie
+        are weighed as it is checked."""
 
     def recommend(self, facts: PrintFacts) -> list[PrintSetting]:
         """The part's settings: those the design sets, the rest recommended from what the build knows of it."""

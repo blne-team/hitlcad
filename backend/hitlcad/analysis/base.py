@@ -75,7 +75,8 @@ class Context:
     @cached_property
     def shown(self) -> dict[str, np.ndarray]:
         """Of each of its own parts, the faces seen from outside the assembly (`geometry.visibility`), in any of its
-        placements: a boolean per face of its mesh. Cached by every placed part, as any may hide another."""
+        placements, or from outside the part alone where the assembly places none: a boolean per face of its mesh.
+        Cached by every placed part, as any may hide another."""
         from hitlcad.geometry.visibility import shown
 
         leaves = self.built.leaves()
@@ -86,11 +87,13 @@ class Context:
             for leaf, faces in zip(leaves, shown([leaf.mesh for leaf in leaves]), strict=True):
                 if (name := names.get(id(leaf.part))) is not None:
                     out[name] = out[name] | faces if name in out else faces
+            for name, part in self.built.parts.items():
+                if name not in out:
+                    out[name] = shown([part.mesh])[0]
             return {name: base64.b64encode(np.packbits(faces)).decode() for name, faces in out.items()}
 
-        key = self.cache.key(
-            "shown", [[leaf.path, leaf.part.digest, np.round(leaf.transform, 6).tolist()] for leaf in leaves]
-        )
+        key = self.cache.key("shown", [[leaf.path, leaf.part.digest, np.round(leaf.transform, 6).tolist()] for leaf in leaves],
+                             {name: part.digest for name, part in self.built.parts.items()})  # fmt: skip
         return {name: np.unpackbits(np.frombuffer(base64.b64decode(packed), np.uint8),
                                     count=len(self.built.parts[name].mesh.faces)).astype(bool)
                 for name, packed in self.cache.get_or(key, seen).items()}  # fmt: skip

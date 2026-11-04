@@ -7,11 +7,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from hitlcad.analysis.base import Context, member_code, member_failed, result, structural
 from hitlcad.core import frames as fr
-from hitlcad.core.checks import PrintedProcess, PrintWay, Process, ProcessFinding, RoundInterface
+from hitlcad.core.checks import Flex, PrintedProcess, PrintNeeds, PrintWay, Process, ProcessFinding, RoundInterface
 from hitlcad.core.report import Result
 from hitlcad.kernel.errors import (
     CONNECTOR_COUNT,
@@ -136,34 +134,37 @@ def process_findings(ctx: Context, name: str, process: Process) -> list[ProcessF
 
 
 def print_way(ctx: Context, name: str, process: PrintedProcess) -> PrintWay:
-    """What a printed part's process finds of it lying the way `process.up` says, its round interfaces lying so too:
+    """What a printed part's process finds of it lying the way `process.up` says, what it must do lying so too:
     the way it prints, or any other the best orientation weighs (`analysis.printing.orientations`), judged alike."""
-    interfaces = _lying(ctx, name, process)
+    needs = print_needs(ctx, name).placed(process.made())
     return PrintWay.model_validate(
         _kept(
             ctx,
             "print way",
             name,
             process,
-            lambda body: process.way(body, interfaces).model_dump(mode="json"),
-            [it.model_dump(mode="json") for it in interfaces],
-        )
+            lambda body: process.way(body, needs).model_dump(mode="json"),
+            needs.model_dump(mode="json"),
+        )  # fmt: skip
     )
 
 
 def print_way_key(ctx: Context, name: str, process: PrintedProcess) -> str:
     """The key `print_way` keeps a way by."""
     return process_key(
-        ctx, "print way", name, process, [it.model_dump(mode="json") for it in _lying(ctx, name, process)]
+        ctx, "print way", name, process, print_needs(ctx, name).placed(process.made()).model_dump(mode="json")
     )
 
 
-def _lying(ctx: Context, name: str, process: PrintedProcess) -> list[RoundInterface]:
-    """A part's round interfaces where it lies as `process` makes it."""
-    made = process.made()
-    return [it.model_copy(update={"origin": tuple(float(v) for v in fr.transform_points(np.array([it.origin]), made)[0]),
-                                  "axis": tuple(float(v) for v in made[:3, :3] @ np.asarray(it.axis))})
-            for it in round_interfaces(ctx, name)]  # fmt: skip
+def print_needs(ctx: Context, name: str) -> PrintNeeds:
+    """What a printed part must do that how it lies can harm, in its own frame: its fits (`round_interfaces`) and
+    what the requirements say flexes (`Check.flexing`)."""
+    flexes = []
+    for requirement in ctx.built.spec.requirements:
+        said = requirement.check.flexing() if requirement.check else None
+        if said is not None and said[0] == name:
+            flexes.append(Flex(name="its flexing", along=said[1]))
+    return PrintNeeds(rounds=round_interfaces(ctx, name), flexes=flexes)
 
 
 def round_interfaces(ctx: Context, name: str) -> list[RoundInterface]:

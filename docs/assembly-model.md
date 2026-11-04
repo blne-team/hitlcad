@@ -711,7 +711,7 @@ those of hitlcad's own plugins and of the plugins its project names in `hitlcad.
 | Catalog provider | `CatalogProvider`, hooks `hitlcad_catalogs` and `hitlcad_model_packages` | helpers returning `CatalogPart`s, `search` |
 | Exporter | `Exporter`, hook `hitlcad_exporters` | `title`, `summary`, `export(built, report, out_dir)` |
 | Loop solver | `Solver`, hook `hitlcad_solvers` | `supports(problem)`, `trace(problem, start, end, budget)`: positions, which hitlcad checks |
-| Material | `materials.json`, hook `hitlcad_materials`, or in a project | density, processes, minimum thread engagement |
+| Material | `materials.json`, hook `hitlcad_materials`, or in a project | density, processes, minimum thread engagement; optionally its service temperature (heat deflection at 0.45 MPa, ISO 75) and whether it takes flexing, which a `service` requirement checks (hitlcad's own FDM filaments' temperatures are Bambu Lab's datasheet values; what is not known is left out, and a check of it unverified) |
 | Executor, renderer, store | protocols | one implementation each |
 
 ## What's next
