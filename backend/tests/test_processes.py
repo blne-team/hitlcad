@@ -136,11 +136,12 @@ def test_wall_thickness_is_the_wall_not_the_ray(tmp_path: Path) -> None:
     assert block.thinnest > 19.9  # no thin reading at its edges and corners
     finned = body(Box(30, 30, 10, align=ON) + Pos(0, 0, 10) * Box(20, 0.5, 5, align=ON), tmp_path, "fin").walls
     assert abs(finned.thinnest - 0.5) < 0.02 and abs(finned.at[1]) <= 0.26
-    with BuildPart() as blade:  # a 30° knife edge: it tapers to nothing, and prints rounded off; no wall
+    with BuildPart() as blade:  # a 30° knife edge along Y at X = 20: it tapers to nothing, and prints rounded off
         with BuildSketch(Plane.XZ):
             Polygon((0, 0), (20, 0), (0, 20 * math.tan(math.radians(30))), align=None)
         extrude(amount=20)
-    assert body(blade.part, tmp_path, "blade").walls.thinnest > 2
+    edged = body(blade.part, tmp_path, "blade").walls
+    assert math.hypot(edged.at[0] - 20, edged.at[2]) > 5  # no wall at the knife edge (its 60° corner is one)
 
 
 def test_cnc_milling_wants_inside_corners_a_cutter_can_reach(tmp_path: Path) -> None:

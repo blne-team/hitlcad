@@ -85,11 +85,26 @@ def topology(path: Path) -> list[MeshIssue]:
 
 def clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """A mesh with its vertices merged and its zero-area triangles (a mesher's apexes and seams) dropped, as the
-    solid it is (`solid`): what every analysis measures."""
+    solid it is (`solid`), in its canonical order (`canonical`): what every analysis measures."""
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
     mesh.merge_vertices()
-    return solid(mesh)
+    return canonical(solid(mesh))
+
+
+def canonical(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """The mesh in one order whatever order it came in: its vertices by position, each triangle from its first
+    vertex (its winding kept), the triangles in order. A mesher tessellating in parallel lists the same surface in a
+    different order from one run to the next; measured in this order, it measures alike, and is one content."""
+    import trimesh
+
+    order = np.lexsort(mesh.vertices.T[::-1])
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    faces = rank[mesh.faces]
+    first = faces.argmin(axis=1)
+    faces = np.take_along_axis(faces, (first[:, None] + np.arange(3)) % 3, axis=1)
+    return trimesh.Trimesh(mesh.vertices[order], faces[np.lexsort(faces.T[::-1])], process=False)
 
 
 def solid(mesh: trimesh.Trimesh) -> trimesh.Trimesh:

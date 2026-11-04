@@ -131,8 +131,12 @@ class Shape:
 
     @cached_property
     def digest(self) -> str:
-        """The part's mesh by content: what cached results about it depend on."""
-        return hashlib.sha256(self.mesh_file.read_bytes()).hexdigest()
+        """The part's mesh by content, in its canonical order (`mesh.canonical`): what cached results about it depend
+        on, the same however its mesher listed it."""
+        mesh = self.mesh
+        return hashlib.sha256(
+            np.ascontiguousarray(mesh.vertices).tobytes() + np.ascontiguousarray(mesh.faces).tobytes()
+        ).hexdigest()
 
     @property
     def manifold(self) -> manifold3d.Manifold:

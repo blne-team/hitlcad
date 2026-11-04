@@ -252,7 +252,10 @@ that changed for small models.
 **Cheaper manufacturing checks** (measured in [manufacturing-performance.md](manufacturing-performance.md))
 
 - Wall sampling with an explicit accuracy and coverage policy: genuine wall evidence told apart from tapers
-  before the refinement budget is spent, judged on a corpus of analytic walls, rims, fins and necks.
+  before the refinement budget is spent, judged on a corpus of analytic walls, rims, fins and necks. Known gaps: a
+  knife edge excuses any reading under its taper's bound, so a wall past where a ramp levels off, or a thin fin far
+  from the edge, is excused too; a corner of 60° or more (a wall by definition) reads near nothing at its apex, and
+  a sample at a square edge can read a fraction of a millimetre; whether a sample lands there decides the finding.
 - CNC visibility and molding undercuts refine the whole surface (`_split`); resin drainage traces a dense grid
   of the bounding box. Each profiled on representative parts before its algorithm changes.
 - Ray and nearest-point backends (an Embree-based one against libigl's) benchmarked on the same workloads,

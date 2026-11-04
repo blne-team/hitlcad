@@ -16,7 +16,7 @@ def build(p, i):
     fh, bh, H = p["fan_h"], i.boss_h, i.impeller_h
     r_hub, r_tip = p["hub_d"] / 2, p["fan_d"] / 2
     beta = math.radians(p["blade_angle"])
-    span = r_tip - r_hub + 1
+    span = r_tip  # from the axis: its tilted inner end buried in the hub, where a cut at the hub's radius pokes out
     w = p["blade_t"] / math.sin(beta)  # the blade's width in a horizontal section
 
     def y_at(z):  # where the blade's centre plane crosses height z
@@ -24,13 +24,13 @@ def build(p, i):
 
     with BuildPart() as blades:
         for k in range(p["blade_count"]):
-            with Locations(Rot(0, 0, k * 360 / p["blade_count"]) * Pos(r_hub - 1 + span / 2, 0, 0)):
+            with Locations(Rot(0, 0, k * 360 / p["blade_count"]) * Pos(span / 2, 0, 0)):
                 with Locations(Pos(0, 0, fh / 2) * Rot(p["blade_angle"] - 90, 0, 0)):
                     Box(span, p["blade_t"], 3 * fh)
         with Locations(Pos(0, 0, FOOT)):
             Box(4 * r_tip, 4 * r_tip, fh - 2 * FOOT, align=ON, mode=Mode.INTERSECT)
         for k in range(p["blade_count"]):
-            with Locations(Rot(0, 0, k * 360 / p["blade_count"]) * Pos(r_hub - 1 + span / 2, 0, 0)):
+            with Locations(Rot(0, 0, k * 360 / p["blade_count"]) * Pos(span / 2, 0, 0)):
                 with Locations(Pos(0, y_at(FOOT), 0)):
                     Box(span, w, FOOT, align=ON)
                 with Locations(Pos(0, y_at(fh - FOOT), fh - FOOT)):
