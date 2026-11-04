@@ -179,7 +179,8 @@ def write_print_scene(built: BuiltDesign, out_dir: Path) -> bool:
 def write_print_shading(built: BuiltDesign, out_dir: Path, settings: AnalysisSettings, cache: Cache) -> bool:
     """What the print view shades of each printed part, each way it could lie (`analysis.printing.orientations`):
     the faces its process found of it lying that way (each finding's `faces`, from the cache), as triangles by how
-    they are shaded ('support', 'bed') where the view would lay it so, with the move from where it lies now (by rows,
+    they are shaded ('support', 'bed', and 'scar': what shows of the assembly on support) where the view would lay it
+    so, with the move from where it lies now (by rows,
     as the motion preview takes it), so the view shows any way the human points at. False, and no file, where
     nothing is printed."""
     slots, _ = print_layout(built)
@@ -188,7 +189,7 @@ def write_print_shading(built: BuiltDesign, out_dir: Path, settings: AnalysisSet
     parts = []
     for p, middle in slots:
         ctx = Context(built=p.built, settings=settings, bodies=BuildBodies(p.built, settings, cache), cache=cache)
-        mesh, now = p.part.mesh, lying(p, p.process, middle)
+        mesh, now, shown = p.part.mesh, lying(p, p.process, middle), ctx.shown[p.name]
         ways = []
         for way in orientations(ctx, p.name, p.process):
             turned = p.process if way.current else p.process.model_copy(update={"up": way.up})
@@ -198,9 +199,15 @@ def write_print_shading(built: BuiltDesign, out_dir: Path, settings: AnalysisSet
             for finding in print_way(ctx, p.name, turned).findings:
                 for shade, faces in finding.faces.items():
                     shades.setdefault(shade, []).extend(faces)
+            if support := shades.get("support"):  # what shows of it, scarred where the support comes off
+                shades["support"], shades["scar"] = (
+                    [f for f in support if not shown[f]],
+                    [f for f in support if shown[f]],
+                )
             ways.append({"up": list(way.up), "current": way.current,
                          "move": np.round((at @ np.linalg.inv(now))[:3], 6).ravel().tolist(),
-                         **{shade: np.round(vertices[mesh.faces[faces]], 2).ravel().tolist() for shade, faces in shades.items()}})  # fmt: skip
+                         **{shade: np.round(vertices[mesh.faces[faces]], 2).ravel().tolist() for shade, faces in shades.items()
+                            if faces}})  # fmt: skip
         parts.append({"path": p.path, "ways": ways})
     (out_dir / cadview.PRINT_SHADING_FILE).write_text(
         json.dumps({"parts": parts}, separators=(",", ":")), encoding="utf-8"

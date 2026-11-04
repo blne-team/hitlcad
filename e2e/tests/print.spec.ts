@@ -107,6 +107,9 @@ test("a click on a part in the print view opens its plan, and printing it a bett
   const item = side.locator(".plan-item"); // the click chose it: its plan opens beside it
   await expect(item.locator(".plan-ways h4")).toHaveText(/^It could lie better\./);
   await expect(item.locator(".plan-ways li").first()).toContainText(/^best on its .* face: 0 mm² support/);
+  // alone in its design, all of it shows: the support under its arm scars it, and the plan says so
+  await expect(side.locator(".shade-key")).toContainText("shows, and needs support: scarred");
+  await expect(item.locator(".plan-ways li", { hasText: "as modelled" })).toContainText(/as modelled: (\d+) mm² support \(\1 shows\)/);
   // Pointing at a way shows the part lying so, shaded as its process found it; pointing away, as it prints
   const best = item.locator(".plan-ways li").first();
   await best.hover();

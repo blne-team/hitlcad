@@ -17,7 +17,7 @@ interface Props {
   markers: CadMarker[];
   /** A scene to show as a ghost, e.g. the revision being compared against. */
   ghost?: Shapes | null;
-  /** The print view's shading of its parts: where they need support, what lies on the bed. */
+  /** The print view's shading of its parts: where they need support (scarred where it shows), what lies on the bed. */
   shading?: Shading | null;
   /** Instances moved along a mate's range of motion. */
   motion?: CadMotion | null;

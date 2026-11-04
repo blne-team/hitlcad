@@ -3,6 +3,7 @@ printer (the human enters theirs when they first prepare to print) there is noth
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from typing import Any
 
@@ -83,6 +84,8 @@ class Printing:
         worse = ("it does not fit the printer" if now.fits is False and best.fits is not False
                  else f"it does not stay put on the bed ({'; '.join(now.problems)})" if best.stands and not now.stands
                  else f"{', '.join(now.harmed)} would not come out round" if len(now.harmed) > len(best.harmed)
+                 else f"{now.shown_support_mm2:.0f} mm² of what shows would print on support"
+                 if now.merit[3] > best.merit[3]
                  else f"it needs {now.support_mm2:.0f} mm² of support")  # fmt: skip
         detail = f"printed {face(best.up)} (`up` {list(best.up)}), {best.described()}; {face(now.up)}, as it prints now, {worse}"
         return result(self.name, PRINTING_ORIENTATION, f"{name}: orientation", False, detail, [name],
@@ -120,7 +123,9 @@ def orientations(ctx: Context, name: str, process: PrintedProcess) -> list[Print
     ]
     turned = [process if n == 0 else process.model_copy(update={"up": up}) for n, up in enumerate(ups)]
     bed = printer.build_volume_mm if printer else None
-    key = ctx.cache.key("print orientations", [print_way_key(ctx, name, t) for t in turned], bed)
+    shown = ctx.shown[name]
+    key = ctx.cache.key("print orientations", [print_way_key(ctx, name, t) for t in turned], bed,
+                        hashlib.sha256(np.packbits(shown).tobytes()).hexdigest())  # fmt: skip
 
     def judged() -> list[dict[str, Any]]:
         out = []
@@ -133,6 +138,8 @@ def orientations(ctx: Context, name: str, process: PrintedProcess) -> list[Print
             out.append(PrintOrientation(up=way_up.up, label=face(way_up.up), fits=fits, stands=way.stands, harmed=way.harmed,
                                         height_mm=height, footprint_mm=(length, width), turn_deg=turn if bed else None,
                                         support_mm2=_area(mesh, way, "support"), bed_mm2=_area(mesh, way, "bed"),
+                                        shown_support_mm2=_area(mesh, way, "support", shown),
+                                        shown_bed_mm2=_area(mesh, way, "bed", shown),
                                         problems=[f.detail for f in way.findings if f.passed is False], current=n == 0))  # fmt: skip
         now = out[0].merit
         ordered = sorted(out, key=lambda w: (*w.merit, w.height_mm))
@@ -141,9 +148,13 @@ def orientations(ctx: Context, name: str, process: PrintedProcess) -> list[Print
     return [PrintOrientation.model_validate(w) for w in ctx.cache.get_or(key, judged)]
 
 
-def _area(mesh: trimesh.Trimesh, way: PrintWay, shade: str) -> float:
-    """The area of what a way's findings shade so ('support', 'bed')."""
-    return float(mesh.area_faces[sorted({f for x in way.findings for f in x.faces.get(shade, [])})].sum())
+def _area(mesh: trimesh.Trimesh, way: PrintWay, shade: str, among: np.ndarray | None = None) -> float:
+    """The area of what a way's findings shade so ('support', 'bed'), of the faces `among` (a boolean per face) if
+    given."""
+    faces = np.array(sorted({f for x in way.findings for f in x.faces.get(shade, [])}), dtype=int)
+    if among is not None:
+        faces = faces[among[faces]]
+    return float(mesh.area_faces[faces].sum())
 
 
 def plan(ctx: Context, components: dict[str, list[PlannedPart]]) -> list[PlannedPart]:

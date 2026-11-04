@@ -9,6 +9,7 @@ changed.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import logging
@@ -70,6 +71,29 @@ class Context:
         from hitlcad.analysis.coverage import links
 
         return links(self.built)[0]
+
+    @cached_property
+    def shown(self) -> dict[str, np.ndarray]:
+        """Of each of its own parts, the faces seen from outside the assembly (`geometry.visibility`), in any of its
+        placements: a boolean per face of its mesh. Cached by every placed part, as any may hide another."""
+        from hitlcad.geometry.visibility import shown
+
+        leaves = self.built.leaves()
+        names = {id(part): name for name, part in self.built.parts.items()}
+
+        def seen() -> dict[str, str]:
+            out: dict[str, np.ndarray] = {}
+            for leaf, faces in zip(leaves, shown([leaf.mesh for leaf in leaves]), strict=True):
+                if (name := names.get(id(leaf.part))) is not None:
+                    out[name] = out[name] | faces if name in out else faces
+            return {name: base64.b64encode(np.packbits(faces)).decode() for name, faces in out.items()}
+
+        key = self.cache.key(
+            "shown", [[leaf.path, leaf.part.digest, np.round(leaf.transform, 6).tolist()] for leaf in leaves]
+        )
+        return {name: np.unpackbits(np.frombuffer(base64.b64decode(packed), np.uint8),
+                                    count=len(self.built.parts[name].mesh.faces)).astype(bool)
+                for name, packed in self.cache.get_or(key, seen).items()}  # fmt: skip
 
 
 #: When an analysis runs: cause before effect. Where results share a cause (`Result.cause`), the earliest

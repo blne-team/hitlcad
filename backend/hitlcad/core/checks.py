@@ -198,6 +198,9 @@ class PrintOrientation(Model):
     support_mm2: float = Field(description="What prints on nothing but support, as its process's checks find it "
                                "(bridged and held edges excluded)")  # fmt: skip
     bed_mm2: float = Field(description="What lies on the bed")
+    shown_support_mm2: float = Field(description="Of what prints on support, what shows once the product is "
+                                     "assembled (`Context.shown`): scarred where the support comes off")  # fmt: skip
+    shown_bed_mm2: float = Field(description="Of what lies on the bed, what shows: it takes the bed's texture")
     height_mm: float
     footprint_mm: tuple[float, float] = Field(description="Its length and width seen from above: the least rectangle "
                                               "round it")  # fmt: skip
@@ -208,20 +211,23 @@ class PrintOrientation(Model):
     better: bool = Field(default=False, description="Better than the way it prints now (`merit`)")
 
     @property
-    def merit(self) -> tuple[bool, bool, int, int]:
+    def merit(self) -> tuple[bool, bool, int, int, int]:
         """What makes one way up better than another, the first that differs deciding: it fits the printer, it stays
-        put on the bed, it keeps more of its fitted round features round, it needs less support (to
-        `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is listed first, but height alone makes no way
-        better."""
-        return self.fits is False, not self.stands, len(self.harmed), round(self.support_mm2 / SUPPORT_RESOLUTION_MM2)
+        put on the bed, it keeps more of its fitted round features round, less of what shows prints on support, it
+        needs less support (each to `SUPPORT_RESOLUTION_MM2`). Among ways equal in these the lowest is listed first,
+        but height alone makes no way better."""
+        return (self.fits is False, not self.stands, len(self.harmed),
+                round(self.shown_support_mm2 / SUPPORT_RESOLUTION_MM2), round(self.support_mm2 / SUPPORT_RESOLUTION_MM2))  # fmt: skip
 
     def described(self) -> str:
         """As its plan weighs it."""
         stands = "it stands on the bed" if self.stands else "it does not stay put on the bed"
         oval = f", {', '.join(self.harmed)} not round" if self.harmed else ""
+        scarred = f" ({self.shown_support_mm2:.0f} mm² of it shows)" if round(self.shown_support_mm2) else ""
+        textured = f" ({self.shown_bed_mm2:.0f} mm² of it shows)" if round(self.shown_bed_mm2) else ""
         return (
-            f"{stands}{oval}, {self.support_mm2:.0f} mm² on support, {self.bed_mm2:.0f} mm² on the bed, "
-            f"{self.height_mm:.1f} mm tall"
+            f"{stands}{oval}, {self.support_mm2:.0f} mm² on support{scarred}, {self.bed_mm2:.0f} mm² on the "
+            f"bed{textured}, {self.height_mm:.1f} mm tall"
         )
 
 

@@ -2953,6 +2953,16 @@ export interface components {
              * @description What lies on the bed
              */
             bed_mm2: number;
+            /**
+             * Shown Support Mm2
+             * @description Of what prints on support, what shows once the product is assembled (`Context.shown`): scarred where the support comes off
+             */
+            shown_support_mm2: number;
+            /**
+             * Shown Bed Mm2
+             * @description Of what lies on the bed, what shows: it takes the bed's texture
+             */
+            shown_bed_mm2: number;
             /** Height Mm */
             height_mm: number;
             /**

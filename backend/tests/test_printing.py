@@ -194,9 +194,10 @@ async def test_a_component_s_printed_parts_join_the_plan_times_its_placements(co
     assert plan == {"seat": (1, "PLA"), "leg/foot": (2, "PETG")}
 
 
-def test_a_way_up_is_better_by_fitting_then_standing_then_support_never_by_height_alone() -> None:
+def test_a_way_up_is_better_by_fitting_standing_fits_then_support_where_it_shows_never_by_height_alone() -> None:
     def way(**kw: object) -> PrintOrientation:
         fields = {"up": (0, 0, 1), "label": "x", "fits": True, "stands": True, "support_mm2": 0.0, "bed_mm2": 100.0,
+                  "shown_support_mm2": 0.0, "shown_bed_mm2": 0.0,
                   "harmed": [], "height_mm": 10.0, "footprint_mm": (20.0, 10.0), "turn_deg": 0.0, "problems": [],
                   "current": False} | kw  # fmt: skip
         return PrintOrientation.model_validate(fields)
@@ -207,6 +208,9 @@ def test_a_way_up_is_better_by_fitting_then_standing_then_support_never_by_heigh
     assert way(fits=False).merit > way(support_mm2=9000).merit  # off the bed is worse than any support
     assert way(harmed=["bore[0]"]).merit > way(support_mm2=9000).merit  # an oval fit is worse than any support
     assert way(harmed=["bore[0]"]).merit < way(stands=False).merit  # but a part that tips over prints nothing
+    # a scar on what shows is worse than any support where it does not
+    assert way(support_mm2=60, shown_support_mm2=50).merit > way(support_mm2=9000).merit
+    assert way(support_mm2=60, shown_support_mm2=50).merit < way(harmed=["bore[0]"]).merit
     assert way(support_mm2=12, height_mm=50).merit == way(support_mm2=8, height_mm=5).merit  # within a facet's noise
 
 
@@ -314,3 +318,47 @@ async def test_the_file_to_print_from_has_each_copy_lying_as_it_prints_with_its_
         in page
     )
     assert "- **3 walls**: it is a test" in page and "PLA: Bambu PLA Basic, AMS slot 1" in page
+
+
+CAP = {
+    "design.json": {
+        "hitlcad": 2, "name": "cap", "backend": "build123d", "ground": "base",
+        "manufacturing": {"process": "fdm"},
+        "parts": {
+            "base": {"role": "a plate the cap sits on, closing its pocket", "file": "parts/parts.py", "material": "PLA"},
+            "cap": {"role": "a hollow cap with a flange round its foot", "file": "parts/parts.py", "material": "PLA",
+                    "manufacturing": {"process": "fdm", "up": [0, 0, -1]}},
+        },
+    },
+    "parts/parts.py": "from build123d import Align, Box, Pos\n\nON = (Align.CENTER, Align.CENTER, Align.MIN)\n\n\n"
+                      "def build(p, i):\n"
+                      "    cap = Box(60, 60, 20, align=ON) + Box(74, 74, 3, align=ON) - Box(56, 56, 16, align=ON)\n"
+                      "    return {'base': (Box(80, 80, 5, align=ON), {}), 'cap': (cap, {})}\n",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n    return {'base': [Pos()], 'cap': [Pos(0, 0, 5)]}\n",
+}  # fmt: skip
+
+
+async def test_what_shows_of_the_assembly_prints_on_support_only_where_it_must(core: HitlCad, tmp_path: Path) -> None:
+    state, _ = core.designs.open(write_design(tmp_path / "cap", CAP))
+    revision = await core.builds.build(state.id)
+    report = revision.report
+    (cap,) = [p for p in report.print_plan if p.path == "cap"]
+    now = next(w for w in cap.ways if w.current)
+    modelled = next(w for w in cap.ways if w.label == "as modelled")
+    # flipped, the flange's top (which shows) prints on support and the cap's top on the bed; as modelled, only the
+    # pocket's ceiling (which the base closes off) does: more support, none of it shown, so better
+    assert (now.support_mm2, now.shown_support_mm2, now.shown_bed_mm2) == (1876, 1876, 3600)
+    assert (modelled.support_mm2, modelled.shown_support_mm2, modelled.shown_bed_mm2) == (3136, 0, 0)
+    assert cap.ways[0] == modelled and modelled.better
+    (orientation,) = [r for r in report.results if r.subject == "cap: orientation"]
+    assert orientation.status == "fail" and orientation.detail.endswith("1876 mm² of what shows would print on support")
+    assert "1876 mm² on support (1876 mm² of it shows), 3600 mm² on the bed (3600 mm² of it shows)" in now.described()
+
+    # the print view shades what shows of it on support apart from the rest of its support
+    shading = json.loads((core.designs.store.revision_dir(state.id, revision.id) / "print-shading.json").read_text())
+    ways = {tuple(w["up"]): w for p in shading["parts"] if p["path"] == "cap" for w in p["ways"]}
+    assert "scar" in ways[(0.0, 0.0, -1.0)] and "support" not in ways[(0.0, 0.0, -1.0)]
+    assert (
+        "support" in ways[tuple(float(v) for v in modelled.up)]
+        and "scar" not in ways[tuple(float(v) for v in modelled.up)]
+    )

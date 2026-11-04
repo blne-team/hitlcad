@@ -12,7 +12,9 @@ access or orientation, accounting for the added joint and assembly work. Plan th
 transitions and horizontal openings rather than relying on a universal overhang angle.
 
 Model the part for the assembly and say which way up it prints (`up` in its `manufacturing`), with a
-useful bed-contact surface that way; the build judges each way it could lie and names a better one. A
+useful bed-contact surface that way; the build judges each way it could lie and names a better one. It
+weighs support on what shows of the assembled product (its outside, not what another part or the inside
+hides) before support elsewhere, as removing support scars a face. A
 chamfer or adjusted hole profile can reduce an unsupported underside where function allows it: a round
 hole lying on its side sags at its top, which a teardrop (its top a 45° point) prints without. Keep
 precise circular interfaces circular when the intended mating feature requires that geometry, and print

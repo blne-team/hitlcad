@@ -31,7 +31,7 @@ function shownWays(file: PrintShading, pointed: PointedWay | null) {
 
 /** What the print view shades: each part as it is shown. */
 export function shadingOf(file: PrintShading, pointed: PointedWay | null): Shading {
-  const out: Required<Shading> = { support: [], bed: [] };
+  const out: Required<Shading> = { support: [], scar: [], bed: [] };
   for (const { way } of shownWays(file, pointed)) {
     for (const shade of Object.keys(out) as Shade[]) way[shade]?.forEach((v) => out[shade].push(v));
   }
@@ -44,10 +44,11 @@ export function pointedMove(file: PrintShading, pointed: PointedWay | null): Cad
   return moved.length ? moved.map(({ path, way }) => ({ instances: [path], matrix: way.move })) : null;
 }
 
-export type Shade = "support" | "bed";
+export type Shade = "support" | "scar" | "bed";
 
 /** How the print view shades them, and how the Print tab names them. */
 export const SHADES: Record<Shade, { color: string; label: string }> = {
   support: { color: "#e03131", label: "needs support" },
+  scar: { color: "#f59f00", label: "shows, and needs support: scarred" },
   bed: { color: "#1c7ed6", label: "lies on the bed" },
 };

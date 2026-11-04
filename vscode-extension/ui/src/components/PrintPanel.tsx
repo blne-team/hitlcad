@@ -140,7 +140,8 @@ function wayText(w: PrintOrientation): string {
   const fits = w.fits === null ? "" : w.fits ? " · fits" : " · does not fit";
   const stands = w.stands ? "" : " · does not stay put";
   const round = w.harmed.length ? ` · ${w.harmed.join(", ")} not round` : "";
-  return `${w.label}: ${w.support_mm2.toFixed(0)} mm² support, ${w.bed_mm2.toFixed(0)} mm² on the bed, ${w.height_mm.toFixed(0)} mm tall${fits}${stands}${round}`;
+  const shows = (mm2: number) => (Math.round(mm2) ? ` (${mm2.toFixed(0)} shows)` : "");
+  return `${w.label}: ${w.support_mm2.toFixed(0)} mm² support${shows(w.shown_support_mm2)}, ${w.bed_mm2.toFixed(0)} mm² on the bed${shows(w.shown_bed_mm2)}, ${w.height_mm.toFixed(0)} mm tall${fits}${stands}${round}`;
 }
 
 /** The planned parts that do not fit the printer's bed as they lie: what the Print tab's badge counts. */

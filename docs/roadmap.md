@@ -76,14 +76,16 @@ it uses and what it costs are the slicer's to say: hitlcad neither slices nor dr
   the slicer's: its Arrange turns parts only about Z, which keeps the way each prints. The Print tab offers both
   files; without a printer the output waits on it (unverified). The check is the human's: the file opened in Bambu
   Studio, each part as the plan says.
+- **Shown faces.** What of a part shows is found from the assembly (`geometry.visibility`): the faces seen from
+  outside the product from 42 sides, a 5 mm ball rolled over each view so that what lies behind a vent, a grille or
+  a finger guard does not show, nor what faces another part or the inside. Each way says how much of what it prints
+  on support, and of what lies on the bed, shows; the print view shades what shows on support apart (scarred), and
+  the ways weigh it after their fits and before the rest of their support. Whether a scar matters is the human's to
+  judge, from the plan and the view.
 
-Left, in this order:
+Left:
 
-1. **Shown faces.** What of a part shows is found from the assembly: the faces seen from outside the product, not
-   those facing another part or inside it. A way that prints a shown face over support (scarred) or on the bed (the
-   plate's texture) says how much in its plan and is shaded so; the ways weigh it after their support. Whether a
-   scar matters is the human's to judge, from the plan and the view.
-2. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
+1. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
    "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
    meet them and checks the one chosen. A material says its service temperature and whether it takes flexing. A
    part that flexes bends along its layers, not across them, where layers part: its ways weigh that, as they weigh
