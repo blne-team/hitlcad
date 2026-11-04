@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from hitlcad.execution.runtime import MemoryLru
 from hitlcad.kernel.cache import CacheDb
+from hitlcad.kernel.lru import MemoryLru
 
 
 def test_a_value_is_kept_by_what_it_depends_on_and_the_code_that_computes_it(tmp_path: Path) -> None:

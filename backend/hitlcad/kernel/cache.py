@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from hitlcad.execution.runtime import MemoryLru
+from hitlcad.kernel.lru import MemoryLru
 
 #: How long a connection waits for another thread's write, seconds.
 BUSY_S = 60.0

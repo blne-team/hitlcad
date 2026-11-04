@@ -1,5 +1,6 @@
-"""The model runtime, and the build worker that serves it, in every backend's own Python. Standard library only,
-so it runs in any Python, Blender's bundled one included.
+"""The model runtime, and the build worker that serves it, in every backend's own Python. Standard library and
+hitlcad's kernel only (whose modules it reads are the standard library's too), so it runs in any Python, Blender's
+bundled one included.
 
 A design's code is `interfaces.py` (one function per mating value), part files under `parts/` and
 `assembly.py`. `Runtime` runs them with `p` (parameter values) and `i` (interface values) and
@@ -29,15 +30,13 @@ import tempfile
 import threading
 import time
 import traceback
-from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol
 
-K = TypeVar("K")
-V = TypeVar("V")
+from hitlcad.kernel.lru import MemoryLru
 
 INTERFACES = "interfaces.py"
 ASSEMBLY = "assembly.py"
@@ -323,52 +322,6 @@ class Adapter(Protocol):
     def export(self, shape: Any, name: str, out: Path, tolerance: dict[str, float]) -> dict[str, Any]:
         """The part's files under `out` in its own frame, named by `BuiltPart`'s fields (`FILES`, relative to
         `out`), with `valid` where the worker checks shapes."""
-
-
-class MemoryLru(Generic[K, V]):
-    """Values in this process by key, the least recently used let go first once they measure more than `capacity`
-    (each `size`: one by default, so the capacity is a count). Safe across threads."""
-
-    def __init__(self, capacity: int, size: Callable[[V], int] = lambda _: 1) -> None:
-        self.capacity = capacity
-        self.size = size
-        self.held = 0
-        self._kept: OrderedDict[K, tuple[V, int]] = OrderedDict()
-        self._lock = threading.Lock()
-
-    def get(self, key: K) -> V | None:
-        with self._lock:
-            found = self._kept.get(key)
-            if found is None:
-                return None
-            self._kept.move_to_end(key)
-            return found[0]
-
-    def put(self, key: K, value: V) -> V:
-        size = self.size(value)
-        with self._lock:
-            if (old := self._kept.pop(key, None)) is not None:
-                self.held -= old[1]
-            if size <= self.capacity:
-                self._kept[key] = value, size
-                self.held += size
-            while self.held > self.capacity:
-                _, (_, gone) = self._kept.popitem(last=False)
-                self.held -= gone
-        return value
-
-    def get_or(self, key: K, make: Callable[[], V]) -> V:
-        """Its value, made and kept when there is none (two threads asking at once may both make it)."""
-        found = self.get(key)
-        return found if found is not None else self.put(key, make())
-
-    def pop(self, key: K) -> None:
-        with self._lock:
-            if (old := self._kept.pop(key, None)) is not None:
-                self.held -= old[1]
-
-    def __len__(self) -> int:
-        return len(self._kept)
 
 
 class Exports:

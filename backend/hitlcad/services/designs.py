@@ -31,8 +31,8 @@ from hitlcad.core.events import (
 )
 from hitlcad.core.report import BuildSpec, BuiltFrom, Earlier, Revision
 from hitlcad.core.types import new_id
-from hitlcad.execution.runtime import MemoryLru
 from hitlcad.kernel.errors import NOT_FOUND_DESIGN, NOT_FOUND_REVISION, REQUEST_INVALID, STORE_UNREADABLE, HitlcadError
+from hitlcad.kernel.lru import MemoryLru
 from hitlcad.services.bus import EventBus
 from hitlcad.services.documents import Change, DocumentService
 from hitlcad.store.base import DesignStore

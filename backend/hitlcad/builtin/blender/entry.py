@@ -1,5 +1,7 @@
-"""Blender's build worker. Runs inside Blender's bundled Python, which cannot import hitlcad: it loads the
-model runtime from hitlcad's execution folder, and serves jobs (`runtime.serve`) with the adapter below.
+"""Blender's build worker. Runs inside Blender's bundled Python, which has none of hitlcad's dependencies: it
+loads the `hitlcad` package from its own folder alone (nothing else of the environment it is installed in, whose
+compiled packages are not Blender's), imports the model runtime from it, which reads only the standard library,
+and serves jobs (`runtime.serve`) with the adapter below.
 
 Usage: blender -b --factory-startup -P entry.py   (it reads its jobs' paths on stdin)
 
@@ -7,15 +9,28 @@ Scene convention: 1 Blender unit = 1 mm, Z up. Each part file runs in a fresh, e
 (`model.blend`) is put together in one more, from the built parts' files.
 """
 
+import importlib.util
 import sys
 from pathlib import Path
 
 import bpy
 import mathutils
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "execution"))
-import runtime  # noqa: E402
-from runtime import ModelError  # noqa: E402
+
+def _package() -> None:
+    """hitlcad, from its own folder: its submodules found there and nowhere else."""
+    folder = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "hitlcad", folder / "__init__.py", submodule_search_locations=[str(folder)]
+    )
+    assert spec is not None and spec.loader is not None
+    sys.modules["hitlcad"] = package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+
+
+_package()
+from hitlcad.execution import runtime  # noqa: E402
+from hitlcad.execution.runtime import ModelError  # noqa: E402
 
 
 def _load_sdk():

@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from scipy import ndimage
 
-from hitlcad.execution.runtime import MemoryLru
+from hitlcad.kernel.lru import MemoryLru
 
 #: The picture's right and up as (design axis, sign), looking at the design from that side.
 VIEWS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {

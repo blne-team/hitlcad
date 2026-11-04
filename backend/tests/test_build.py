@@ -337,7 +337,9 @@ async def test_an_impeller_too_big_for_its_duct_is_one_problem(core: HitlCad, tm
     (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
     assert motion.status == "unverified" and "already overlap" in motion.detail
     # The README's seeded mistake: one problem, its interference leading and naming what else it fails
-    (line, judged, printer) = problem_lines(report.results, report.problems, 10)
+    lines = problem_lines(report.results, report.problems, 10)
+    assert len(lines) == 3, lines
+    line, judged, printer = lines
     assert line.startswith("  ✗ interference duct+impeller [interference.overlap]: duct and impeller overlap by "
                            "91.11 mm³"), line  # fmt: skip
     assert line.endswith("(also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')")

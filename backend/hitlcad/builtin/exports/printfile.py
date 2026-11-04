@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hitlcad.build.assemble import copies, print_layout
+from hitlcad.analysis.lying import copies, print_layout
 from hitlcad.core.project import ToPrint
 from hitlcad.exporters import Unavailable
 from hitlcad.kernel.plugins import registry

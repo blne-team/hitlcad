@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from hitlcad.analysis.model import BuiltDesign
 from hitlcad.core.report import Revision
-from hitlcad.execution.runtime import MemoryLru
+from hitlcad.kernel.lru import MemoryLru
 from hitlcad.services.designs import DesignService
 
 if TYPE_CHECKING:

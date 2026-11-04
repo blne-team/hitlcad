@@ -23,12 +23,12 @@ from hitlcad.core.design import DesignSpec, PartSpec
 from hitlcad.core.report import CatalogInfo, MassProperties, MeshMetrics, Reads
 from hitlcad.core.structure import Axis, Connector, Measured, Tolerances
 from hitlcad.core.types import Value
-from hitlcad.execution.runtime import MemoryLru
 from hitlcad.geometry import cadview
 from hitlcad.geometry.features import BrepFeatures, Features, Hole, MeshFeatures
 from hitlcad.geometry.mesh import Collider, MeshIssue, closed, load_mesh, measure, measure_union, topology
 from hitlcad.kernel.cache import Cache
 from hitlcad.kernel.errors import StructureError, Unmeasurable
+from hitlcad.kernel.lru import MemoryLru
 from hitlcad.materials import Material
 
 if TYPE_CHECKING:
