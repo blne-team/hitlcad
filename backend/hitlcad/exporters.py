@@ -17,6 +17,16 @@ if TYPE_CHECKING:
     from hitlcad.analysis.model import BuiltDesign
 
 
+class Unavailable(Exception):
+    """What an exporter raises when this build cannot have its files: why, and the verdict on the design's asking for
+    them (False: the design cannot have them; None: they wait on what only the human can give, such as their
+    printer)."""
+
+    def __init__(self, why: str, passed: bool | None = False) -> None:
+        super().__init__(why)
+        self.passed = passed
+
+
 class Exporter(Protocol):
     name: str
     #: What its files are, for the panel's file list: "Bill of materials".
@@ -25,7 +35,7 @@ class Exporter(Protocol):
     summary: str
 
     def export(self, built: BuiltDesign, report: dict[str, Any], out_dir: Path) -> list[tuple[str, str]]:
-        """Write files under `out_dir`; return (relative path, media type) of each."""
+        """Write files under `out_dir`; return (relative path, media type) of each, or raise `Unavailable`."""
         ...
 
 

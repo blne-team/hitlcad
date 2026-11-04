@@ -1416,6 +1416,9 @@ details summary {
 .printer-summary p {
   margin: 0;
 }
+.slicer-file p {
+  margin: 0 0 10px;
+}
 .print-pass {
   color: var(--ok);
 }

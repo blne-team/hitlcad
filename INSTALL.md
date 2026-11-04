@@ -105,7 +105,10 @@ prints the commands for both.
 The **Print** tab beside a design's 3D view asks once for your printer (build volume, nozzle, slicer, and the filament
 and AMS slot for each material) and keeps it in the project's `hitlcad.toml`, under `[printer]`; edit it
 there or with **Edit printer**. hitlcad ships no printer profiles: it checks each printed part against
-yours, lying the way it prints, and tells you how to print it; you slice and print in your slicer.
+yours, lying the way it prints, and tells you how to print it; you slice and print in your slicer. With the
+`print` output (**For the slicer**), each build writes `print.3mf`: every printed part, as many as the design
+places, lying as it prints with its settings and filament as its own. Open it in Bambu Studio as a project
+(File › Open Project), arrange and slice; `print-plan.md` beside it says how, and what each part is set to.
 
 ## Plugins
 

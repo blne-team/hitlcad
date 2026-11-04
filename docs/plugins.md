@@ -41,8 +41,8 @@ A package may contribute any number of each.
 | `hitlcad_processes` | `Process` subclasses with a `process` literal and `findings` | `processes`: fdm, resin, cnc_milling, sheet_metal, injection_molding |
 | `hitlcad_backends` | factories by name, each taking the settings | `build123d`, `blender` |
 | `hitlcad_catalogs` | `CatalogProvider`s | `catalogs`: bd_warehouse, step |
-| `hitlcad_exporters` | `Exporter`s, each an output design.json `outputs` can name (`step`, `stl`, `native` and `preview` are the build's own) | `exports`: bom, 3mf; `robot`: urdf, sdf |
-| `hitlcad_slicers` | `Slicer`s: adapters to slicer programs, which a project's printer names (`core.project`) | `printing`: bambu-studio |
+| `hitlcad_exporters` | `Exporter`s, each an output design.json `outputs` can name (`step`, `stl`, `native` and `preview` are the build's own); one that cannot write for a build raises `exporters.Unavailable` with why, failing (the design cannot have it) or unverified (it waits on the human) | `exports`: bom, 3mf, print; `robot`: urdf, sdf |
+| `hitlcad_slicers` | `Slicer`s: adapters to slicer programs, which a project's printer names (`core.project`); each writes the `print` output in its slicer's terms (`Slicer.write`: the file the human opens in it, every copy of every part lying as it prints with its settings and filament as its own, and the page saying how to open it) | `printing`: bambu-studio |
 | `hitlcad_solvers` | `Solver`s by name: where a block of an input's motion settles at each position, which motion checks (`Settings.solver`) | `solvers`: sqp |
 | `hitlcad_analyses` | `Analysis` objects, each at a `stage` | none: hitlcad's analyses are core |
 | `hitlcad_materials` | `materials.json` paths | `materials` |
@@ -88,12 +88,12 @@ registered in hitlcad's `pyproject.toml` under the same entry-point group as any
 | `processes` | the five processes and their checks |
 | `build123d`, `blender` | a backend, its entry script, its authoring guide |
 | `catalogs` | bd_warehouse and step, and their model package (`hitlcad.builtin.catalogs`) |
-| `exports` | bom, 3mf |
+| `exports` | bom, 3mf (the assembly), print (the file to print from, through the printer's slicer) |
 | `robot` | urdf, sdf |
 | `solvers` | sqp: where a block settles, by CasADi's SQP method on the block's compiled graph (`Block.nlp`), with exact derivatives |
 | `materials` | the built-in materials |
 | `pictures` | the silhouette check (a model against a reference picture, cut out with OpenCV), and its skill reference |
-| `printing` | the slicers a printer is sliced in: Bambu Studio |
+| `printing` | the slicers a printer is sliced in: Bambu Studio (`print.3mf`, each copy an object with its settings as Bambu Studio keeps an object's, in `Metadata/model_settings.config`, and `print-plan.md`) |
 
 ### What stays core
 

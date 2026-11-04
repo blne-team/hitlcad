@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
+from hitlcad.builtin.printing.bambu import BambuStudio
 from hitlcad.core.project import Slicer
 from hitlcad.kernel.plugins import hookimpl
-
-
-class BambuStudio:
-    name = "bambu-studio"
-    title = "Bambu Studio"
 
 
 @hookimpl

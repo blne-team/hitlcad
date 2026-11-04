@@ -3,16 +3,22 @@ printer its parts are printed on.
 
 hitlcad defines no printer: the human enters theirs when they first prepare a design for printing, and the project
 keeps it (`[printer]`). What a plugin gives is a slicer (`Slicer`, through `hitlcad_slicers`): an adapter to one slicer
-program, which says how to print a part in that slicer's own terms.
+program, which writes the file the human opens in it, each part with its settings in that slicer's own terms.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from pydantic import Field, PositiveFloat
 
 from hitlcad.kernel.model import Model
+
+if TYPE_CHECKING:
+    from hitlcad.core import frames as fr
+    from hitlcad.core.report import PlannedPart
+    from hitlcad.geometry.cadview import Piece
 
 
 class Filament(Model):
@@ -42,8 +48,23 @@ class ProjectSettings(Model):
     printer: Printer | None = None
 
 
+class ToPrint(NamedTuple):
+    """A printed part as its slicer's file takes it: what the print plan says of it (how many, of what, with which
+    settings), its pieces (one per colour), and each copy lying as it prints on the bed, side by side."""
+
+    plan: PlannedPart
+    pieces: list[Piece]
+    copies: list[fr.Frame]
+
+
 class Slicer(Protocol):
     """A slicer program, as a plugin adapts it (`hitlcad_slicers`)."""
 
     name: str  # what a printer's `slicer` names: "bambu-studio"
     title: str  # "Bambu Studio"
+
+    def write(self, design: str, parts: list[ToPrint], printer: Printer, out_dir: Path) -> list[tuple[str, str]]:
+        """The file the human opens in this slicer: every copy of every part, lying as it prints, with its settings
+        and its filament as its own; and a page saying how to open it and what each part is set to, and why. Their
+        paths under `out_dir` and media types."""
+        ...

@@ -233,3 +233,84 @@ async def test_a_fitted_hole_printed_on_its_side_comes_out_of_round_which_the_wa
         upright and all(not w.stands for w in upright) and base.ways[0].current and not any(w.better for w in base.ways)
     )
     assert base.ways.index(upright[0]) > base.ways.index(now)
+
+
+PEGS = {
+    "design.json": {
+        "hitlcad": 2, "name": "pegs", "backend": "build123d", "ground": "base", "outputs": ["print"],
+        "manufacturing": {"process": "fdm"},
+        "parts": {
+            "base": {"role": "a block", "file": "parts/parts.py", "material": "PLA"},
+            "peg": {"role": "a peg printed on its side, two of them", "file": "parts/parts.py", "material": "PETG",
+                    "manufacturing": {"process": "fdm", "up": [1, 0, 0], "walls": 3, "why": "it is a test"}},
+        },
+    },
+    "parts/parts.py": "from build123d import Align, Box\n\nON = (Align.CENTER, Align.CENTER, Align.MIN)\n\n\n"
+                      "def build(p, i):\n    return {'base': (Box(40, 30, 8, align=ON), {}), "
+                      "'peg': (Box(6, 6, 30, align=ON), {})}\n",
+    "assembly.py": "from build123d import Pos\n\n\ndef build(p, i):\n"
+                   "    return {'base': [Pos()], 'peg': [Pos(-10, 0, 8), Pos(10, 0, 8)]}\n",
+}  # fmt: skip
+
+
+async def test_the_file_to_print_from_has_each_copy_lying_as_it_prints_with_its_settings_for_the_slicer(
+    core: HitlCad, tmp_path: Path
+) -> None:
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    import trimesh
+
+    project = tmp_path / "project"
+    write_design(project / "designs" / "pegs", PEGS)
+    (project / "hitlcad.toml").write_text("[plugins]\n", encoding="utf-8")
+    state, _ = core.designs.open(project / "designs" / "pegs")
+    revision = await core.builds.build(state.id)  # no printer yet: the file waits on the human's
+    (wait,) = [r for r in revision.report.results if r.subject == "outputs: print"]
+    assert (wait.status, wait.detail) == ("unverified", "the project has no printer yet: the human enters theirs in "
+                                          "the panel's Print tab")  # fmt: skip
+
+    core.printing.set_printer(state.id, P2S)
+    revision = await core.builds.build(state.id)
+    report = revision.report
+    assert not [r for r in report.results if r.subject == "outputs: print"]
+    assert {a.path for a in report.artifacts if a.role == "print"} == {"print.3mf", "print-plan.md"}
+    root = core.designs.store.revision_dir(state.id, revision.id)
+    package = zipfile.ZipFile(root / "print.3mf")
+    model = ET.fromstring(package.read("3D/3dmodel.model"))
+    ns = {"m": model.tag[1:].split("}")[0]}
+    objects = {o.get("id"): o for o in model.iter(f"{{{ns['m']}}}object")}
+    items = [i.get("objectid") for i in model.iter(f"{{{ns['m']}}}item")]
+    config = ET.fromstring(package.read("Metadata/model_settings.config"))
+
+    # each copy an object of its own, its settings as Bambu Studio keeps an object's, its parts the part's meshes
+    settings = {o.get("id"): {m.get("key"): m.get("value") for m in o.findall("metadata")} for o in config}
+    assert sorted(settings) == sorted(items) and len(items) == 3
+    by_name = {s["name"]: s for s in settings.values()}
+    assert set(by_name) == {"base", "peg #1", "peg #2"}
+    plan = {p.path: {s.name: s for s in p.settings} for p in report.print_plan}
+    assert by_name["peg #1"]["wall_loops"] == "3" and by_name["base"]["wall_loops"] == str(
+        int(plan["base"]["walls"].value)
+    )
+    assert by_name["base"]["sparse_infill_density"] == f"{plan['base']['infill_percent'].value:g}%"
+    assert by_name["base"]["layer_height"] == f"{plan['base']['layer_mm'].value:g}"
+    assert {s["enable_support"] for s in by_name.values()} == {"0"} and {s["brim_type"] for s in by_name.values()} == {
+        "no_brim"
+    }
+    assert by_name["base"]["extruder"] == "1" and "extruder" not in by_name["peg #1"]  # PETG has no filament entered
+    for o in config:
+        meshes = {c.get("objectid") for c in objects[o.get("id")].iter(f"{{{ns['m']}}}component")}
+        assert {p.get("id") for p in o.findall("part")} == meshes
+
+    # lying as it prints, on the bed: the pegs on their sides, 6 mm tall
+    scene = trimesh.load(root / "print.3mf", force="scene")
+    tall = sorted(round(float(g.bounds[1][2] - g.bounds[0][2]), 3) for g in scene.dump())
+    assert tall == [6.0, 6.0, 8.0] and abs(scene.bounds[0][2]) < 1e-6
+
+    page = (root / "print-plan.md").read_text(encoding="utf-8")
+    assert page.startswith("# Printing pegs on the Bambu Lab P2S") and "**File › Open Project…**" in page
+    assert (
+        "| peg | 2 | on its -X face | PETG: no filament entered for it in the Print tab (filament 1) | 0.2 mm layers, 3 walls,"
+        in page
+    )
+    assert "- **3 walls**: it is a test" in page and "PLA: Bambu PLA Basic, AMS slot 1" in page

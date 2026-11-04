@@ -112,7 +112,7 @@ itself, directly or through its components.
   "requirements": [ /* {"text": "…", "check": {…}} */ ],
   "manufacturing": {"process": "fdm"},       // default process of made parts
   "verification": {"position_mm": 0.01, "angle_deg": 0.05, "motion_steps": 2000},
-  "outputs": ["step", "bom", "3mf"],         // what each successful build writes beyond review's own files
+  "outputs": ["step", "bom", "print"],         // what each successful build writes beyond review's own files
   "brief": { /* title, summary, key_dimensions, features, assumptions, open_questions */ }
 }
 ```
@@ -604,7 +604,7 @@ it. The agent adds a name there, or the human ticks it in the panel's Results, a
 | `stl` | `mesh.stl`: the placed assembly as one mesh |
 | `native` | `model.blend` (when a part, a component's included, is a Blender part): the assembly as one Blender scene, 1 unit = 1 mm, Z up, each part's objects with their names and materials in a collection of their own (from its `.glb`, whichever backend built it), each instance a collection instance at its placement named `<design>/<instance path>`, nested for components |
 | `preview` | `preview.png`: iso, front, right and top renders, which the panel shows with the results; the agent's `include_images` renders them for any revision without it |
-| the exporters' | `bom`: `bom.csv`, `bom.json` · `3mf`: `parts/<made part>.3mf`, `model.3mf`, a part as one object per colour with its base material · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
+| the exporters' | `bom`: `bom.csv`, `bom.json` · `3mf`: `model.3mf`, the placed assembly, a part as one object per colour with its base material · `print`: `print.3mf` and `print-plan.md`, written by the project's printer's slicer (below); an unverified `output.unavailable` result while the project has no printer · `urdf`: `urdf/<design>.urdf` with meshes · `sdf`: `sdf/model.sdf` with meshes |
 
 URDF and SDF map placed instances to links (with inertia where the material is known) and mates to
 joints along a tree from `ground`: rigid and fastened fixed, revolute revolute (continuous without

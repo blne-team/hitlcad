@@ -46,7 +46,7 @@ it uses and what it costs are the slicer's to say: hitlcad neither slices nor dr
   `hitlcad.toml`; a plugin gives slicers (`hitlcad_slicers`), Bambu Studio first. PrusaSlicer, OrcaSlicer or Cura
   are another adapter each.
 - **Print orientation.** A printed part's process says which way up it prints (`"up": [0, -1, 0]`), so parts
-  are modelled for the assembly; its process checks, its 3MF and its fit on the printer's bed (`printing.bed`,
+  are modelled for the assembly; its process checks, its `print.3mf` and its fit on the printer's bed (`printing.bed`,
   turned about Z as a slicer would) are of it lying that way. The 3D view's **Print** tab is the print view: each
   printed part once, lying as it prints, on a bed of the printer's size, with its plan; a click on a part frames it
   and shows its whole plan. Each part's candidates are its own way and the stable poses of its hull, each judged by
@@ -69,21 +69,25 @@ it uses and what it costs are the slicer's to say: hitlcad neither slices nor dr
   a chamfer there). A way's merit is then: it fits the printer, it stays put, it keeps its fits round, the support
   it needs; a way that costs a fit says so in the plan. A chamfer or countersink at a connector's feature leads to
   it from the frame's origin, so the fix the finding asks for keeps its connector.
+- **The slicer's file.** The `print` output: the project's printer's slicer adapter (`Slicer.write`) writes
+  `print.3mf`, every printed part as many times as the design places it, each lying as it prints with its settings
+  and filament as its own (Bambu Studio's per-object settings, an object per copy, its filament the material's AMS
+  slot), and `print-plan.md`, how to open it (as a project) and each part's settings with their reasons. Plates are
+  the slicer's: its Arrange turns parts only about Z, which keeps the way each prints. The Print tab offers both
+  files; without a printer the output waits on it (unverified). The check is the human's: the file opened in Bambu
+  Studio, each part as the plan says.
 
 Left, in this order:
 
-1. **Printed for what it does.** What the design declares a part does weighs its ways too: a part that flexes (a
-   clip, a snap, declared with its material's needs, below) bends along its layers, not across them; a face the
-   design shows prints on top or on the bed, not over support. Loads in general, declared by the design, stay
-   under "Speeds and loads" (Later).
-2. **The slicer's file.** One `print.3mf` of every printed part, as many of each as the design has, each lying as
-   it prints, with its settings as its own (Bambu Studio's per-object settings, written by the slicer adapter), so
-   the human opens it, arranges it and slices with nothing to turn or set. Plates are the slicer's: its Arrange knows
-   the plate, groups by filament and turns parts only about Z, which keeps the way each prints. It replaces the `3mf`
-   output's file per part. The check is the human's: the file opened in Bambu Studio, each part as the plan says.
-3. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
+1. **Shown faces.** What of a part shows is found from the assembly: the faces seen from outside the product, not
+   those facing another part or inside it. A way that prints a shown face over support (scarred) or on the bed (the
+   plate's texture) says how much in its plan and is shaded so; the ways weigh it after their support. Whether a
+   scar matters is the human's to judge, from the plan and the view.
+2. **Materials for what a part must do.** The agent declares a part's needs from the brief (`{"kind":
    "service", "target": "clip", "max_temperature_c": 70, "flexes": true}`); hitlcad recommends the materials that
-   meet them and checks the one chosen. A material says its service temperature and whether it takes flexing.
+   meet them and checks the one chosen. A material says its service temperature and whether it takes flexing. A
+   part that flexes bends along its layers, not across them, where layers part: its ways weigh that, as they weigh
+   its fits.
 
 Done when, for a printer the human enters (a Bambu Lab P2S with a 0.4 mm nozzle, in Bambu Studio), every printed
 part of the NAS case lies the way its best orientation says, needing no support it could avoid, with each way's

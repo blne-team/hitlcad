@@ -283,7 +283,7 @@
   "outputs": [
     "native",
     "bom",
-    "3mf"
+    "print"
   ],
   "configurations": {
     "no_collar": {

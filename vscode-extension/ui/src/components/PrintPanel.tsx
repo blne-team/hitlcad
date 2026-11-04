@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { BuildReport, PlannedPart, Printer, PrinterSetup, PrintOrientation, Revision } from "../api/types";
 import type { DesignUi } from "../lib/designUi";
 import type { Inspection } from "../lib/inspection";
+import { toExtension } from "../lib/host";
 import { SHADES } from "../lib/shading";
 
 /** The printed part a print focus (`DesignUi.printFocus`) chose, while it is in the plan. */
@@ -58,6 +59,7 @@ export function PrintPanel({ designId, revision, chosen, onChoose, onPoint }: {
         </p>
         <button type="button" className="button small" onClick={() => setEditing(true)}>Edit printer</button>
       </div>
+      {revision && plan.length > 0 && <SlicerFile designId={designId} revision={revision} slicer={slicer} />}
       {!revision ? <p className="muted">The print plan appears after the first build.</p>
         : !plan.length ? <p className="muted">No part of revision {revision.id} is printed: give a part an FDM or resin process.</p>
         : chosen ? (
@@ -89,7 +91,30 @@ export function PrintPanel({ designId, revision, chosen, onChoose, onPoint }: {
   );
 }
 
-/** The way a planned part prints now. */
+/** The file to print from, as the build wrote it for the printer's slicer (the `print` output), and the page that
+ * says how to open it there; or which output writes them. */
+function SlicerFile({ designId, revision, slicer }: { designId: string; revision: Revision; slicer: string }) {
+  const files = revision.report.artifacts.filter((a) => a.role === "print");
+  if (!files.length) {
+    return <p className="muted tiny">For a file to open in {slicer}, every part lying as it prints with its settings, choose <b>For the slicer</b> among the build's outputs (Results, under Files).</p>;
+  }
+  return (
+    <div className="slicer-file">
+      <p className="tiny">
+        Open {files.map((a, k) => (
+          <span key={a.path}>
+            {k > 0 && " and "}
+            <button type="button" className="link-button" title={`Save a copy of ${a.name}`}
+              onClick={() => toExtension({ type: "hitlcad.saveFile", design: designId, revision: revision.id, path: a.path, name: a.name })}>
+              {a.path}
+            </button>
+          </span>
+        ))} from the design's <code>build/</code> folder: open the 3MF in {slicer} as a project, then arrange and slice; the page says how, and what each part is set to.
+      </p>
+    </div>
+  );
+}
+
 /** What the print view's shading means, as its process checks found it. */
 function ShadeKey() {
   return (
@@ -100,6 +125,7 @@ function ShadeKey() {
   );
 }
 
+/** The way a planned part prints now. */
 const current = (p: PlannedPart): PrintOrientation => p.ways.find((w) => w.current)!;
 
 /** The planned part a path of the print view is of (a part of several colours is a group under its own path). */

@@ -55,7 +55,7 @@ from hitlcad.core.report import (
 )
 from hitlcad.core.structure import ComponentSpec
 from hitlcad.core.types import Value
-from hitlcad.exporters import Exporter
+from hitlcad.exporters import Exporter, Unavailable
 from hitlcad.geometry import cadview
 from hitlcad.kernel import plugins
 from hitlcad.kernel.cache import CacheDb
@@ -558,33 +558,41 @@ class BuildPipeline:
         artifacts: list[Artifact] = []
         results: list[Result] = []
         for name, task in zip(names, tasks, strict=True):
-            written, why = task.result()
+            written, why, passed = task.result()
             label = self.outputs[name][0]
             artifacts += [_artifact(out_dir, rel, media_type, name, label) for rel, media_type in written]
             if why:
-                results.append(result("structure", OUTPUT_UNAVAILABLE, f"outputs: {name}", False, why))
+                results.append(result("structure", OUTPUT_UNAVAILABLE, f"outputs: {name}", passed, why))
         return artifacts, results
 
     async def _output(self, name: str, built: BuiltDesign, out_dir: Path, report: dict[str, Any],
-                      ticket: Ticket) -> tuple[list[tuple[str, str]], str]:  # fmt: skip
-        """One output's files (path, media type), or why this design cannot have it."""
+                      ticket: Ticket) -> tuple[list[tuple[str, str]], str, bool | None]:  # fmt: skip
+        """One output's files (path, media type), or why this build cannot have it and the verdict on that
+        (`exporters.Unavailable`)."""
+        try:
+            return await self._write(name, built, out_dir, report, ticket), "", True
+        except Unavailable as e:
+            return [], str(e), e.passed
+
+    async def _write(self, name: str, built: BuiltDesign, out_dir: Path, report: dict[str, Any],
+                     ticket: Ticket) -> list[tuple[str, str]]:  # fmt: skip
         if name == "step":
             if not await asyncio.to_thread(assemble.step_assembly, built, out_dir / STEP_FILE):
-                return [], "a part is a mesh, not B-rep: the assembly has no exact shape to write as STEP"
-            return [(STEP_FILE, "model/step")], ""
+                raise Unavailable("a part is a mesh, not B-rep: the assembly has no exact shape to write as STEP")
+            return [(STEP_FILE, "model/step")]
         if name == "stl":
             await asyncio.to_thread(built.mesh.export, out_dir / MESH_FILE)
-            return [(MESH_FILE, "model/stl")], ""
+            return [(MESH_FILE, "model/stl")]
         if name == "native":
             tree = assemble.tree(built)
             backends = sorted({part.backend for part in assemble.all_parts(built)})
             written = await asyncio.gather(*(self._backend(b).write_assembly(ticket, built.folder, tree, out_dir,
                                                                              out_dir / "work" / b) for b in backends))  # fmt: skip
-            return [w for w in written if w], ""
+            return [w for w in written if w]
         if name == "preview":
             preview = await self.preview(built, out_dir, report.get("metrics"))
-            return [(preview.name, "image/png")] if preview else [], ""
-        return await asyncio.to_thread(self.exporters[name].export, built, report, out_dir), ""
+            return [(preview.name, "image/png")] if preview else []
+        return await asyncio.to_thread(self.exporters[name].export, built, report, out_dir)
 
     async def preview(self, built: BuiltDesign, out_dir: Path, metrics: Any) -> Path | None:
         """The assembly's rendered views in a build's directory (the agent's images ask for them too), or None

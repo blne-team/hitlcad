@@ -61,7 +61,6 @@ async def test_the_enclosure_verifies_exports_and_rebuilds_only_what_changed(cor
         "scene.json",
         "parts/base.step",
         "parts/base.view",
-        "parts/lid.3mf",
         "model.3mf",
         "bom.csv",
     ):
@@ -338,12 +337,13 @@ async def test_an_impeller_too_big_for_its_duct_is_one_problem(core: HitlCad, tm
     (motion,) = [r for r in results(report, "motion") if r.subject == "motor.shaft+impeller.bore"]
     assert motion.status == "unverified" and "already overlap" in motion.detail
     # The README's seeded mistake: one problem, its interference leading and naming what else it fails
-    (line, judged) = problem_lines(report.results, report.problems, 10)
+    (line, judged, printer) = problem_lines(report.results, report.problems, 10)
     assert line.startswith("  ✗ interference duct+impeller [interference.overlap]: duct and impeller overlap by "
                            "91.11 mm³"), line  # fmt: skip
     assert line.endswith("(also: motion motor.shaft+impeller.bore, requirement 'Impeller blade tips clear the duct')")
     assert judged.startswith("  ? requirement Intake guard is finger-safe")
-    assert report.tally.text.startswith("1 problem (2 failing checks), 1 unverified; ")
+    assert printer.startswith("  ? structure outputs: print [output.unavailable]: the project has no printer yet")
+    assert report.tally.text.startswith("1 problem (2 failing checks), 2 unverified; ")
 
 
 PRESS = {
@@ -874,13 +874,13 @@ async def test_blender_colours_reach_the_view_and_3mf_and_blender_assembles_the_
     assert nodes["/Toy/knob[0]"]["color"] == nodes["/Toy/knob[1]"]["color"] == blue
     assert len(scene["instances"]) == 3  # each colour of each part tessellated once
 
-    # 3MF: each part's colours as base materials, the assembly placed as mesh.stl is.
-    def colours(rel: str) -> set[str]:
-        model = ET.fromstring(zipfile.ZipFile(out / rel).read("3D/3dmodel.model"))
-        return {b.get("displaycolor", "")[:7].lower() for b in model.iter() if b.tag.endswith("}base")}
-
-    assert colours("parts/base.3mf") == {red, white} and colours("parts/knob.3mf") == {blue}
-    assert colours("model.3mf") == {red, white, blue}
+    # 3MF: the parts' colours as base materials, the assembly placed as mesh.stl is.
+    model = ET.fromstring(zipfile.ZipFile(out / "model.3mf").read("3D/3dmodel.model"))
+    assert {b.get("displaycolor", "")[:7].lower() for b in model.iter() if b.tag.endswith("}base")} == {
+        red,
+        white,
+        blue,
+    }
     mesh_bounds = trimesh.load(out / "mesh.stl").bounds
     np.testing.assert_allclose(trimesh.load(out / "model.3mf", force="scene").bounds, mesh_bounds, atol=1e-3)
     assert locale.getpreferredencoding(False) == encoding  # lib3mf left the process's locale as it found it

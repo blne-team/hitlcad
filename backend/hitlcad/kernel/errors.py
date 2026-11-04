@@ -300,7 +300,8 @@ STRUCTURE_OUTPUT = define(
 )  # fmt: skip
 OUTPUT_UNAVAILABLE = define(
     code="output.unavailable", owner="design", title="design.json `outputs` names an output this design cannot have",
-    hint="A STEP of the assembly needs every part as B-rep: build mesh parts with a B-rep backend, or ask for `stl`.",
+    hint="A STEP of the assembly needs every part as B-rep: build mesh parts with a B-rep backend, or ask for `stl`. "
+    "The file to print from (`print`) needs the project's printer, which the human enters in the panel's Print tab.",
 )  # fmt: skip
 STRUCTURE_BACKEND = define(
     code="structure.backend_unknown", owner="design", title="design.json names a backend that is not enabled",

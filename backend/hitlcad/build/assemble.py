@@ -155,6 +155,14 @@ def lying(p: Printed, process: PrintedProcess, middle: float) -> fr.Frame:
     return fr.translation((middle - (lo[0] + hi[0]) / 2, -(lo[1] + hi[1]) / 2, -lo[2])) @ process.made()
 
 
+def copies(p: Printed, middle: float, count: int) -> list[fr.Frame]:
+    """`count` copies of a printed part lying as it prints in the middle of its slot (`lying`), side by side along Y."""
+    lo, hi = _box(p, p.process)
+    step = hi[1] - lo[1] + PRINT_GAP_MM
+    first = lying(p, p.process, middle)
+    return [fr.translation((0.0, (k - (count - 1) / 2) * step, 0.0)) @ first for k in range(count)]
+
+
 def write_print_scene(built: BuiltDesign, out_dir: Path) -> bool:
     """The print view of a build in `out_dir` (`print_layout`), its beds written beside its parts for the view to draw.
     False, and no file, where nothing is printed."""

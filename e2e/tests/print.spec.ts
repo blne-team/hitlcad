@@ -50,6 +50,11 @@ test("the Print tab asks for the printer once, keeps it in the project, and chec
   // Its settings, recommended (nothing in its manufacturing decides them), each with its reason
   await expect(item.locator(".plan-settings li").first()).toContainText(/^0\.2 mm layers recommended: half the 0\.4 mm nozzle/);
   await expect(item.locator(".plan-settings")).toContainText("no supports");
+  // The file to print from is an output: named where to choose it, then offered once the design writes it
+  await expect(page.locator(".print")).toContainText("choose For the slicer among the build's outputs");
+  writeDesign(folder, { outputs: ["print"] }, {});
+  const files = page.locator(".slicer-file");
+  await expect(files).toContainText("Open print.3mf and print-plan.md from the design's build/ folder: open the 3MF in Bambu Studio as a project");
 
   // The side panel's Print tab turns the main view into the print view: each printed part once, lying as it prints,
   // its plan beside it; folding the tab returns to the assembly
