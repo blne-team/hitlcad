@@ -6,7 +6,7 @@ milestone closes or the plan does.
 
 ## Where hitlcad is
 
-v0.1.2 is the latest release, for Linux, macOS and Windows, with its installer; CI checks all three. Four
+v0.2.0 is the latest release, for Linux, macOS and Windows, with its installer; CI checks all three. Four
 reference designs build and verify in every configuration. What there is, and where it is described:
 
 - **The assembly model** ([assembly-model.md](assembly-model.md)): design folders, connectors, mates, fits,
@@ -16,22 +16,22 @@ reference designs build and verify in every configuration. What there is, and wh
 - **Motion** follows a mechanism's inputs: about fixed axes by laws, swept exactly, or in blocks a solver settles
   at each position, which the human watches in the panel where only sampled positions are checked.
 - **Plugins** ([plugins.md](plugins.md)): a design's vocabulary and hitlcad's outputs, hitlcad's own registered as
-  an installed package's. Every error has one shape: a code, whose it is to fix, and the usual fix.
+  an installed package's; a project names the plugins its designs use in `hitlcad.toml`, which its agent keeps,
+  and a design gets only those. Every error has one shape: a code, whose it is to fix, and the usual fix.
 - **Builds** ([architecture.md](architecture.md)): build workers kept per design, a part built again only when
   what it depends on changes, results as each analysis finishes, outputs only when asked.
-- **The panel**: builds in 3D, model files in the same view, picks, pins, explode, the motion watched, parameters
-  and outputs edited in place, Undo and Redo. A design's files are a CRDT document, so the human, the panel and
-  the agents edit them at once without undoing each other.
+- **The panel**: builds in 3D, model files in the same view, the part under the cursor named, picks, pins,
+  explode, the motion watched, parameters and outputs edited in place, Undo and Redo. A design's files are a CRDT
+  document, so the human, the panel and the agents edit them at once without undoing each other.
+- **Printing** (v0.2, below): the human's printer, kept in the project; each printed part judged lying every way
+  it could, the best named, shaded in the print view; `print.3mf` for Bambu Studio, each part with its settings.
 - **The agents**: Claude Code and Codex, through the MCP tools, the generated skills and their hook.
 - **Pictures**: a `silhouette` requirement compares the model's outline with a reference picture.
 
-Since 0.1.2: a project names the plugins its designs use in `hitlcad.toml`, which its agent keeps, and a
-design gets only those; a printed part says which way up it prints (`up`), apart from the frame it is modelled
-in, and once the human has entered their printer in the panel's **Print** tab (kept in the project's
-`hitlcad.toml`), each printed part is checked against its bed; the part under the cursor is named in the panel,
-and a click selects a part first; **hitlcad: Restart Server** restarts the server, whoever started it.
-
 ## Now: v0.2, designed to be printed
+
+Released as 0.2.0 with all of it built. It closes when its "done when" (below) holds; what printing the NAS case
+from it shows is fixed in 0.2.x.
 
 hitlcad designs, assembles and checks parts, but stops short of the printer: a part is checked as it is modelled
 (+Z up in its own frame), so the agent models each part lying the way it prints rather than the way it fits;
